@@ -1,12 +1,16 @@
 """
 因子中性化服务 - 市值中性化和行业中性化
 """
+import logging
+
 import pandas as pd
 import numpy as np
 from typing import Dict, List, Optional
 from sklearn.linear_model import LinearRegression
 
 from backend.services.data_service import data_service
+
+logger = logging.getLogger(__name__)
 
 
 class FactorNeutralizationService:
@@ -145,59 +149,24 @@ class FactorNeutralizationService:
         return industry_neutralized
 
     def get_industry_classification(self, stock_codes: List[str]) -> Dict[str, str]:
-        """
-        获取股票的行业分类（简化版，使用申万一级分类）
-
-        Args:
-            stock_codes: 股票代码列表
-
-        Returns:
-            股票代码到行业的映射字典
-        """
-        # 这里使用简化的行业分类
-        # 实际应用中应该从数据源获取准确的分类
-
-        # 简化版行业分类（按股票代码前缀）
-        industry_map = {}
-        for code in stock_codes:
-            if code.startswith("6"):
-                # 上海主板
-                industry_map[code] = "main_board_sh"
-            elif code.startswith("0") or code.startswith("3"):
-                # 深圳主板/创业板
-                industry_map[code] = "main_board_sz"
-            else:
-                industry_map[code] = "other"
-
-        return industry_map
+        try:
+            return data_service.get_industry_classification(stock_codes)
+        except Exception as e:
+            logger.warning(f"获取行业分类失败: {e}, 使用默认分类")
+            return {code: "unknown" for code in stock_codes}
 
     def add_industry_classification(
         self,
         df: pd.DataFrame,
         stock_codes: List[str]
     ) -> pd.DataFrame:
-        """
-        为数据框添加行业分类列
-
-        Args:
-            df: 数据框
-            stock_codes: 股票代码列表
-
-        Returns:
-            添加了industry列的数据框
-        """
         industry_map = self.get_industry_classification(stock_codes)
 
-        # 从索引中提取股票代码（假设索引包含股票代码信息）
-        # 这里简化处理，直接使用映射
         result = df.copy()
 
-        # 如果df有stock_code列
         if "stock_code" in df.columns:
             result["industry"] = result["stock_code"].map(industry_map)
         else:
-            # 如果没有stock_code列，尝试从索引中提取
-            # 简化处理：直接添加一列
             result["industry"] = "unknown"
 
         return result

@@ -1227,17 +1227,29 @@ class FactorService:
         start_date: str,
         end_date: str,
         rolling_window: Optional[int] = None,
+        max_workers: int = 10,
     ) -> Dict[str, pd.DataFrame]:
-        """为多个股票计算因子"""
+        """为多个股票计算因子（并行）"""
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
         results = {}
-        for code in stock_codes:
+
+        def _calc_one(code):
             try:
-                result = self.calculate_factors_for_stock(
+                return code, self.calculate_factors_for_stock(
                     code, factor_names, start_date, end_date, rolling_window
                 )
-                results[code] = result
             except Exception as e:
                 logger.warning(f"为股票 {code} 计算因子失败: {e}")
+                return code, None
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {executor.submit(_calc_one, code): code for code in stock_codes}
+            for future in as_completed(futures):
+                code, result = future.result()
+                if result is not None:
+                    results[code] = result
+
         return results
 
 

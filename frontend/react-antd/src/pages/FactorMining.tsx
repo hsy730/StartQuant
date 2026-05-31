@@ -94,6 +94,8 @@ const FactorMining: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [mining, setMining] = useState(false);
   const [currentStockCode, setCurrentStockCode] = useState<string>("");
+  const [stockPools, setStockPools] = useState<Array<{ id: string; name: string; description: string }>>([]);
+  const [loadingPoolStocks, setLoadingPoolStocks] = useState(false);
 
   const [miningStatus, setMiningStatus] = useState<MiningStatus | null>(null);
   const [miningResult, setMiningResult] = useState<MiningResult | null>(null);
@@ -116,8 +118,21 @@ const FactorMining: React.FC = () => {
     }
   };
 
+  // 加载预设股票池列表
+  const loadStockPools = async () => {
+    try {
+      const res = (await api.getStockPools()) as any;
+      if (res.success && res.data) {
+        setStockPools(res.data);
+      }
+    } catch (error) {
+      console.error("加载股票池列表失败:", error);
+    }
+  };
+
   useEffect(() => {
     loadFactors();
+    loadStockPools();
 
     // 设置默认日期范围
     const endDate = dayjs();
@@ -159,13 +174,51 @@ const FactorMining: React.FC = () => {
   const startMining = async (values: any) => {
     const selectedFactors = values.base_factors || [];
 
-    // 保存当前股票代码，用于后续命名
-    const stockCode = values.stock_code.replace(".", ""); // 移除股票代码中的点
-    setCurrentStockCode(stockCode);
+    // 根据股票池模式获取股票代码列表
+    let stockCodesList: string[] = [];
+    const stockMode = values.stock_mode || 'preset';
+
+    if (stockMode === 'preset' && values.stock_pool_id) {
+      // 预设股票池模式 - 从后端获取成分股
+      setLoadingPoolStocks(true);
+      try {
+        const res = (await api.getStockPoolStocks(values.stock_pool_id)) as any;
+        if (res.success && res.data) {
+          stockCodesList = res.data.map((s: any) => s.code);
+        }
+      } catch (error) {
+        message.error("获取股票池成分股失败");
+        setLoadingPoolStocks(false);
+        return;
+      }
+      setLoadingPoolStocks(false);
+      setCurrentStockCode(values.stock_pool_id);
+    } else {
+      // 自定义股票代码模式
+      const rawInput = values.stock_codes_input || '000001';
+      stockCodesList = rawInput
+        .split(/[,\n，、\s]+/)
+        .map((s: string) => s.trim())
+        .filter((s: string) => s.length > 0)
+        .map((code: string) => {
+          const cleanCode = code.replace(/\.(SH|SZ)$/i, '');
+          if (cleanCode.startsWith('6')) return cleanCode + '.SH';
+          if (cleanCode.startsWith('0') || cleanCode.startsWith('3')) return cleanCode + '.SZ';
+          return cleanCode;
+        })
+        .filter((s: string) => s.length > 0);
+      setCurrentStockCode(rawInput.replace(/[,\n，、\s]+/g, '_').substring(0, 20));
+    }
+
+    if (stockCodesList.length === 0) {
+      message.warning("请至少选择一只股票");
+      return;
+    }
 
     const [startDate, endDate] = values.dateRange;
     const requestData = {
-      stock_code: values.stock_code,
+      stock_code: stockCodesList.length === 1 ? stockCodesList[0] : stockCodesList[0],
+      stock_codes: stockCodesList,
       base_factors: selectedFactors,
       start_date: startDate.format("YYYY-MM-DD"),
       end_date: endDate.format("YYYY-MM-DD"),
@@ -893,12 +946,46 @@ const FactorMining: React.FC = () => {
                 </Divider>
 
                 <Form.Item
-                  label="股票代码"
-                  name="stock_code"
-                  initialValue="000001"
-                  rules={[{ required: true, message: "请输入股票代码" }]}
+                  label="股票池"
+                  name="stock_mode"
+                  initialValue="preset"
+                  rules={[{ required: true, message: "请选择股票池模式" }]}
                 >
-                  <Input placeholder="例如：000001、600000" />
+                  <Select placeholder="选择股票池模式">
+                    <Option value="preset">预设股票池</Option>
+                    <Option value="custom">自定义股票</Option>
+                  </Select>
+                </Form.Item>
+
+                <Form.Item noStyle shouldUpdate={(prev, cur) => prev?.stock_mode !== cur?.stock_mode}>
+                  {({ getFieldValue }) => {
+                    const mode = getFieldValue('stock_mode') || 'preset'
+                    return mode === 'preset' ? (
+                      <Form.Item
+                        label="选择预设股票池"
+                        name="stock_pool_id"
+                        rules={[{ required: true, message: "请选择预设股票池" }]}
+                      >
+                        <Select placeholder="选择股票池" loading={loadingPoolStocks}>
+                          {stockPools.map((pool: any) => (
+                            <Option key={pool.id} value={pool.id}>{pool.name}</Option>
+                          ))}
+                        </Select>
+                      </Form.Item>
+                    ) : (
+                      <Form.Item
+                        label="股票代码（逗号或换行分隔）"
+                        name="stock_codes_input"
+                        initialValue="000001"
+                        rules={[{ required: true, message: "请输入股票代码" }]}
+                      >
+                        <Input.TextArea
+                          placeholder="例如: 000001,600519,000858"
+                          autoSize={{ minRows: 2, maxRows: 4 }}
+                        />
+                      </Form.Item>
+                    )
+                  }}
                 </Form.Item>
 
                 <Form.Item

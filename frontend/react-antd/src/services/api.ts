@@ -3,7 +3,7 @@ import axios from 'axios'
 // 创建 axios 实例
 const request = axios.create({
   baseURL: '/api',
-  timeout: 30000,
+  timeout: 300000,  // 5分钟超时（多股票横截面IC分析耗时长）
   headers: {
     'Content-Type': 'application/json'
   }
@@ -122,6 +122,16 @@ export const api = {
     })
   },
 
+  // 获取预设股票池列表
+  getStockPools() {
+    return request.get('/data/stock-pools')
+  },
+
+  // 获取股票池成分股
+  getStockPoolStocks(poolId: string) {
+    return request.get(`/data/stock-pools/${poolId}/stocks`, { timeout: 60000 })
+  },
+
   // 组合分析
   analyzePortfolio(data: any) {
     return request.post('/portfolio/analyze', data)
@@ -194,7 +204,8 @@ export const api = {
 
   // 遗传算法挖掘
   startGeneticMining(data: {
-    stock_code: string
+    stock_code?: string
+    stock_codes?: string[]
     base_factors: string[]
     start_date: string
     end_date: string

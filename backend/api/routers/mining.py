@@ -16,9 +16,9 @@ router = APIRouter()
 # ========== 数据模型 ==========
 
 class GeneticMiningRequest(BaseModel):
-    """遗传算法挖掘请求"""
-    stock_code: str
-    base_factors: List[str] = []  # 基础因子列表
+    stock_codes: List[str] = []
+    stock_code: Optional[str] = None
+    base_factors: List[str] = []
     start_date: str
     end_date: str
     population_size: int = 50
@@ -72,13 +72,20 @@ async def start_genetic_mining(request: GeneticMiningRequest, background_tasks: 
 
 
 async def _run_genetic_mining(task_id: str, request: GeneticMiningRequest):
-    """后台执行遗传算法挖掘"""
     try:
         import logging
         logger = logging.getLogger(__name__)
 
+        stock_codes = list(request.stock_codes) if request.stock_codes else []
+        if not stock_codes and request.stock_code:
+            logger.warning("Single stock_code provided, converting to stock_codes list. Cross-sectional IC requires multiple stocks.")
+            stock_codes = [request.stock_code]
+
+        if not stock_codes:
+            raise Exception("未提供股票代码，请通过stock_codes或stock_code指定")
+
         logger.info(f"Starting mining task {task_id}")
-        logger.info(f"Stock: {request.stock_code}, Base factors: {request.base_factors}")
+        logger.info(f"Stocks: {stock_codes}, Base factors: {request.base_factors}")
         logger.info(f"Parameters: population={request.population_size}, generations={request.n_generations}")
 
         from backend.services.factor_service import factor_service
@@ -86,13 +93,11 @@ async def _run_genetic_mining(task_id: str, request: GeneticMiningRequest):
         from backend.core.database import get_db_session
         from backend.services.data_service import data_service
 
-        # 更新状态
         mining_tasks[task_id]["status"] = "running"
         logger.info(f"Task {task_id} status set to running")
 
-        # 获取数据
         data = data_service.get_stock_data(
-            request.stock_code,
+            stock_codes[0],
             request.start_date,
             request.end_date
         )
@@ -100,17 +105,13 @@ async def _run_genetic_mining(task_id: str, request: GeneticMiningRequest):
         if data is None or len(data) == 0:
             raise Exception("未获取到有效数据")
 
-        logger.info(f"Retrieved {len(data)} rows of data")
+        logger.info(f"Retrieved {len(data)} rows of data for primary stock")
 
-        # 计算收益率
         if "close" in data.columns:
             data["return"] = data["close"].pct_change()
 
-        # 获取基础因子列表
-        # 前端传递的是因子名称，需要从数据库获取因子代码
         base_factor_codes = []
         if request.base_factors and len(request.base_factors) > 0:
-            # 从数据库获取因子定义
             try:
                 from backend.repositories.factor_repository import FactorRepository
                 db = get_db_session()
@@ -128,7 +129,6 @@ async def _run_genetic_mining(task_id: str, request: GeneticMiningRequest):
             except Exception as e:
                 logger.error(f"Error loading factors from database: {e}")
 
-        # 如果没有找到任何因子，使用默认的基础因子代码
         if not base_factor_codes:
             logger.warning("No valid base factors found, using default codes")
             base_factor_codes = [
@@ -141,13 +141,11 @@ async def _run_genetic_mining(task_id: str, request: GeneticMiningRequest):
         else:
             logger.info(f"Using {len(base_factor_codes)} base factor codes")
 
-        # 尝试使用真实的遗传算法
         try:
             from backend.services.genetic_factor_mining_service import create_genetic_mining_service
 
             logger.info("Using real genetic algorithm mining")
 
-            # 创建遗传算法挖掘服务
             mining_service = create_genetic_mining_service(
                 base_factors=base_factor_codes,
                 data=data,
@@ -159,7 +157,10 @@ async def _run_genetic_mining(task_id: str, request: GeneticMiningRequest):
                 factor_calculator=factor_service.calculator,
             )
 
-            # 设置进度回调以实时更新任务状态
+            if len(stock_codes) >= 2:
+                logger.info(f"Setting stock pool with {len(stock_codes)} stocks for cross-sectional IC evaluation")
+                mining_service.set_stock_pool(stock_codes, request.start_date, request.end_date)
+
             def progress_callback(gen, total_gen, best_fitness, avg_fitness):
                 progress = int(gen / total_gen * 100)
                 mining_tasks[task_id]["progress"] = progress
@@ -168,7 +169,6 @@ async def _run_genetic_mining(task_id: str, request: GeneticMiningRequest):
                 mining_tasks[task_id]["best_fitness"] = float(best_fitness)
                 mining_tasks[task_id]["avg_fitness"] = float(avg_fitness)
 
-                # 更新fitness_history
                 if "fitness_history" not in mining_tasks[task_id]:
                     mining_tasks[task_id]["fitness_history"] = {"best": [], "average": []}
                 mining_tasks[task_id]["fitness_history"]["best"].append(float(best_fitness))
@@ -178,18 +178,15 @@ async def _run_genetic_mining(task_id: str, request: GeneticMiningRequest):
 
             mining_service.set_progress_callback(progress_callback)
 
-            # 执行挖掘
             result = mining_service.mine_factors()
 
             if not result.get("success"):
                 raise Exception(result.get("message", "挖掘失败"))
 
-            # 转换结果格式
             best_factors = result.get("best_factors", [])
 
             discovered_factors = []
             for i, factor_info in enumerate(best_factors):
-                # 获取验证信息（如果有）
                 validation = factor_info.get("validation", {})
                 ic = validation.get("ic_validation", {}).get("ic", 0.0)
                 ir = validation.get("ir_validation", {}).get("ir", 0.0)
@@ -203,7 +200,6 @@ async def _run_genetic_mining(task_id: str, request: GeneticMiningRequest):
                     "fitness": float(fitness),
                 })
 
-            # 从logbook中提取fitness_history
             logbook = result.get("logbook")
             if logbook is not None:
                 fitness_history = {
@@ -221,7 +217,6 @@ async def _run_genetic_mining(task_id: str, request: GeneticMiningRequest):
                 "fitness_history": fitness_history
             }
 
-            # 保存结果
             mining_tasks[task_id]["status"] = "completed"
             mining_tasks[task_id]["progress"] = 100
             mining_tasks[task_id]["result"] = result_data
@@ -232,7 +227,6 @@ async def _run_genetic_mining(task_id: str, request: GeneticMiningRequest):
             logger.info(f"Final status: {mining_tasks[task_id]['status']}")
 
         except ImportError as e:
-            # DEAP库未安装，使用模拟模式
             logger.warning(f"DEAP library not available, using simulation mode: {e}")
             await _run_simulated_mining(task_id, request, data, base_factor_codes, factor_service, logger)
 

@@ -18,7 +18,8 @@ import {
   Divider,
   Tabs,
   Progress,
-  Tooltip
+  Tooltip,
+  Alert
 } from 'antd'
 import {
   ArrowLeftOutlined,
@@ -209,14 +210,28 @@ const FactorDetail: React.FC = () => {
   const [chartPeriod, setChartPeriod] = useState<string>('1y')
   const [factorChartType, setFactorChartType] = useState<string>('line')
   const [loadingChart, setLoadingChart] = useState(false)
-  const [stockCode, setStockCode] = useState<string>('000001.SZ')
-  // 用于显示的股票代码（不带后缀）
-  const [stockCodeDisplay, setStockCodeDisplay] = useState<string>(stockCode.replace(/\.(SH|SZ)$/, ''))
+  const [stockCodes, setStockCodes] = useState<string[]>(['000001.SZ'])
+  // 股票池模式: 'preset' 或 'custom'
+  const [stockPoolMode, setStockPoolMode] = useState<'preset' | 'custom'>('preset')
+  // 预设股票池选择
+  const [selectedPoolId, setSelectedPoolId] = useState<string>('')
+  // 预设股票池列表
+  const [stockPools, setStockPools] = useState<Array<{ id: string; name: string; description: string }>>([])
+  // 自定义股票代码输入（逗号或换行分隔）
+  const [customStockInput, setCustomStockInput] = useState<string>('000001')
+  // 加载股票池中
+  const [loadingPoolStocks, setLoadingPoolStocks] = useState(false)
+  // 当前股票池已加载的股票数
+  const [poolStockCount, setPoolStockCount] = useState<number>(0)
 
-  // 同步 stockCode 和 stockCodeDisplay 的状态
+  // 加载预设股票池列表
   useEffect(() => {
-    setStockCodeDisplay(stockCode.replace(/\.(SH|SZ)$/, ''))
-  }, [stockCode])
+    api.getStockPools().then((res: any) => {
+      if (res.success && res.data) {
+        setStockPools(res.data)
+      }
+    }).catch(() => {})
+  }, [])
   const [customStartDate, setCustomStartDate] = useState<string>('')
   const [customEndDate, setCustomEndDate] = useState<string>('')
   const [showCustomDatePicker, setShowCustomDatePicker] = useState(false)
@@ -278,6 +293,14 @@ const FactorDetail: React.FC = () => {
   const analyzeFactor = useCallback(async () => {
     if (!id || !factor) return
 
+    // 多股票提示
+    if (stockCodes.length > 30) {
+      const estimatedMin = Math.ceil(stockCodes.length / 50)
+      message.info(`正在对 ${stockCodes.length} 只股票进行横截面IC分析，预计需要 ${estimatedMin}~${estimatedMin * 3} 分钟，请耐心等待...`)
+    } else if (stockCodes.length >= 2) {
+      message.info(`正在对 ${stockCodes.length} 只股票进行横截面IC分析...`)
+    }
+
     // 使用用户选择的时间范围和股票代码
     let startDate: string
     let endDate: string
@@ -298,7 +321,7 @@ const FactorDetail: React.FC = () => {
     try {
       const response = await api.calculateIC({
         factor_name: factor.name,
-        stock_codes: [stockCode],
+        stock_codes: stockCodes,
         start_date: startDate,
         end_date: endDate
       } as any) as any
@@ -345,7 +368,7 @@ const FactorDetail: React.FC = () => {
     } finally {
       setAnalyzing(false)
     }
-  }, [id, factor, chartPeriod, customStartDate, customEndDate, stockCode])
+  }, [id, factor, chartPeriod, customStartDate, customEndDate, stockCodes])
 
   // 编辑相关函数
   const handleEdit = () => {
@@ -1625,25 +1648,57 @@ const FactorDetail: React.FC = () => {
     return startDate.toISOString().split('T')[0]
   }
 
-  // 处理股票代码变化
-  const handleStockCodeChange = (value: string) => {
-    // 移除可能存在的后缀
-    const cleanCode = value.replace(/\.(SH|SZ)$/, '')
+  // 标准化单个股票代码（添加 .SH/.SZ 后缀）
+  const normalizeStockCode = (code: string): string => {
+    const cleanCode = code.replace(/\.(SH|SZ)$/i, '').trim()
+    if (!cleanCode) return ''
+    if (cleanCode.startsWith('6')) return cleanCode + '.SH'
+    if (cleanCode.startsWith('0') || cleanCode.startsWith('3')) return cleanCode + '.SZ'
+    return cleanCode
+  }
 
-    // 自动补全后缀
-    let fullCode = cleanCode
-    if (cleanCode && !cleanCode.includes('.')) {
-      if (cleanCode.startsWith('6')) {
-        fullCode = cleanCode + '.SH'
-      } else if (cleanCode.startsWith('0') || cleanCode.startsWith('3')) {
-        fullCode = cleanCode + '.SZ'
-      } else {
-        fullCode = cleanCode
-      }
+  // 解析自定义股票输入为代码数组
+  const parseCustomStockInput = (input: string): string[] => {
+    return input
+      .split(/[,\n，、\s]+/)
+      .map(s => s.trim())
+      .filter(s => s.length > 0)
+      .map(normalizeStockCode)
+      .filter(s => s.length > 0)
+  }
+
+  // 处理预设股票池选择
+  const handlePoolSelect = async (poolId: string) => {
+    setSelectedPoolId(poolId)
+    if (!poolId) {
+      setStockCodes(['000001.SZ'])
+      setPoolStockCount(0)
+      return
     }
 
-    setStockCode(fullCode)
-    setStockCodeDisplay(cleanCode)
+    setLoadingPoolStocks(true)
+    try {
+      const res = await api.getStockPoolStocks(poolId) as any
+      if (res.success && res.data) {
+        const codes = res.data.map((s: any) => s.code)
+        setStockCodes(codes)
+        setPoolStockCount(codes.length)
+        message.success(`已加载 ${codes.length} 只成分股`)
+      }
+    } catch (error) {
+      message.error('加载股票池失败')
+    } finally {
+      setLoadingPoolStocks(false)
+    }
+  }
+
+  // 处理自定义股票输入变化
+  const handleCustomStockChange = (value: string) => {
+    setCustomStockInput(value)
+    const codes = parseCustomStockInput(value)
+    if (codes.length > 0) {
+      setStockCodes(codes)
+    }
   }
 
   // 处理自定义日期变化
@@ -1678,7 +1733,7 @@ const FactorDetail: React.FC = () => {
 
     setLoadingChart(true)
     try {
-      const stockResponse = await api.getStockData(stockCode, startDate, endDate) as any
+      const stockResponse = await api.getStockData(stockCodes[0], startDate, endDate) as any
 
       if (!stockResponse || !stockResponse.data) {
         message.warning('未获取到股票数据')
@@ -1702,7 +1757,7 @@ const FactorDetail: React.FC = () => {
 
       const factorResponse = await api.calculateFactor({
         factor_name: factor.name,
-        stock_codes: [stockCode],
+        stock_codes: stockCodes,
         start_date: startDate,
         end_date: endDate
       } as any) as any
@@ -1712,7 +1767,7 @@ const FactorDetail: React.FC = () => {
         return
       }
 
-      const factorDataMap = factorResponse.data[stockCode]
+      const factorDataMap = factorResponse.data[stockCodes[0]]
       if (!factorDataMap) {
         message.warning('因子数据为空')
         return
@@ -1733,7 +1788,7 @@ const FactorDetail: React.FC = () => {
     } finally {
       setLoadingChart(false)
     }
-  }, [factor, chartPeriod, stockCode, customStartDate, customEndDate])
+  }, [factor, chartPeriod, stockCodes, customStartDate, customEndDate])
 
   // 加载所有分析 Tab 数据（Tab 2-5）
   const loadAnalysisTabsData = useCallback(async () => {
@@ -1760,25 +1815,25 @@ const FactorDetail: React.FC = () => {
       const [exposure, effectiveness, attribution, monitoring] = await Promise.all([
         api.analyzeExposure({
           factor_name: factor.name,
-          stock_codes: [stockCode],
+          stock_codes: stockCodes,
           start_date: startDate,
           end_date: endDate
         } as any),
         api.analyzeEffectiveness({
           factor_name: factor.name,
-          stock_codes: [stockCode],
+          stock_codes: stockCodes,
           start_date: startDate,
           end_date: endDate
         } as any),
         api.analyzeAttribution({
           factor_name: factor.name,
-          stock_codes: [stockCode],
+          stock_codes: stockCodes,
           start_date: startDate,
           end_date: endDate
         } as any),
         api.analyzeMonitoring({
           factor_name: factor.name,
-          stock_codes: [stockCode],
+          stock_codes: stockCodes,
           start_date: startDate,
           end_date: endDate
         } as any)
@@ -1810,7 +1865,7 @@ const FactorDetail: React.FC = () => {
     } finally {
       setLoadingAnalysisTabs(false)
     }
-  }, [factor, chartPeriod, stockCode, customStartDate, customEndDate])
+  }, [factor, chartPeriod, stockCodes, customStartDate, customEndDate])
 
   // 绘制行情图表
   const drawPriceChart = useCallback(() => {
@@ -2338,7 +2393,7 @@ const FactorDetail: React.FC = () => {
         drawPriceChart()
       }, 50)
     }
-  }, [chartPeriod, factorChartType, stockCode, customStartDate, customEndDate, chartData, drawPriceChart])
+  }, [chartPeriod, factorChartType, stockCodes, customStartDate, customEndDate, chartData, drawPriceChart])
 
   // 窗口大小变化时调整图表
   useEffect(() => {
@@ -2479,14 +2534,53 @@ const FactorDetail: React.FC = () => {
             <Col xs={24} lg={18} className="right-column">
               {/* 数据筛选卡片 */}
               <Card className="filter-card" variant="borderless">
-                <Row gutter={[16, 16]} align="middle">
+                <Row gutter={[16, 12]} align="middle">
                   <Col xs={24} sm={8}>
-                    <Input
-                      placeholder="股票代码"
-                      value={stockCodeDisplay}
-                      onChange={(e) => handleStockCodeChange(e.target.value)}
-                      onPressEnter={analyzeFactor}
-                    />
+                    <Space direction="vertical" size={4} style={{ width: '100%' }}>
+                      <Select
+                        value={stockPoolMode}
+                        onChange={(v) => setStockPoolMode(v)}
+                        style={{ width: '100%' }}
+                        size="small"
+                      >
+                        <Option value="preset">预设股票池</Option>
+                        <Option value="custom">自定义股票</Option>
+                      </Select>
+                      {stockPoolMode === 'preset' ? (
+                        <Select
+                          placeholder="选择股票池"
+                          value={selectedPoolId || undefined}
+                          onChange={handlePoolSelect}
+                          loading={loadingPoolStocks}
+                          style={{ width: '100%' }}
+                          allowClear
+                        >
+                          {stockPools.map(pool => (
+                            <Option key={pool.id} value={pool.id}>
+                              {pool.name}
+                            </Option>
+                          ))}
+                        </Select>
+                      ) : (
+                        <Input.TextArea
+                          placeholder="输入股票代码，逗号或换行分隔&#10;例如: 000001,600519,000858"
+                          value={customStockInput}
+                          onChange={(e) => handleCustomStockChange(e.target.value)}
+                          autoSize={{ minRows: 1, maxRows: 3 }}
+                        />
+                      )}
+                      {stockCodes.length > 0 && (
+                        <span style={{ fontSize: 12, color: '#888' }}>
+                          已选 {stockCodes.length} 只股票
+                          {stockCodes.length === 1 && (
+                            <Tag color="warning" style={{ marginLeft: 4, fontSize: 11 }}>单股模式(时序IC)</Tag>
+                          )}
+                          {stockCodes.length >= 2 && (
+                            <Tag color="success" style={{ marginLeft: 4, fontSize: 11 }}>多股模式(横截面IC)</Tag>
+                          )}
+                        </span>
+                      )}
+                    </Space>
                   </Col>
                   <Col xs={24} sm={8}>
                     <Select
@@ -2520,7 +2614,7 @@ const FactorDetail: React.FC = () => {
                         onClick={analyzeFactor}
                         loading={analyzing}
                       >
-                        分析因子
+                        {stockCodes.length > 30 ? `分析因子(${stockCodes.length}股,较慢)` : '分析因子'}
                       </Button>
                     )}
                   </Col>

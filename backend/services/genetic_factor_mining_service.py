@@ -19,6 +19,11 @@ except ImportError:
 
 from backend.services.factor_generator_service import factor_generator_service
 from backend.services.factor_validation_service import factor_validation_service
+from backend.services.alphalens_analysis_service import alphalens_analysis_service, ALPHALENS_AVAILABLE
+from backend.services.data_service import data_service
+
+# 交叉截面IC评估的最大股票数（超出的随机采样）
+MAX_EVAL_STOCKS = 50
 
 
 class GeneticFactorMiningService:
@@ -34,20 +39,8 @@ class GeneticFactorMiningService:
         cx_prob: float = 0.7,
         mut_prob: float = 0.3,
         factor_calculator=None,
+        max_eval_stocks: int = MAX_EVAL_STOCKS,
     ):
-        """
-        初始化遗传算法挖掘服务
-
-        Args:
-            base_factors: 基础因子代码列表（如 ["RSI(close, 14)", "close / open"]）
-            data: 数据DataFrame（包含OHLCV列）
-            return_column: 收益率列名
-            population_size: 种群大小
-            n_generations: 迭代代数
-            cx_prob: 交叉概率
-            mut_prob: 变异概率
-            factor_calculator: 因子计算器实例（可选）
-        """
         if not DEAP_AVAILABLE:
             raise ImportError("DEAP库未安装，请运行: pip install DEAP")
 
@@ -59,16 +52,64 @@ class GeneticFactorMiningService:
         self.cx_prob = cx_prob
         self.mut_prob = mut_prob
         self.factor_calculator = factor_calculator
+        self.max_eval_stocks = max_eval_stocks
 
-        # 准备收益率数据
         self.return_values = data[return_column] if return_column in data.columns else None
 
-        # 预计算基础因子值（存储为字典，方便表达式计算）
+        self.stock_codes: List[str] = []
+        self.stock_pool_data: Dict[str, pd.DataFrame] = {}
+        self.stock_pool_return_values: Dict[str, pd.Series] = {}
+        self.stock_pool_base_factor_values: Dict[str, Dict] = {}
+
+        # 采样股票列表（大股票池时只评估子集）
+        self._sampled_stock_codes: List[str] = []
+        self._current_generation: int = 0
+
         self.base_factor_values = {}
         self._precompute_base_factors()
 
-        # 初始化遗传算法
         self._setup_genetic_algorithm()
+
+    def set_stock_pool(self, stock_codes: List[str], start_date: str, end_date: str):
+        self.stock_codes = stock_codes
+        self.stock_pool_data = data_service.get_multiple_stocks_data(stock_codes, start_date, end_date)
+
+        for code, df in self.stock_pool_data.items():
+            if "close" in df.columns:
+                df["return"] = df["close"].pct_change()
+            self.stock_pool_return_values[code] = df[self.return_column] if self.return_column in df.columns else None
+
+            if self.factor_calculator is None:
+                from backend.services.factor_service import factor_service
+                self.factor_calculator = factor_service.calculator
+
+            stock_base_factors = {}
+            for i, factor_code in enumerate(self.base_factor_codes):
+                try:
+                    factor_values = self.factor_calculator.calculate(df, factor_code)
+                    if factor_values is not None and len(factor_values.dropna()) > 0:
+                        var_name = f"factor_{i}"
+                        stock_base_factors[var_name] = {
+                            "code": factor_code,
+                            "values": factor_values,
+                        }
+                except Exception as e:
+                    logger.warning(f"Stock {code} factor {factor_code} compute error: {e}")
+            self.stock_pool_base_factor_values[code] = stock_base_factors
+
+        # 初始化采样股票列表
+        self._refresh_stock_sample()
+
+        logger.info(f"Stock pool set with {len(self.stock_pool_data)} stocks, "
+                    f"eval sample={len(self._sampled_stock_codes)}: {stock_codes}")
+
+    def _refresh_stock_sample(self):
+        """刷新评估用的股票样本（大股票池时随机采样加速）"""
+        available = list(self.stock_pool_base_factor_values.keys())
+        if len(available) <= self.max_eval_stocks:
+            self._sampled_stock_codes = available
+        else:
+            self._sampled_stock_codes = random.sample(available, self.max_eval_stocks)
 
     def _precompute_base_factors(self):
         """预计算所有基础因子的值"""
@@ -189,42 +230,152 @@ class GeneticFactorMiningService:
             return individual
 
     def _evaluate_factor(self, individual: list) -> tuple:
-        """
-        评估因子适应度
-
-        Args:
-            individual: 个体（因子表达式列表）
-
-        Returns:
-            适应度值元组
-        """
         expr = individual[0]
 
-        # 尝试计算因子值
         try:
-            factor_values = self._compute_factor_expression(expr)
-
-            if factor_values is None or len(factor_values.dropna()) < 10:
-                return (0.0,)
-
-            # 验证因子
-            if self.return_values is not None:
-                validation = factor_validation_service.validate_factor(
-                    factor_values=factor_values,
-                    return_values=self.return_values,
-                    existing_factors=None,
-                )
-
-                # 适应度 = 综合得分
-                fitness = validation["score"] / 100.0
+            if len(self.stock_pool_data) >= 2:
+                return self._evaluate_cross_sectional_ic(expr)
+            elif len(self.stock_pool_data) == 1:
+                logger.warning("Only 1 stock in pool, falling back to time-series IC evaluation")
+                return self._evaluate_single_stock_ic(expr)
             else:
-                # 如果没有收益率数据，使用因子的标准差作为适应度
-                fitness = factor_values.std() / (factor_values.mean() + 1e-8)
-
-            return (fitness,)
-
+                return self._evaluate_single_stock_ic(expr)
         except Exception as e:
             return (0.0,)
+
+    def _evaluate_cross_sectional_ic(self, expr: str) -> tuple:
+        """使用横截面IC评估因子（并行计算各股票因子值，大池采样）"""
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        eval_codes = self._sampled_stock_codes
+        factor_values_dict: Dict[str, pd.Series] = {}
+
+        def _calc_one_stock(code):
+            try:
+                base_factors = self.stock_pool_base_factor_values[code]
+                fv = self._compute_factor_expression_for_stock(expr, code, base_factors)
+                if fv is not None and len(fv.dropna()) >= 10:
+                    return code, fv.dropna()
+            except Exception:
+                pass
+            return code, None
+
+        with ThreadPoolExecutor(max_workers=min(len(eval_codes), 10)) as executor:
+            futures = {executor.submit(_calc_one_stock, code): code for code in eval_codes}
+            for future in as_completed(futures):
+                code, fv = future.result()
+                if fv is not None:
+                    factor_values_dict[code] = fv
+
+        if len(factor_values_dict) < 2:
+            return (0.0,)
+
+        if not ALPHALENS_AVAILABLE:
+            logger.warning("alphalens not available, falling back to time-series IC")
+            return self._evaluate_single_stock_ic(expr)
+
+        try:
+            all_dates = set()
+            for series in factor_values_dict.values():
+                all_dates.update(series.index)
+            all_dates = sorted(all_dates)
+
+            pricing_df = pd.DataFrame(index=all_dates)
+            for stock_code in factor_values_dict:
+                df = self.stock_pool_data.get(stock_code)
+                if df is not None and "close" in df.columns:
+                    pricing_df[stock_code] = df["close"]
+            pricing_df = pricing_df.dropna(how="all")
+
+            factor_data = alphalens_analysis_service.prepare_factor_data(
+                factor_values_dict=factor_values_dict,
+                pricing_df=pricing_df,
+            )
+
+            if factor_data is None or factor_data.empty:
+                return (0.0,)
+
+            ic_results = alphalens_analysis_service.analyze_ic(factor_data)
+
+            if "error" in ic_results:
+                return (0.0,)
+
+            best_abs_mean_ic = 0.0
+            for ic_type in ["spearman_ic", "pearson_ic"]:
+                ic_type_data = ic_results.get(ic_type, {})
+                for period_key, period_stats in ic_type_data.items():
+                    if isinstance(period_stats, dict) and "error" not in period_stats:
+                        mean_ic = abs(period_stats.get("mean_ic", 0.0))
+                        if mean_ic > best_abs_mean_ic:
+                            best_abs_mean_ic = mean_ic
+
+            return (best_abs_mean_ic,)
+
+        except Exception as e:
+            logger.warning(f"Cross-sectional IC evaluation failed: {e}")
+            return (0.0,)
+
+    def _evaluate_single_stock_ic(self, expr: str) -> tuple:
+        factor_values = self._compute_factor_expression(expr)
+
+        if factor_values is None or len(factor_values.dropna()) < 10:
+            return (0.0,)
+
+        if self.return_values is not None:
+            validation = factor_validation_service.validate_factor(
+                factor_values=factor_values,
+                return_values=self.return_values,
+                existing_factors=None,
+            )
+            fitness = validation["score"] / 100.0
+        else:
+            fitness = factor_values.std() / (factor_values.mean() + 1e-8)
+
+        return (fitness,)
+
+    def _compute_factor_expression_for_stock(self, expr: str, stock_code: str, stock_base_factors: Dict) -> Optional[pd.Series]:
+        try:
+            safe_dict = {}
+            for var_name, factor_info in stock_base_factors.items():
+                safe_dict[var_name] = factor_info["values"]
+            safe_dict["np"] = np
+            safe_dict["pd"] = pd
+
+            stock_data = self.stock_pool_data.get(stock_code)
+            if stock_data is not None:
+                for col in ["open", "high", "low", "close", "volume"]:
+                    if col in stock_data.columns:
+                        safe_dict[col] = stock_data[col]
+
+            if not safe_dict:
+                return None
+
+            try:
+                result = eval(expr, {"__builtins__": {}}, safe_dict)
+                if isinstance(result, pd.Series):
+                    if "log" in expr or "sqrt" in expr:
+                        result = result.replace([np.inf, -np.inf], np.nan)
+                elif isinstance(result, (int, float, np.number)):
+                    if stock_data is not None:
+                        return pd.Series([float(result)] * len(stock_data), index=stock_data.index)
+                    return None
+                else:
+                    return None
+
+                if isinstance(result, pd.Series):
+                    valid_count = result.notna().sum()
+                    if valid_count == 0 or valid_count < len(result) * 0.1:
+                        return None
+
+                return result
+
+            except NameError:
+                return None
+            except Exception:
+                return None
+
+        except Exception:
+            return None
 
     def _compute_factor_expression(self, expr: str) -> Optional[pd.Series]:
         """
@@ -554,6 +705,10 @@ class GeneticFactorMiningService:
 
         # 开始进化循环
         for gen in range(1, self.n_generations + 1):
+            self._current_generation = gen
+            # 每代刷新股票样本（大池时避免过拟合到特定子集）
+            self._refresh_stock_sample()
+
             # 选择下一代
             offspring = self.toolbox.select(population, len(population))
             offspring = list(map(self.toolbox.clone, offspring))
@@ -626,6 +781,19 @@ class GeneticFactorMiningService:
                 logging.getLogger(__name__).warning(f"因子个体评估失败: {e}")
 
             best_factors.append(factor_info)
+
+        # 按验证得分降序排序（优先使用验证分数，其次使用fitness）
+        def _sort_key(f):
+            validation = f.get("validation", {})
+            if validation and isinstance(validation, dict):
+                return validation.get("score", f.get("fitness", 0))
+            return f.get("fitness", 0)
+
+        best_factors.sort(key=_sort_key, reverse=True)
+
+        # 更新rank编号
+        for i, factor_info in enumerate(best_factors):
+            factor_info["rank"] = i + 1
 
         return {
             "success": True,

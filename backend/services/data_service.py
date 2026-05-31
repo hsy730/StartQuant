@@ -3,7 +3,7 @@
 """
 import hashlib
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List, Dict
 import pandas as pd
 import akshare as ak
 
@@ -170,53 +170,129 @@ class DataService:
         start_date: str,
         end_date: str,
         use_cache: bool = True,
+        max_workers: int = 15,
     ) -> dict[str, pd.DataFrame]:
         """
-        获取多个股票的数据
+        获取多个股票的数据（并行）
 
         Args:
             stock_codes: 股票代码列表
             start_date: 开始日期
             end_date: 结束日期
             use_cache: 是否使用缓存
+            max_workers: 并行线程数
 
         Returns:
             字典，key为股票代码，value为对应的DataFrame
         """
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
         result = {}
-        for code in stock_codes:
+
+        def _fetch_one(code):
             try:
-                df = self.get_stock_data(code, start_date, end_date, use_cache)
-                result[code] = df
+                return code, self.get_stock_data(code, start_date, end_date, use_cache)
             except Exception as e:
                 print(f"Warning: 获取股票 {code} 数据失败: {e}")
+                return code, None
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {executor.submit(_fetch_one, code): code for code in stock_codes}
+            for future in as_completed(futures):
+                code, df = future.result()
+                if df is not None:
+                    result[code] = df
+
         return result
 
     def _preprocess_data(self, df: pd.DataFrame) -> pd.DataFrame:
-        """
-        预处理数据
-
-        Args:
-            df: 原始数据框
-
-        Returns:
-            预处理后的数据框
-        """
-        # 填充缺失值
         if settings.DATA_FILL_MISSING:
-            df = self.preprocessing.fill_missing_values(
-                df,
-                method=settings.DATA_FILL_METHOD,
-            )
+            df = df.ffill()
 
-        # 异常值检测和处理
         if settings.DATA_OUTLIER_DETECTION:
-            df, _ = self.preprocessing.detect_and_handle_anomalies(
-                df,
-                price_columns=["open", "high", "low", "close"],
-                n_sigma=settings.DATA_OUTLIER_N_SIGMA,
-                handle_method=settings.DATA_OUTLIER_METHOD,
-            )
+            price_columns = ["open", "high", "low", "close"]
+            window = 20
+            n_sigma = settings.DATA_OUTLIER_N_SIGMA
+            for col in price_columns:
+                if col not in df.columns:
+                    continue
+                rolling_mean = df[col].rolling(window=window, min_periods=1).mean()
+                rolling_std = df[col].rolling(window=window, min_periods=1).std()
+                rolling_std = rolling_std.replace(0, float("nan")).ffill().bfill()
+                lower_bound = rolling_mean - n_sigma * rolling_std
+                upper_bound = rolling_mean + n_sigma * rolling_std
+                df.loc[df[col] < lower_bound, col] = lower_bound[df[col] < lower_bound]
+                df.loc[df[col] > upper_bound, col] = upper_bound[df[col] > upper_bound]
+
+        return df
+
+    def get_industry_classification(self, stock_codes: List[str]) -> Dict[str, str]:
+        cache_key = "industry_classification_sw"
+        cached = self._load_from_cache(cache_key)
+        if cached is not None:
+            return {code: cached[code] for code in stock_codes if code in cached}
+
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        industry_map: Dict[str, str] = {}
+        try:
+            industry_df = ak.stock_board_industry_name_em()
+            industry_names = industry_df["板块名称"].tolist()
+        except Exception as e:
+            raise ValueError(f"获取申万行业列表失败: {e}")
+
+        def _fetch_one_industry(name):
+            local_map = {}
+            try:
+                cons_df = ak.stock_board_industry_cons_em(symbol=name)
+                if "代码" in cons_df.columns:
+                    for _, row in cons_df.iterrows():
+                        code = str(row["代码"]).strip()
+                        local_map[code] = name
+            except Exception:
+                pass
+            return local_map
+
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            futures = {executor.submit(_fetch_one_industry, name): name for name in industry_names}
+            for future in as_completed(futures):
+                local_map = future.result()
+                industry_map.update(local_map)
+
+        if industry_map:
+            self._save_to_cache(industry_map, cache_key, ttl=30 * 24 * 60 * 60)
+
+        return {code: industry_map.get(code, "") for code in stock_codes}
+
+    def get_market_cap_data(
+        self, stock_code: str, start_date: str, end_date: str
+    ) -> pd.DataFrame:
+        stock_code = self._normalize_stock_code(stock_code)
+        cache_key = self._get_cache_key(stock_code + "_mktcap", start_date, end_date)
+
+        if settings.AKSHARE_CACHE_ENABLED:
+            cached_data = self._load_from_cache(cache_key)
+            if cached_data is not None:
+                return cached_data
+
+        df = self.get_stock_data(stock_code, start_date, end_date, use_cache=True)
+
+        total_shares = None
+        try:
+            pure_code = stock_code.replace(".SH", "").replace(".SZ", "")
+            info_df = ak.stock_individual_info_em(symbol=pure_code)
+            for _, row in info_df.iterrows():
+                if "总股本" in str(row.iloc[0]):
+                    total_shares = float(row.iloc[1])
+                    break
+        except Exception:
+            pass
+
+        if total_shares is not None and "close" in df.columns:
+            df["market_cap"] = df["close"] * total_shares
+
+        if settings.AKSHARE_CACHE_ENABLED:
+            self._save_to_cache(df, cache_key)
 
         return df
 

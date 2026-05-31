@@ -5,7 +5,9 @@ from typing import Dict, Optional, List
 import pandas as pd
 import numpy as np
 from scipy import stats
+from scipy import stats as scipy_stats
 from sklearn.metrics import pairwise_distances
+from backend.services.alphalens_analysis_service import alphalens_analysis_service, ALPHALENS_AVAILABLE
 
 
 class FactorValidationService:
@@ -17,20 +19,13 @@ class FactorValidationService:
         ir_threshold: float = 0.5,
         turnover_threshold: float = 0.5,
         max_correlation: float = 0.8,
+        ic_type: str = "time_series",
     ):
-        """
-        初始化因子验证服务
-
-        Args:
-            ic_threshold: IC阈值（绝对值）
-            ir_threshold: IR阈值
-            turnover_threshold: 换手率阈值
-            max_correlation: 最大相关性阈值
-        """
         self.ic_threshold = ic_threshold
         self.ir_threshold = ir_threshold
         self.turnover_threshold = turnover_threshold
         self.max_correlation = max_correlation
+        self.ic_type = ic_type
 
     def validate_factor(
         self,
@@ -51,6 +46,7 @@ class FactorValidationService:
         """
         results = {
             "ic_validation": None,
+            "rank_ic_validation": None,
             "ir_validation": None,
             "turnover_validation": None,
             "stability_validation": None,
@@ -59,8 +55,9 @@ class FactorValidationService:
             "score": 0.0,
         }
 
-        # 1. IC验证
         results["ic_validation"] = self._validate_ic(factor_values, return_values)
+
+        results["rank_ic_validation"] = self._validate_rank_ic(factor_values, return_values)
 
         # 2. IR验证
         results["ir_validation"] = self._validate_ir(factor_values, return_values)
@@ -79,17 +76,19 @@ class FactorValidationService:
         else:
             results["correlation_validation"] = {"passed": True, "max_correlation": 0.0}
 
-        # 综合判断
         results["overall_passed"] = all([
             results["ic_validation"]["passed"],
+            results["rank_ic_validation"]["passed"],
             results["ir_validation"]["passed"],
             results["turnover_validation"]["passed"],
             results["stability_validation"]["passed"],
             results["correlation_validation"]["passed"],
         ])
 
-        # 计算综合得分（0-100）
         results["score"] = self._calculate_score(results)
+
+        if self.ic_type == "time_series":
+            results["warnings"] = ["时序IC仅评估择时能力，建议使用横截面IC"]
 
         return results
 
@@ -124,14 +123,67 @@ class FactorValidationService:
         # 计算IC
         ic = aligned_data["factor"].corr(aligned_data["return"])
 
-        # 判断是否通过
-        passed = abs(ic) >= self.ic_threshold
+        n = len(aligned_data)
+        if abs(ic) >= 1.0:
+            t_stat = float('inf') if ic > 0 else float('-inf')
+            p_value = 0.0
+        else:
+            t_stat = ic * np.sqrt(n - 2) / np.sqrt(1 - ic ** 2)
+            p_value = 2 * (1 - scipy_stats.t.cdf(abs(t_stat), df=n - 2))
+
+        is_significant = p_value < 0.05
+
+        passed = abs(ic) >= self.ic_threshold and is_significant
 
         return {
             "passed": passed,
             "ic": float(ic),
+            "t_statistic": float(t_stat),
+            "p_value": float(p_value),
+            "is_significant": is_significant,
             "threshold": self.ic_threshold,
-            "message": f"IC={ic:.4f} {'通过' if passed else '未通过'} (阈值±{self.ic_threshold})",
+            "message": f"IC={ic:.4f} t={t_stat:.4f} p={p_value:.4f} {'通过' if passed else '未通过'} (阈值±{self.ic_threshold}, 显著性p<0.05)",
+        }
+
+    def _validate_rank_ic(
+        self,
+        factor_values: pd.Series,
+        return_values: pd.Series
+    ) -> Dict:
+        aligned_data = pd.DataFrame({
+            "factor": factor_values,
+            "return": return_values
+        }).dropna()
+
+        if len(aligned_data) < 10:
+            return {
+                "passed": False,
+                "rank_ic": 0.0,
+                "message": "数据量不足",
+            }
+
+        rank_ic = aligned_data["factor"].rank().corr(aligned_data["return"].rank())
+
+        n = len(aligned_data)
+        if abs(rank_ic) >= 1.0:
+            t_stat = float('inf') if rank_ic > 0 else float('-inf')
+            p_value = 0.0
+        else:
+            t_stat = rank_ic * np.sqrt(n - 2) / np.sqrt(1 - rank_ic ** 2)
+            p_value = 2 * (1 - scipy_stats.t.cdf(abs(t_stat), df=n - 2))
+
+        is_significant = p_value < 0.05
+
+        passed = abs(rank_ic) >= self.ic_threshold and is_significant
+
+        return {
+            "passed": passed,
+            "rank_ic": float(rank_ic),
+            "t_statistic": float(t_stat),
+            "p_value": float(p_value),
+            "is_significant": is_significant,
+            "threshold": self.ic_threshold,
+            "message": f"Rank IC={rank_ic:.4f} t={t_stat:.4f} p={p_value:.4f} {'通过' if passed else '未通过'} (阈值±{self.ic_threshold}, 显著性p<0.05)",
         }
 
     def _validate_ir(
@@ -363,30 +415,30 @@ class FactorValidationService:
         """
         score = 0.0
 
-        # IC得分（0-30分）
         ic_result = validation_results["ic_validation"]
         if ic_result["passed"]:
             ic_abs = abs(ic_result["ic"])
-            score += min(ic_abs * 300, 30)  # IC=0.1时得30分
+            score += min(ic_abs * 300, 25)
 
-        # IR得分（0-30分）
+        rank_ic_result = validation_results["rank_ic_validation"]
+        if rank_ic_result["passed"]:
+            rank_ic_abs = abs(rank_ic_result["rank_ic"])
+            score += min(rank_ic_abs * 300, 25)
+
         ir_result = validation_results["ir_validation"]
         if ir_result["passed"]:
             ir = ir_result["ir"]
-            score += min(ir * 20, 30)  # IR=1.5时得30分
+            score += min(ir * 20, 20)
 
-        # 稳定性得分（0-20分）
         stab_result = validation_results["stability_validation"]
         if stab_result["passed"]:
             stability_score = stab_result["stability_score"]
-            score += stability_score * 20
+            score += stability_score * 15
 
-        # 换手率得分（0-20分）
         turnover_result = validation_results["turnover_validation"]
         if turnover_result["passed"]:
-            # 换手率越低越好
             turnover = turnover_result["turnover"]
-            score += max(20 - turnover * 40, 0)
+            score += max(15 - turnover * 30, 0)
 
         return round(score, 2)
 
