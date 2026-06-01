@@ -57,7 +57,11 @@ Thumbs.db
 data/db/factorflow.db
 .pytest_cache
 todo.md
-tests/
+# Tests (allow test files, ignore cache/output)
+.pytest_cache/
+.hypothesis/
+__pycache__/
+*.pyc
 web_demo.md
 memory/
 docs/
