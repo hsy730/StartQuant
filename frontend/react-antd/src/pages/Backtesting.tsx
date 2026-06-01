@@ -36,6 +36,7 @@ import dayjs from 'dayjs'
 import type { Dayjs } from 'dayjs'
 import * as echarts from 'echarts'
 import axios from 'axios'
+import PreprocessingConfigPanel, { PreprocessingConfig } from '@/components/PreprocessingConfigPanel'
 import './Backtesting.css'
 
 const { RangePicker } = DatePicker
@@ -111,6 +112,17 @@ const Backtesting: React.FC = () => {
   const [strategyModalVisible, setStrategyModalVisible] = useState(false)
   const [currentStrategyName, setCurrentStrategyName] = useState('')
   const [activeTab, setActiveTab] = useState<string>('single')
+
+  // 数据预处理配置
+  const [preprocessingConfig, setPreprocessingConfig] = useState<PreprocessingConfig>({
+    mode: 'smart',
+    winsorize_method: 'mad',
+    winsorize_n_sigma: 3.0,
+    enable_market_cap_neutralization: true,
+    enable_industry_neutralization: true,
+    standardize_method: 'zscore',
+    handle_missing: 'fill_zero'
+  })
 
   // ========== 生命周期 ==========
   useEffect(() => {
@@ -729,6 +741,19 @@ const Backtesting: React.FC = () => {
                               <Radio value="short">做空</Radio>
                             </Radio.Group>
                           </Form.Item>
+
+                          <Divider />
+
+                          {/* 数据预处理配置 */}
+                          <PreprocessingConfigPanel
+                            value={preprocessingConfig}
+                            onChange={setPreprocessingConfig}
+                            stockCodes={form.getFieldValue('stock_codes') || []}
+                            factorNames={form.getFieldValue('factor_names') || [form.getFieldValue('factor_name')] || []}
+                            startDate={form.getFieldValue('dateRange')?.[0]?.format('YYYY-MM-DD')}
+                            endDate={form.getFieldValue('dateRange')?.[1]?.format('YYYY-MM-DD')}
+                            size="small"
+                          />
 
                           <Divider />
 

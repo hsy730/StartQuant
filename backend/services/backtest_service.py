@@ -25,6 +25,10 @@ from backend.services.strategy_registry import strategy_registry
 from backend.services.strategy_comparison_service import strategy_comparison_service
 from backend.services.position_analysis_service import position_analysis_service
 from backend.services.export_service import export_service
+from backend.services.factor_preprocessing_pipeline import (
+    FactorPreprocessingPipeline,
+    PreprocessingConfig,
+)
 
 
 class BacktestService:
@@ -253,14 +257,31 @@ class BacktestService:
         if "date" in df.columns:
             df = df.sort_values("date")
 
-        # 1. 标准化因子值（Z-score）
-        for factor_name in factor_names:
-            if factor_name in df.columns:
-                df[f"{factor_name}_std"] = (
-                    df[factor_name] - df[factor_name].rolling(252, min_periods=1).mean()
-                ) / df[factor_name].rolling(252, min_periods=1).std()
-                # 填充NaN
-                df[f"{factor_name}_std"] = df[f"{factor_name}_std"].fillna(0)
+        # 【核心改进】使用统一的预处理管道对因子进行完整美颜
+        # 原来的做法：只做Z-score标准化（不完整）
+        # 现在的做法：去极值 → 中性化 → 标准化（业界标准）
+        preprocessing_pipeline = FactorPreprocessingPipeline(config=PreprocessingConfig(
+            winsorize_method="mad",
+            enable_market_cap_neutralization=("market_cap" in df.columns),
+            enable_industry_neutralization=("industry" in df.columns),
+            standardize_method="zscore",
+            cross_sectional=True,  # 回测时使用横截面模式
+        ))
+
+        # 处理所有因子列
+        factor_columns_to_process = [fn for fn in factor_names if fn in df.columns]
+        if factor_columns_to_process:
+            df, _ = preprocessing_pipeline.process_factor_dataframe(
+                df=df,
+                factor_columns=factor_columns_to_process,
+                date_column="date" if "date" in df.columns else None,
+                parallel=False,  # 单DataFrame不需要并行
+            )
+
+            # 将处理后的因子重命名为_std后缀（保持向后兼容）
+            for factor_name in factor_columns_to_process:
+                if f"{factor_name}_std" not in df.columns:
+                    df[f"{factor_name}_std"] = df[factor_name]
 
         std_factor_names = [f"{fn}_std" for fn in factor_names]
 

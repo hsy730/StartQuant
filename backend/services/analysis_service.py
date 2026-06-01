@@ -29,6 +29,11 @@ from backend.models.factor import AnalysisCacheModel
 from backend.services.factor_service import factor_service
 from backend.services.alphalens_analysis_service import alphalens_analysis_service, ALPHALENS_AVAILABLE
 from backend.services.data_service import data_service
+from backend.services.factor_preprocessing_pipeline import (
+    FactorPreprocessingPipeline,
+    PreprocessingConfig,
+    default_pipeline,
+)
 
 
 class AnalysisService:
@@ -161,6 +166,25 @@ class AnalysisService:
 
         if not factor_data:
             raise ValueError("未能获取任何有效的因子数据")
+
+        # 【核心改进】对因子数据进行完整的"美颜"预处理
+        # 业界标准流程：去极值 → 中性化(市值+行业) → 标准化
+        logger.info("开始执行因子数据美颜处理...")
+        preprocessing_pipeline = FactorPreprocessingPipeline(config=PreprocessingConfig(
+            winsorize_method="mad",  # MAD法对肥尾分布最稳健
+            enable_market_cap_neutralization=True,
+            enable_industry_neutralization=True,
+            standardize_method="zscore",
+            cross_sectional=(len(stock_codes) > 1),  # 多股票时使用横截面模式
+        ))
+
+        factor_data, preprocessing_stats = preprocessing_pipeline.process_multi_stock_factors(
+            factor_data=factor_data,
+            factor_names=factor_names,
+            parallel_stocks=(len(stock_codes) > 3),  # 股票数>3时启用并行
+        )
+
+        logger.info(f"因子数据美颜完成，统计信息:\n{preprocessing_pipeline.get_processing_summary(preprocessing_stats)}")
 
         # 检查缓存（仅获取分析结果，factor_data 已重新计算）
         if use_cache:

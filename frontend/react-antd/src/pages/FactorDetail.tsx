@@ -35,6 +35,7 @@ import {
 import { WarningOutlined } from '@ant-design/icons'
 import * as echarts from 'echarts'
 import { api } from '@/services/api'
+import PreprocessingConfigPanel, { PreprocessingConfig } from '@/components/PreprocessingConfigPanel'
 import './FactorDetail.css'
 import dayjs from 'dayjs'
 
@@ -243,6 +244,17 @@ const FactorDetail: React.FC = () => {
   const [monitoringData, setMonitoringData] = useState<any>(null)
   const [loadingAnalysisTabs, setLoadingAnalysisTabs] = useState(false)
   const [activeTabKey, setActiveTabKey] = useState<string>('chart')
+
+  // 数据预处理配置
+  const [preprocessingConfig, setPreprocessingConfig] = useState<PreprocessingConfig>({
+    mode: 'smart',
+    winsorize_method: 'mad',
+    winsorize_n_sigma: 3.0,
+    enable_market_cap_neutralization: true,
+    enable_industry_neutralization: true,
+    standardize_method: 'zscore',
+    handle_missing: 'fill_zero'
+  })
 
   // 图表容器引用
   const distributionChartRef = useRef<HTMLDivElement>(null)
@@ -2620,6 +2632,16 @@ const FactorDetail: React.FC = () => {
                   </Col>
                 </Row>
               </Card>
+
+              {/* 数据预处理配置面板 */}
+              <PreprocessingConfigPanel
+                value={preprocessingConfig}
+                onChange={setPreprocessingConfig}
+                stockCodes={stockCodes}
+                factorNames={factor ? [factor.code] : []}
+                startDate={customStartDate || undefined}
+                endDate={customEndDate || undefined}
+              />
 
               {/* 分析Tab页 */}
               <Card className="analysis-tabs-card" variant="borderless" style={{ marginTop: '16px' }}>
