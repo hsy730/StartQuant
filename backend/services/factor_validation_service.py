@@ -231,6 +231,7 @@ class FactorValidationService:
 
         if ic_std > 0:
             ir = ic_mean / ic_std
+            ir = min(ir, 5.0)
         else:
             ir = 0.0
 

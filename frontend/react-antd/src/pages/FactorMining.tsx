@@ -55,6 +55,7 @@ interface MinedFactor {
   ic: number;
   ir: number;
   fitness: number;
+  source?: string;
 }
 
 interface MiningStatus {
@@ -153,6 +154,13 @@ const FactorMining: React.FC = () => {
       use_extended_primitives: true,
       max_tree_depth: 17,
       use_nsga2: true,
+      algorithm: "dual",
+      pysr_niterations: 40,
+      pysr_populations: 30,
+      pysr_maxsize: 30,
+      pysr_maxdepth: 5,
+      pysr_parsimony: 0.0032,
+      pysr_procs: 8,
     });
 
     return () => {
@@ -243,6 +251,13 @@ const FactorMining: React.FC = () => {
       use_extended_primitives: values.use_extended_primitives ?? true,
       max_tree_depth: values.max_tree_depth ?? 17,
       use_nsga2: values.use_nsga2 ?? true,
+      algorithm: values.algorithm ?? "dual",
+      pysr_niterations: values.pysr_niterations ?? 40,
+      pysr_populations: values.pysr_populations ?? 30,
+      pysr_maxsize: values.pysr_maxsize ?? 30,
+      pysr_maxdepth: values.pysr_maxdepth ?? 5,
+      pysr_parsimony: values.pysr_parsimony ?? 0.0032,
+      pysr_procs: values.pysr_procs ?? 8,
     };
 
     try {
@@ -658,9 +673,10 @@ const FactorMining: React.FC = () => {
           .replace(/\blow\b/g, "df['low']")
           .replace(/\bvolume\b/g, "df['volume']");
 
+        const sourceLabel = factor.source === "pysr" ? "PySR符号回归" : factor.source === "genetic" ? "遗传规划" : "因子挖掘";
         return `def calculate_factor(df):
     """
-    遗传算法挖掘因子
+    ${sourceLabel}挖掘因子
     表达式: ${expr}
     IC: ${factor.ic?.toFixed(4)}
     IR: ${factor.ir?.toFixed(4)}
@@ -677,11 +693,12 @@ const FactorMining: React.FC = () => {
 `;
       };
 
+      const sourceLabel2 = factor.source === "pysr" ? "PySR符号回归" : factor.source === "genetic" ? "遗传规划" : "因子挖掘";
       const factorData = {
         name: factorName,
         code: generateFactorFunction(factor.expression),
         category: "遗传挖掘",
-        description: `通过遗传算法挖掘的因子 | 表达式: ${factor.expression} | IC: ${factor.ic?.toFixed(4)} | IR: ${factor.ir?.toFixed(4)} | 适应度: ${factor.fitness?.toFixed(4)}`,
+        description: `通过${sourceLabel2}挖掘的因子 | 表达式: ${factor.expression} | IC: ${factor.ic?.toFixed(4)} | IR: ${factor.ir?.toFixed(4)} | 适应度: ${factor.fitness?.toFixed(4)}`,
         formula_type: "function",
       };
 
@@ -744,9 +761,10 @@ const FactorMining: React.FC = () => {
           .replace(/\blow\b/g, "df['low']")
           .replace(/\bvolume\b/g, "df['volume']");
 
+        const srcLbl = factor.source === "pysr" ? "PySR符号回归" : factor.source === "genetic" ? "遗传规划" : "因子挖掘";
         const factorCode = `def calculate_factor(df):
     """
-    遗传算法挖掘因子
+    ${srcLbl}挖掘因子
     表达式: ${factor.expression}
     IC: ${factor.ic?.toFixed(4)}
     IR: ${factor.ir?.toFixed(4)}
@@ -765,7 +783,7 @@ const FactorMining: React.FC = () => {
           name: factorName,
           code: factorCode,
           category: "遗传挖掘",
-          description: `通过遗传算法挖掘的因子 | 表达式: ${factor.expression} | IC: ${factor.ic?.toFixed(4)} | IR: ${factor.ir?.toFixed(4)} | 适应度: ${factor.fitness?.toFixed(4)}`,
+          description: `通过${srcLbl}挖掘的因子 | 表达式: ${factor.expression} | IC: ${factor.ic?.toFixed(4)} | IR: ${factor.ir?.toFixed(4)} | 适应度: ${factor.fitness?.toFixed(4)}`,
           formula_type: "function",
         };
 
@@ -843,9 +861,10 @@ const FactorMining: React.FC = () => {
           .replace(/\blow\b/g, "df['low']")
           .replace(/\bvolume\b/g, "df['volume']");
 
+        const srcLbl3 = factor.source === "pysr" ? "PySR符号回归" : factor.source === "genetic" ? "遗传规划" : "因子挖掘";
         const factorCode = `def calculate_factor(df):
     """
-    遗传算法挖掘因子
+    ${srcLbl3}挖掘因子
     表达式: ${factor.expression}
     IC: ${factor.ic?.toFixed(4)}
     IR: ${factor.ir?.toFixed(4)}
@@ -864,7 +883,7 @@ const FactorMining: React.FC = () => {
           name: factorName,
           code: factorCode,
           category: "遗传挖掘",
-          description: `通过遗传算法挖掘的因子 | 表达式: ${factor.expression} | IC: ${factor.ic?.toFixed(4)} | IR: ${factor.ir?.toFixed(4)} | 适应度: ${factor.fitness?.toFixed(4)}`,
+          description: `通过${srcLbl3}挖掘的因子 | 表达式: ${factor.expression} | IC: ${factor.ic?.toFixed(4)} | IR: ${factor.ir?.toFixed(4)} | 适应度: ${factor.fitness?.toFixed(4)}`,
           formula_type: "function",
         };
 
@@ -940,7 +959,7 @@ const FactorMining: React.FC = () => {
             <div>
               <h1 className="page-title">因子挖掘</h1>
               <p className="page-subtitle">
-                使用遗传算法自动发现最优因子表达式
+                使用遗传算法与符号回归自动发现最优因子表达式
               </p>
             </div>
           </div>
@@ -949,7 +968,7 @@ const FactorMining: React.FC = () => {
         <Row gutter={[24, 24]}>
           {/* 左侧配置面板 */}
           <Col xs={24} lg={8}>
-            <Card title="遗传算法配置" className="config-card">
+            <Card title="因子挖掘配置" className="config-card">
               <Form form={form} layout="vertical" onFinish={startMining}>
                 {/* 基础配置 */}
                 <Divider
@@ -980,7 +999,11 @@ const FactorMining: React.FC = () => {
                         name="stock_pool_id"
                         rules={[{ required: true, message: "请选择预设股票池" }]}
                       >
-                        <Select placeholder="选择股票池" loading={loadingPoolStocks}>
+                        <Select
+                          placeholder={stockPools.length > 0 ? "选择股票池" : "加载中..."}
+                          loading={loadingPoolStocks || stockPools.length === 0}
+                          key={`pool-select-${stockPools.length}`}
+                        >
                           {stockPools.map((pool: any) => (
                             <Option key={pool.id} value={pool.id}>{pool.name}</Option>
                           ))}
@@ -1155,64 +1178,189 @@ const FactorMining: React.FC = () => {
                   算法参数
                 </Divider>
 
-                <Row gutter={16}>
-                  <Col span={12}>
-                    <Form.Item
-                      label="种群大小"
-                      name="population_size"
-                      tooltip="每一代的个体数量"
-                    >
-                      <InputNumber
-                        min={10}
-                        max={200}
-                        style={{ width: "100%" }}
-                      />
-                    </Form.Item>
-                  </Col>
-                  <Col span={12}>
-                    <Form.Item
-                      label="迭代次数"
-                      name="n_generations"
-                      tooltip="进化代数"
-                    >
-                      <InputNumber
-                        min={1}
-                        max={100}
-                        style={{ width: "100%" }}
-                      />
-                    </Form.Item>
-                  </Col>
-                </Row>
-
-                <Row gutter={16}>
-                  <Col span={12}>
-                    <Form.Item label="变异率" name="mutation_rate">
-                      <InputNumber
-                        min={0}
-                        max={1}
-                        step={0.05}
-                        style={{ width: "100%" }}
-                      />
-                    </Form.Item>
-                  </Col>
-                  <Col span={12}>
-                    <Form.Item label="交叉率" name="crossover_rate">
-                      <InputNumber
-                        min={0}
-                        max={1}
-                        step={0.05}
-                        style={{ width: "100%" }}
-                      />
-                    </Form.Item>
-                  </Col>
-                </Row>
-
                 <Form.Item
-                  label="精英保留数量"
-                  name="elite_size"
-                  tooltip="每代保留的最优个体数"
+                  label="挖掘算法"
+                  name="algorithm"
+                  tooltip="选择因子挖掘算法：双算法并行同时运行遗传规划和PySR，取更优结果"
                 >
-                  <InputNumber min={0} max={20} style={{ width: "100%" }} />
+                  <Select>
+                    <Option value="dual">双算法并行（推荐）</Option>
+                    <Option value="genetic">仅遗传规划 (DEAP)</Option>
+                    <Option value="pysr">仅符号回归 (PySR)</Option>
+                  </Select>
+                </Form.Item>
+
+                <Form.Item noStyle shouldUpdate>
+                  {() => {
+                    const algo = form.getFieldValue("algorithm") || "dual";
+                    const showGP = algo === "genetic" || algo === "dual";
+                    const showPySR = algo === "pysr" || algo === "dual";
+                    return (
+                      <>
+                        {showGP && (
+                          <div style={{ marginBottom: 16, padding: "12px 16px", background: "rgba(59,130,246,0.05)", borderRadius: 8, border: "1px solid rgba(59,130,246,0.15)" }}>
+                            <div style={{ fontWeight: 600, marginBottom: 8, color: "#3b82f6", fontSize: 13 }}>
+                              🧬 遗传规划参数 (DEAP)
+                            </div>
+                            <Row gutter={16}>
+                              <Col span={12}>
+                                <Form.Item
+                                  label="种群大小"
+                                  name="population_size"
+                                  tooltip="每一代的个体数量"
+                                >
+                                  <InputNumber
+                                    min={10}
+                                    max={200}
+                                    style={{ width: "100%" }}
+                                  />
+                                </Form.Item>
+                              </Col>
+                              <Col span={12}>
+                                <Form.Item
+                                  label="迭代次数"
+                                  name="n_generations"
+                                  tooltip="进化代数"
+                                >
+                                  <InputNumber
+                                    min={1}
+                                    max={100}
+                                    style={{ width: "100%" }}
+                                  />
+                                </Form.Item>
+                              </Col>
+                            </Row>
+
+                            <Row gutter={16}>
+                              <Col span={12}>
+                                <Form.Item label="变异率" name="mutation_rate">
+                                  <InputNumber
+                                    min={0}
+                                    max={1}
+                                    step={0.05}
+                                    style={{ width: "100%" }}
+                                  />
+                                </Form.Item>
+                              </Col>
+                              <Col span={12}>
+                                <Form.Item label="交叉率" name="crossover_rate">
+                                  <InputNumber
+                                    min={0}
+                                    max={1}
+                                    step={0.05}
+                                    style={{ width: "100%" }}
+                                  />
+                                </Form.Item>
+                              </Col>
+                            </Row>
+
+                            <Form.Item
+                              label="精英保留数量"
+                              name="elite_size"
+                              tooltip="每代保留的最优个体数"
+                            >
+                              <InputNumber min={0} max={20} style={{ width: "100%" }} />
+                            </Form.Item>
+                          </div>
+                        )}
+
+                        {showPySR && (
+                          <div style={{ marginBottom: 16, padding: "12px 16px", background: "rgba(168,85,247,0.05)", borderRadius: 8, border: "1px solid rgba(168,85,247,0.15)" }}>
+                            <div style={{ fontWeight: 600, marginBottom: 8, color: "#a855f7", fontSize: 13 }}>
+                              🔬 符号回归参数 (PySR)
+                            </div>
+                            <Row gutter={16}>
+                              <Col span={12}>
+                                <Form.Item
+                                  label="迭代次数"
+                                  name="pysr_niterations"
+                                  tooltip="PySR搜索迭代次数"
+                                >
+                                  <InputNumber
+                                    min={10}
+                                    max={200}
+                                    style={{ width: "100%" }}
+                                  />
+                                </Form.Item>
+                              </Col>
+                              <Col span={12}>
+                                <Form.Item
+                                  label="种群数"
+                                  name="pysr_populations"
+                                  tooltip="并行种群数量"
+                                >
+                                  <InputNumber
+                                    min={5}
+                                    max={100}
+                                    style={{ width: "100%" }}
+                                  />
+                                </Form.Item>
+                              </Col>
+                            </Row>
+
+                            <Row gutter={16}>
+                              <Col span={12}>
+                                <Form.Item
+                                  label="最大表达式大小"
+                                  name="pysr_maxsize"
+                                  tooltip="表达式最大节点数"
+                                >
+                                  <InputNumber
+                                    min={5}
+                                    max={50}
+                                    style={{ width: "100%" }}
+                                  />
+                                </Form.Item>
+                              </Col>
+                              <Col span={12}>
+                                <Form.Item
+                                  label="最大表达式深度"
+                                  name="pysr_maxdepth"
+                                  tooltip="表达式最大嵌套深度"
+                                >
+                                  <InputNumber
+                                    min={2}
+                                    max={10}
+                                    style={{ width: "100%" }}
+                                  />
+                                </Form.Item>
+                              </Col>
+                            </Row>
+
+                            <Row gutter={16}>
+                              <Col span={12}>
+                                <Form.Item
+                                  label="简约系数"
+                                  name="pysr_parsimony"
+                                  tooltip="惩罚复杂表达式，值越大越偏好简洁方程"
+                                >
+                                  <InputNumber
+                                    min={0}
+                                    max={0.1}
+                                    step={0.0005}
+                                    style={{ width: "100%" }}
+                                  />
+                                </Form.Item>
+                              </Col>
+                              <Col span={12}>
+                                <Form.Item
+                                  label="并行进程数"
+                                  name="pysr_procs"
+                                  tooltip="Julia后端并行进程数"
+                                >
+                                  <InputNumber
+                                    min={1}
+                                    max={32}
+                                    style={{ width: "100%" }}
+                                  />
+                                </Form.Item>
+                              </Col>
+                            </Row>
+                          </div>
+                        )}
+                      </>
+                    );
+                  }}
                 </Form.Item>
 
                 {/* 适应度函数 */}
@@ -1398,7 +1546,7 @@ const FactorMining: React.FC = () => {
                     配置参数后点击"开始挖掘"按钮
                   </p>
                   <p className="placeholder-hint">
-                    遗传算法将自动搜索最优因子表达式
+                    遗传规划与符号回归将自动搜索最优因子表达式
                   </p>
                 </div>
               )}
@@ -1579,6 +1727,9 @@ const FactorMining: React.FC = () => {
                             <div className="factor-info">
                               <Space>
                                 <Tag color="blue">Top {index + 1}</Tag>
+                                <Tag color={factor.source === "pysr" ? "purple" : factor.source === "genetic" ? "blue" : "default"}>
+                                  {factor.source === "pysr" ? "PySR" : factor.source === "genetic" ? "GP" : factor.source === "simulated" ? "模拟" : "混合"}
+                                </Tag>
                                 <span className="factor-name">
                                   {factor.name || `Factor_${index + 1}`}
                                 </span>
