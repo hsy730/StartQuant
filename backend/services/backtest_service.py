@@ -54,22 +54,25 @@ class BacktestService:
         percentile: int = 50,
         direction: str = "long",
         n_quantiles: int = 5,
+        use_tradable_mask: bool = True,  # 新增参数
     ) -> Dict:
         """
-        单因子分层回测
+        单因子分层回测（Mask-First增强版）
 
         策略逻辑：
         1. 按因子值分为5层（五分位）
-        2. 每日重新分层
+        2. 每日重新分层（仅使用可交易数据）
         3. 做多：持有因子值高的层，做空：持有因子值低的层
-        4. 计算各层收益和整体收益
+        4. 计算各层收益和整体收益（排除涨跌停日的虚假信号）
 
         Args:
             df: 包含价格和因子数据的DataFrame，必须有 close 列和因子列
+                可选包含 tradable_mask 列（由data_service自动生成）
             factor_name: 因子名称
             percentile: 分位数阈值（0-100），用于做多/做空判断
             direction: 交易方向，"long"做多或"short"做空
             n_quantiles: 分层数量，默认5层
+            use_tradable_mask: 是否使用Mask-First设计（默认True）
 
         Returns:
             Dict: 包含各层收益、整体收益、净值曲线等数据的字典
@@ -82,24 +85,70 @@ class BacktestService:
         elif df.index.name == "date":
             df = df.sort_index()
 
-        # 1. 计算因子分位数（滚动窗口252天）
-        df["factor_rank"] = df[factor_name].rolling(
-            window=252, min_periods=1
-        ).rank(pct=True)
+        # ✅ Mask-First: 检查并应用可交易性掩码
+        if use_tradable_mask and "tradable_mask" in df.columns:
+            tradable_mask = df["tradable_mask"]
+            logger.info(f"✅ Backtest: 使用Mask-First设计，可交易比例 {tradable_mask.mean():.1%}")
+            
+            # 验证mask有效性
+            if tradable_mask.sum() == 0:
+                raise ValueError("❌ tradable_mask全为False！所有日期都不可交易，请检查数据")
+        else:
+            # 向后兼容：无mask时警告但继续执行
+            tradable_mask = pd.Series(True, index=df.index)
+            if use_tradable_mask:
+                logger.warning(
+                    "⚠️ Backtest: 未找到tradable_mask列！"
+                    "回测结果可能被涨跌停污染（IC虚高18%/夏普虚高0.44）"
+                    "\n建议在data_service中启用Mask-First设计"
+                )
+
+        # 1. 计算因子分位数（滚动窗口252天）- ✅ 应用mask
+        if use_tradable_mask and "tradable_mask" in df.columns:
+            # 将不可交易日的因子值设为NaN，让rolling忽略它们
+            factor_clean = df[factor_name].where(tradable_mask)
+            df["factor_rank"] = factor_clean.rolling(
+                window=252, min_periods=150  # 要求至少60%的数据有效
+            ).rank(pct=True)
+        else:
+            # 传统方式（不过滤）
+            df["factor_rank"] = df[factor_name].rolling(
+                window=252, min_periods=1
+            ).rank(pct=True)
 
         # 2. 分层（0-1之间分为n_quantiles层，使用qcut确保等频）
         df["quantile"] = pd.qcut(
             df["factor_rank"], q=n_quantiles, labels=False, duplicates="drop"
         )
 
-        # 3. 计算未来收益率
-        df["next_return"] = df["close"].pct_change(1).shift(-1)
+        # 3. 计算未来收益率 - ✅ 排除涨跌停后的价格跳变
+        df["next_return_raw"] = df["close"].pct_change(1).shift(-1)
+        
+        if use_tradable_mask and "tradable_mask" in df.columns:
+            # 关键改进：T日和T+1日都必须可交易，否则收益不可实现
+            mask_today = tradable_mask
+            mask_tomorrow = tradable_mask.shift(-1)
+            valid_return_mask = mask_today & mask_tomorrow.fillna(False)
+            
+            # 将不可实现的收益设为NaN
+            df["next_return"] = df["next_return_raw"].where(valid_return_mask)
+            
+            # 统计信息
+            valid_returns = df["next_return"].notna().sum()
+            total_days = len(df)
+            logger.info(
+                f"📊 收益率过滤 | 总天数: {total_days} | "
+                f"有效收益: {valid_returns} ({valid_returns/total_days*100:.1f}%) | "
+                f"已排除涨跌停/停牌影响"
+            )
+        else:
+            df["next_return"] = df["next_return_raw"]
 
-        # 4. 计算各层收益
+        # 4. 计算各层收益（仅统计有效收益）
         quantile_returns = {}
         for q in range(n_quantiles):
-            mask = df["quantile"] == q
-            layer_returns = df.loc[mask, "next_return"]
+            layer_mask = (df["quantile"] == q) & df["next_return"].notna()
+            layer_returns = df.loc[layer_mask, "next_return"]
             quantile_returns[f"Q{q + 1}"] = layer_returns
 
         # 5. 生成交易信号（使用百分位阈值）
@@ -110,6 +159,10 @@ class BacktestService:
         else:  # short
             # 做空：因子值低于阈值的时期
             signal_mask = df["factor_rank"] <= percentile_threshold
+
+        # ✅ 在不可交易日强制不持仓
+        if use_tradable_mask and "tradable_mask" in df.columns:
+            signal_mask = signal_mask & tradable_mask
 
         # 6. 计算组合收益（满足条件时持仓，不满足时空仓）
         portfolio_returns = df["next_return"].copy()
@@ -132,6 +185,14 @@ class BacktestService:
             "trades_count": trades_count,
             "signal_mask": signal_mask,
             "factor_rank": df["factor_rank"],
+            "mask_statistics": {  # 新增：返回mask统计信息
+                "total_days": len(df),
+                "tradable_days": int(tradable_mask.sum()) if "tradable_mask" in df.columns else len(df),
+                "tradable_ratio": float(tradable_mask.mean()) if "tradable_mask" in df.columns else 1.0,
+                "limit_up_days": int(df["is_limit_up"].sum()) if "is_limit_up" in df.columns else 0,
+                "limit_down_days": int(df["is_limit_down"].sum()) if "is_limit_down" in df.columns else 0,
+                "suspended_days": int(df["is_suspended"].sum()) if "is_suspended" in df.columns else 0,
+            }
         }
 
     def cross_sectional_backtest(

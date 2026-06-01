@@ -1,25 +1,84 @@
 """
 数据服务模块 - 股票数据获取与缓存
+
+Mask-First设计：在数据加载阶段即构建可交易性掩码(tradable_mask)，
+确保所有下游计算（滚动窗口、相关系数、排名）都不会被涨跌停价格污染。
+
+核心原理：
+- 涨停/跌停价格不可交易，但会污染rolling/corr等窗口计算
+- 即便事后删除这些行，计算时已经被污染
+- 解决方案：在数据加载时就标记不可交易日，让所有算子接收并传递mask
 """
 import hashlib
+import re
+import logging
 from pathlib import Path
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Tuple
+from dataclasses import dataclass
+from enum import Enum
 import pandas as pd
+import numpy as np
 import akshare as ak
 
 from backend.core.settings import settings
 from backend.services.cache_service import cache_service
 from backend.services.data_preprocessing_service import data_preprocessing_service
 
+logger = logging.getLogger(__name__)
+
+
+class MarketBoard(str, Enum):
+    """市场板块枚举"""
+    MAIN = "main"              # 主板 (60xxxx, 00xxxx) - ±10%
+    CHINEXT = "chinext"        # 创业板 (30xxxx) - ±20%
+    STAR = "star"              # 科创板 (68xxxx) - ±20%
+    BEIJING = "beijing"        # 北交所 (8xxxx, 4xxxx) - ±30%
+
+
+@dataclass
+class TradableMaskConfig:
+    """可交易性掩码配置"""
+    check_limit_up: bool = True           # 是否检测涨停
+    check_limit_down: bool = True         # 是否检测跌停
+    check_suspended: bool = True          # 是否检测停牌
+    check_new_stock: bool = True          # 是否过滤新股（上市<250天）
+    new_stock_threshold: int = 250         # 新股上市天数阈值
+    volume_threshold: float = 0.0         # 成交量阈值（<=此值视为停牌）
+
 
 class DataService:
-    """数据服务类 - 负责股票数据获取和缓存"""
+    """数据服务类 - 负责股票数据获取和缓存（Mask-First设计）"""
 
     def __init__(self):
         self.cache_dir = settings.AKSHARE_CACHE_DIR
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.cache_service = cache_service
         self.preprocessing = data_preprocessing_service
+        
+        # 市场板块配置（涨跌幅限制）
+        # 注意：顺序很重要！更具体的模式应该放在前面
+        self._board_config = {
+            MarketBoard.STAR: {
+                "code_pattern": r"^68[89]\d{3}$|^68\d{4}$",  # 科创板 (688xxx-689999)
+                "price_limit": 0.20,      # ±20%
+                "description": "科创板市场",
+            },
+            MarketBoard.CHINEXT: {
+                "code_pattern": r"^3\d{5}",  # 创业板 (300xxx)
+                "price_limit": 0.20,      # ±20%
+                "description": "创业板市场",
+            },
+            MarketBoard.BEIJING: {
+                "code_pattern": r"^4\d{4}|^8[0-3]\d{3}|^87\d{3}",  # 北交所 (4xxxx, 8xxxx)
+                "price_limit": 0.30,      # ±30%
+                "description": "北交所市场",
+            },
+            MarketBoard.MAIN: {
+                "code_pattern": r"^(6[0-57-9]\d{4}|0\d{5}|6\d{5})$",  # 主板 (600xxx, 000xxx, 排除科创板)
+                "price_limit": 0.10,      # ±10%
+                "description": "主板市场",
+            },
+        }
 
     def _get_cache_key(self, stock_code: str, start_date: str, end_date: str) -> str:
         """生成缓存键"""
@@ -108,8 +167,8 @@ class DataService:
             # 标准化列名
             df = self._standardize_columns(df)
 
-            # 数据预处理
-            df = self._preprocess_data(df)
+            # ✅ 数据预处理（Mask-First设计 - 在此阶段构建tradable_mask）
+            df = self._preprocess_data(df, stock_code=stock_code)
 
             # 保存到智能缓存
             if use_cache and settings.AKSHARE_CACHE_ENABLED:
@@ -205,10 +264,214 @@ class DataService:
 
         return result
 
-    def _preprocess_data(self, df: pd.DataFrame) -> pd.DataFrame:
+    def _identify_market_board(self, stock_code: str) -> MarketBoard:
+        """
+        识别股票所属市场板块
+
+        Args:
+            stock_code: 股票代码（纯数字，如"000001"）
+
+        Returns:
+            MarketBoard枚举值
+        """
+        # 提取纯数字代码
+        pure_code = stock_code.replace(".SH", "").replace(".SZ", "").strip()
+
+        for board, config in self._board_config.items():
+            if re.match(config["code_pattern"], pure_code):
+                return board
+
+        # 默认返回主板
+        logger.warning(f"无法识别股票 {stock_code} 的市场板块，默认为主板")
+        return MarketBoard.MAIN
+
+    def _detect_price_limits(
+        self,
+        df: pd.DataFrame,
+        stock_code: str,
+        config: Optional[TradableMaskConfig] = None
+    ) -> pd.DataFrame:
+        """
+        检测涨跌停并构建可交易性掩码（Mask-First核心方法）
+
+        这是解决A股涨跌停污染问题的关键：
+        1. 计算理论涨跌停价格
+        2. 检测实际是否触及涨跌停
+        3. 标记停牌日
+        4. 构建tradable_mask列供所有下游算子使用
+
+        Args:
+            df: OHLCV数据框（必须包含open/high/low/close/volume列）
+            stock_code: 股票代码
+            config: 掩码配置（可选）
+
+        Returns:
+            添加了以下列的DataFrame:
+            - is_limit_up: 是否涨停（bool）
+            - is_limit_down: 是否跌停（bool）
+            - is_suspended: 是否停牌（bool）
+            - tradable_mask: 可交易性掩码（bool，True=可交易）
+        """
+        if config is None:
+            config = TradableMaskConfig()
+
+        df = df.copy()
+
+        # 确保必要的列存在
+        required_cols = ["open", "high", "low", "close", "volume"]
+        missing_cols = [col for col in required_cols if col not in df.columns]
+        if missing_cols:
+            raise ValueError(f"缺少必要列: {missing_cols}")
+
+        # 1. 识别市场板块并获取涨跌幅限制
+        board = self._identify_market_board(stock_code)
+        price_limit = self._board_config[board]["price_limit"]
+
+        # 2. 计算前一日收盘价（用于计算涨跌停价格）
+        df["prev_close"] = df["close"].shift(1)
+
+        # 3. 计算理论涨跌停价格
+        df["limit_up_price"] = df["prev_close"] * (1 + price_limit)
+        df["limit_down_price"] = df["prev_close"] * (1 - price_limit)
+
+        # 4. 检测涨停
+        if config.check_limit_up:
+            # 一字涨停：最高价>=涨停价 且 最低价==最高价（全天封死）
+            df["is_limit_up"] = (
+                (df["high"] >= df["limit_up_price"]) &
+                (df["low"] == df["high"])
+            ).fillna(False)
+            
+            # 额外检测：收盘价==涨停价（触及涨停）
+            df["touched_limit_up"] = (
+                df["close"] >= df["limit_up_price"] * 0.999  # 允许0.1%误差
+            ).fillna(False)
+        else:
+            df["is_limit_up"] = False
+            df["touched_limit_up"] = False
+
+        # 5. 检测跌停
+        if config.check_limit_down:
+            # 一字跌停：最低价<=跌停价 且 最低价==最高价
+            df["is_limit_down"] = (
+                (df["low"] <= df["limit_down_price"]) &
+                (df["low"] == df["high"])
+            ).fillna(False)
+            
+            # 触及跌停
+            df["touched_limit_down"] = (
+                df["close"] <= df["limit_down_price"] * 1.001  # 允许0.1%误差
+            ).fillna(False)
+        else:
+            df["is_limit_down"] = False
+            df["touched_limit_down"] = False
+
+        # 6. 检测停牌（成交量异常低或缺失）
+        if config.check_suspended:
+            df["is_suspended"] = (
+                (df["volume"] <= config.volume_threshold) |
+                df["volume"].isna()
+            ).fillna(True)  # 缺失成交量视为停牌
+        else:
+            df["is_suspended"] = False
+
+        # 7. 检测新股（可选：上市不足N天）
+        if config.check_new_stock and len(df) > 0:
+            # 假设第一行就是上市日（简化处理）
+            days_since_listing = (df.index - df.index[0]).days
+            df["is_new_stock"] = days_since_listing < config.new_stock_threshold
+        else:
+            df["is_new_stock"] = False
+
+        # 8. 构建核心的可交易性掩码（Mask-First的灵魂！）
+        mask_conditions = []
+
+        if config.check_limit_up:
+            # 排除涨停日（买不进去）
+            mask_conditions.append(~df["is_limit_up"])
+
+        if config.check_limit_down:
+            # 排除跌停日（卖不出来）
+            mask_conditions.append(~df["is_limit_down"])
+
+        if config.check_suspended:
+            # 排除停牌日（无法交易）
+            mask_conditions.append(~df["is_suspended"])
+
+        if config.check_new_stock:
+            # 排除新股（波动异常）
+            mask_conditions.append(~df["is_new_stock"])
+
+        # 所有条件都必须满足（AND逻辑）
+        if mask_conditions:
+            df["tradable_mask"] = pd.concat(mask_conditions, axis=1).all(axis=1)
+        else:
+            df["tradable_mask"] = True
+
+        # 统计信息
+        total_days = len(df)
+        tradable_days = df["tradable_mask"].sum()
+        limit_up_days = df["is_limit_up"].sum()
+        limit_down_days = df["is_limit_down"].sum()
+        suspended_days = df["is_suspended"].sum()
+
+        logger.info(
+            f"📊 Mask-First统计 [{stock_code}] | "
+            f"总天数: {total_days} | "
+            f"可交易: {tradable_days} ({tradable_days/total_days*100:.1f}%) | "
+            f"涨停: {limit_up_days} ({limit_up_days/total_days*100:.1f}%) | "
+            f"跌停: {limit_down_days} ({limit_down_days/total_days*100:.1f}%) | "
+            f"停牌: {suspended_days} ({suspended_days/total_days*100:.1f}%) | "
+            f"市场板块: {board.value}"
+        )
+
+        # 清理中间列（只保留关键列）
+        columns_to_keep = [
+            "open", "high", "low", "close", "volume",
+            "amount", "pct_change", "turnover",  # 原始OHLCV
+            "is_limit_up", "is_limit_down", "is_suspended",  # 状态标记
+            "tradable_mask"  # 核心掩码
+        ]
+        
+        # 保留存在的列
+        final_columns = [col for col in columns_to_keep if col in df.columns]
+        # 也保留其他可能存在的列
+        other_columns = [col for col in df.columns if col not in final_columns and not col.startswith(("limit_", "prev_", "touched_", "is_new"))]
+        
+        return df[final_columns + other_columns]
+
+    def _preprocess_data(self, df: pd.DataFrame, stock_code: str = "") -> pd.DataFrame:
+        """
+        数据预处理（增强版：集成Mask-First设计）
+
+        处理顺序（符合业界标准）：
+        Step 0: 构建tradable_mask ← 新增！最关键的一步
+        Step 1: 缺失值填充
+        Step 2: 异常值检测与处理
+        """
+        # ✅ Step 0: Mask-First - 构建可交易性掩码
+        if stock_code:
+            try:
+                df = self._detect_price_limits(df, stock_code)
+                logger.info(f"✅ Mask-First: 已为 {stock_code} 构建tradable_mask")
+            except Exception as e:
+                logger.warning(f"⚠️ Mask-First构建失败: {e}，将使用默认全True掩码")
+                df["tradable_mask"] = True
+                df["is_limit_up"] = False
+                df["is_limit_down"] = False
+                df["is_suspended"] = False
+        else:
+            # 无股票代码时，默认全部可交易（向后兼容）
+            df["tradable_mask"] = True
+            df["is_limit_up"] = False
+            df["is_limit_down"] = False
+            df["is_suspended"] = False
+
+        # Step 1: 缺失值填充
         if settings.DATA_FILL_MISSING:
             df = df.ffill()
 
+        # Step 2: 异常值检测与处理
         if settings.DATA_OUTLIER_DETECTION:
             price_columns = ["open", "high", "low", "close"]
             window = 20

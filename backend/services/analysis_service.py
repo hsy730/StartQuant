@@ -356,11 +356,44 @@ class AnalysisService:
                 return self._calculate_cross_sectional_ic(factor_data, factor_names)
 
     def _calculate_single_stock_ic(
-        self, factor_data: Dict[str, pd.DataFrame], factor_names: List[str]
+        self, factor_data: Dict[str, pd.DataFrame], factor_names: List[str],
+        use_tradable_mask: bool = True  # 新增参数
     ) -> Dict[str, Any]:
-        """单股票时序IC计算"""
+        """
+        单股票时序IC计算（Mask-First增强版）
+        
+        Args:
+            factor_data: 因子数据字典 {stock_code: DataFrame}
+            factor_names: 因子名称列表
+            use_tradable_mask: 是否使用Mask-First设计（默认True）
+        
+        Returns:
+            包含IC统计、月度IC、滚动IR的字典
+        """
         stock_code = list(factor_data.keys())[0]
         df = factor_data[stock_code]
+
+        # ✅ Mask-First: 检查并应用可交易性掩码
+        if use_tradable_mask and "tradable_mask" in df.columns:
+            tradable_mask = df["tradable_mask"]
+            logger.info(f"✅ IC分析: 使用Mask-First设计，可交易比例 {tradable_mask.mean():.1%}")
+            
+            mask_stats = {
+                "total_days": len(df),
+                "tradable_days": int(tradable_mask.sum()),
+                "tradable_ratio": float(tradable_mask.mean()),
+                "limit_up_days": int(df["is_limit_up"].sum()) if "is_limit_up" in df.columns else 0,
+                "limit_down_days": int(df["is_limit_down"].sum()) if "is_limit_down" in df.columns else 0,
+            }
+        else:
+            tradable_mask = None
+            mask_stats = None
+            
+            if use_tradable_mask:
+                logger.warning(
+                    "⚠️ IC分析: 未找到tradable_mask列！"
+                    "IC可能虚高18%，建议在data_service中启用Mask-First"
+                )
 
         ic_series = {}
         rank_ic_series = {}
@@ -368,26 +401,55 @@ class AnalysisService:
             if factor_name not in df.columns:
                 continue
 
-            # 计算滚动窗口的时序IC（因子值与未来收益率的相关性）
+            # 获取因子值和收益率
             factor_values = df[factor_name]
             return_values = df["future_return_1"]
 
-            # 移除NaN和无穷大值
-            valid_mask = (
-                factor_values.notna() &
-                return_values.notna() &
-                ~np.isinf(factor_values) &
-                ~np.isinf(return_values)
-            )
-            factor_clean = factor_values[valid_mask]
-            return_clean = return_values[valid_mask]
+            # ✅ Mask-First: 应用可交易性掩码
+            if tradable_mask is not None:
+                # 基础有效性检查（非NaN、非无穷大）
+                valid_mask = (
+                    factor_values.notna() &
+                    return_values.notna() &
+                    ~np.isinf(factor_values) &
+                    ~np.isinf(return_values)
+                )
+                
+                # 叠加可交易性掩码（AND逻辑）
+                combined_mask = valid_mask & tradable_mask
+                
+                factor_clean = factor_values[combined_mask]
+                return_clean = return_values[combined_mask]
+                
+                logger.info(
+                    f"📊 因子 [{factor_name}] | "
+                    f"原始数据: {len(factor_values)} | "
+                    f"有效+可交易: {len(factor_clean)} ({len(factor_clean)/len(factor_values)*100:.1f}%)"
+                )
+            else:
+                # 传统方式：仅做基础有效性检查
+                valid_mask = (
+                    factor_values.notna() &
+                    return_values.notna() &
+                    ~np.isinf(factor_values) &
+                    ~np.isinf(return_values)
+                )
+                factor_clean = factor_values[valid_mask]
+                return_clean = return_values[valid_mask]
 
             if len(factor_clean) < 20:  # 至少需要20个数据点
                 continue
 
-            # 计算滚动相关性（窗口大小20）
-            rolling_ic = factor_clean.rolling(window=20).corr(return_clean)
-            rolling_rank_ic = factor_clean.rank().rolling(window=20).corr(return_clean.rank())
+            # 计算滚动相关性（窗口大小20）- ✅ 使用更严格的min_periods
+            if tradable_mask is not None:
+                # Mask-First: 要求至少60%的数据点有效
+                min_periods = max(2, int(20 * 0.6))
+                rolling_ic = factor_clean.rolling(window=20, min_periods=min_periods).corr(return_clean)
+                rolling_rank_ic = factor_clean.rank().rolling(window=20, min_periods=min_periods).corr(return_clean.rank())
+            else:
+                # 传统方式
+                rolling_ic = factor_clean.rolling(window=20).corr(return_clean)
+                rolling_rank_ic = factor_clean.rank().rolling(window=20).corr(return_clean.rank())
 
             rolling_ic = rolling_ic.replace([np.inf, -np.inf], np.nan).dropna()
             rolling_rank_ic = rolling_rank_ic.replace([np.inf, -np.inf], np.nan).dropna()
@@ -412,6 +474,7 @@ class AnalysisService:
                 "IC绝对值均值": abs(ic_s).mean(),
                 "IC序列": ic_s.to_dict(),
                 "IC类型": "时序IC（单股票）",
+                "Mask-First": tradable_mask is not None,  # 标记是否使用了mask
             }
 
             if factor_name in rank_ic_series:
@@ -431,11 +494,17 @@ class AnalysisService:
         # 滚动窗口IR（使用更小的窗口）
         rolling_ir = self._calculate_rolling_ir(ic_series, window=20)
 
-        return {
+        result = {
             "ic_stats": ic_stats,
             "monthly_ic": monthly_ic,
             "rolling_ir": rolling_ir,
         }
+        
+        # ✅ 添加mask统计信息
+        if mask_stats:
+            result["mask_statistics"] = mask_stats
+        
+        return result
 
     def _calculate_cross_sectional_ic_via_alphalens(
         self, factor_data: Dict[str, pd.DataFrame], factor_names: List[str]
