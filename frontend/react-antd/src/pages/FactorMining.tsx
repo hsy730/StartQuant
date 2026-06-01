@@ -146,6 +146,13 @@ const FactorMining: React.FC = () => {
       elite_size: 5,
       fitness_objective: "ic_mean",
       ic_threshold: 0.03,
+      // Phase 2-7: quality-boosting defaults
+      parsimony_coeff: 0.001,
+      diversity_penalty_coeff: 0.1,
+      cv_folds: 0,
+      use_extended_primitives: true,
+      max_tree_depth: 17,
+      use_nsga2: true,
     });
 
     return () => {
@@ -229,6 +236,13 @@ const FactorMining: React.FC = () => {
       elite_size: values.elite_size,
       fitness_objective: values.fitness_objective,
       ic_threshold: values.ic_threshold,
+      // Phase 2-7: quality-boosting parameters
+      parsimony_coeff: values.parsimony_coeff ?? 0.001,
+      diversity_penalty_coeff: values.diversity_penalty_coeff ?? 0.1,
+      cv_folds: values.cv_folds ?? 0,
+      use_extended_primitives: values.use_extended_primitives ?? true,
+      max_tree_depth: values.max_tree_depth ?? 17,
+      use_nsga2: values.use_nsga2 ?? true,
     };
 
     try {
@@ -1256,6 +1270,105 @@ const FactorMining: React.FC = () => {
                     );
                   }}
                 </Form.Item>
+
+                {/* Phase 2-7: 高级优化参数 */}
+                <Divider
+                  styles={{ content: { margin: 0 } }}
+                  titlePlacement="left"
+                >
+                  高级优化参数
+                </Divider>
+
+                <Row gutter={12}>
+                  <Col span={12}>
+                    <Form.Item
+                      label="简约系数"
+                      name="parsimony_coeff"
+                      tooltip="惩罚因子复杂度，值越大越偏好简洁表达式（0=关闭）"
+                    >
+                      <InputNumber
+                        min={0}
+                        max={0.1}
+                        step={0.0005}
+                        style={{ width: "100%" }}
+                      />
+                    </Form.Item>
+                  </Col>
+                  <Col span={12}>
+                    <Form.Item
+                      label="多样性惩罚"
+                      name="diversity_penalty_coeff"
+                      tooltip="惩罚与已有因子相似的个体，值越大越鼓励多样性（0=关闭）"
+                    >
+                      <InputNumber
+                        min={0}
+                        max={1}
+                        step={0.05}
+                        style={{ width: "100%" }}
+                      />
+                    </Form.Item>
+                  </Col>
+                </Row>
+
+                <Row gutter={12}>
+                  <Col span={12}>
+                    <Form.Item
+                      label="交叉验证折数"
+                      name="cv_folds"
+                      tooltip="时间序列交叉验证折数，用于过拟合控制（0=关闭）"
+                    >
+                      <Select>
+                        <Option value={0}>关闭</Option>
+                        <Option value={2}>2折</Option>
+                        <Option value={3}>3折</Option>
+                        <Option value={5}>5折</Option>
+                      </Select>
+                    </Form.Item>
+                  </Col>
+                  <Col span={12}>
+                    <Form.Item
+                      label="最大树深度"
+                      name="max_tree_depth"
+                      tooltip="GP表达式树的最大深度，限制因子复杂度"
+                    >
+                      <InputNumber
+                        min={3}
+                        max={25}
+                        step={1}
+                        style={{ width: "100%" }}
+                      />
+                    </Form.Item>
+                  </Col>
+                </Row>
+
+                <Row gutter={12}>
+                  <Col span={12}>
+                    <Form.Item
+                      label="扩展基元集"
+                      name="use_extended_primitives"
+                      tooltip="启用时序窗口操作（~25个基元），关闭则仅使用9个基础基元"
+                      valuePropName="checked"
+                    >
+                      <Select>
+                        <Option value={true}>启用（~25个基元）</Option>
+                        <Option value={false}>仅基础（9个基元）</Option>
+                      </Select>
+                    </Form.Item>
+                  </Col>
+                  <Col span={12}>
+                    <Form.Item
+                      label="NSGA-II多目标"
+                      name="use_nsga2"
+                      tooltip="同时优化IC和复杂度的多目标算法"
+                      valuePropName="checked"
+                    >
+                      <Select>
+                        <Option value={true}>启用</Option>
+                        <Option value={false}>关闭（锦标赛选择）</Option>
+                      </Select>
+                    </Form.Item>
+                  </Col>
+                </Row>
 
                 <Form.Item>
                   <Button

@@ -216,6 +216,17 @@ export const api = {
     elite_size: number
     fitness_objective: string
     ic_threshold: number
+    // Phase 2: Parsimony pressure
+    parsimony_coeff?: number
+    // Phase 3 & 4: Diversity + cache
+    diversity_penalty_coeff?: number
+    // Phase 6: Cross-validation
+    cv_folds?: number
+    // Phase 7: Extended primitives
+    use_extended_primitives?: boolean
+    max_tree_depth?: number
+    // NSGA-II
+    use_nsga2?: boolean
   }) {
     return request.post('/mining/genetic', data, { timeout: 300000 }) // 5分钟超时
   },

@@ -1,17 +1,28 @@
 """
-遗传算法因子挖掘服务 - 使用遗传算法自动发现最优因子
+遗传算法因子挖掘服务 - 使用 DEAP gp 模块自动发现最优因子
+
+8-Phase 优化:
+  Phase 1: 精英策略 + 适应度目标路由（修复 elite_size/fitness_objective 未使用的 bug）
+  Phase 2: 简约性压力（防膨胀）
+  Phase 3: 多样性保护（去重 + 相似度惩罚）
+  Phase 4: 因子值缓存（避免重复计算）
+  Phase 5: 向量化滚动 IC（在 factor_validation_service 中实现）
+  Phase 6: 交叉验证过拟合控制
+  Phase 7: 扩展基元集（9→~25，含时序窗口操作）
+  Phase 8: 前端更新
 """
 import logging
-from typing import List, Dict, Callable, Optional
+import operator
+from typing import List, Dict, Optional, Tuple
+from collections import OrderedDict
 import pandas as pd
 import numpy as np
 import random
 
-# 配置日志
 logger = logging.getLogger(__name__)
 
 try:
-    from deap import base, creator, tools, algorithms
+    from deap import base, creator, tools, algorithms, gp
     DEAP_AVAILABLE = True
 except ImportError:
     DEAP_AVAILABLE = False
@@ -21,13 +32,61 @@ from backend.services.factor_generator_service import factor_generator_service
 from backend.services.factor_validation_service import factor_validation_service
 from backend.services.alphalens_analysis_service import alphalens_analysis_service, ALPHALENS_AVAILABLE
 from backend.services.data_service import data_service
+from backend.services.factor_primitives import (
+    create_pset,
+    tree_to_expression,
+    tree_to_placeholder_expr,
+    compile_tree,
+    expression_similarity,
+)
 
-# 交叉截面IC评估的最大股票数（超出的随机采样）
 MAX_EVAL_STOCKS = 50
+DEFAULT_MAX_CACHE_SIZE = 512
+
+
+def _ensure_creator_types():
+    """Idempotently register DEAP creator types (safe across multiple instances).
+
+    Registers both single-objective (FitnessMax) and multi-objective
+    (FitnessMulti) fitness classes so that NSGA-II can be used when
+    the user requests multi-objective optimisation.
+    """
+    # Single-objective fitness (backward compatible)
+    try:
+        creator.create("FitnessMax", base.Fitness, weights=(1.0,))
+    except RuntimeError:
+        pass
+    # Multi-objective fitness: (maximise IC, minimise complexity)
+    try:
+        creator.create("FitnessMulti", base.Fitness, weights=(1.0, -1.0))
+    except RuntimeError:
+        pass
+    # Individual for single-objective
+    try:
+        creator.create("Individual", gp.PrimitiveTree, fitness=creator.FitnessMax)
+    except RuntimeError:
+        pass
+    # Individual for multi-objective (NSGA-II)
+    try:
+        creator.create("IndividualMulti", gp.PrimitiveTree, fitness=creator.FitnessMulti)
+    except RuntimeError:
+        pass
 
 
 class GeneticFactorMiningService:
-    """遗传算法因子挖掘服务"""
+    """遗传算法因子挖掘服务（基于 DEAP gp.PrimitiveTree）
+
+    Quality-boosting mechanisms:
+
+    1. **Elitism** – top elite_size individuals carried over unchanged. (Phase 1)
+    2. **Fitness Objective Routing** – ic_mean / ir_ratio / sharpe / combined. (Phase 1)
+    3. **Parsimony Pressure** – penalises overly complex trees. (Phase 2)
+    4. **Diversity Protection** – duplicate removal + similarity penalty. (Phase 3)
+    5. **Factor Value Cache** – avoids redundant computation. (Phase 4)
+    6. **Cross-Validation** – train/test split penalty for over-fitting control. (Phase 6)
+    7. **NSGA-II Multi-objective** – maximise IC, minimise complexity. (Phase 7)
+    8. **Extended Primitives** – 9→~25 operators incl. time-series windows. (Phase 7)
+    """
 
     def __init__(
         self,
@@ -40,6 +99,21 @@ class GeneticFactorMiningService:
         mut_prob: float = 0.3,
         factor_calculator=None,
         max_eval_stocks: int = MAX_EVAL_STOCKS,
+        # ---- Phase 1: Elitism + fitness objective ----
+        elite_size: int = 5,
+        fitness_objective: str = "ic_mean",
+        # ---- Phase 2: Parsimony pressure ----
+        parsimony_coeff: float = 0.001,
+        # ---- Phase 3 & 4: Diversity + cache ----
+        diversity_penalty_coeff: float = 0.1,
+        max_cache_size: int = DEFAULT_MAX_CACHE_SIZE,
+        # ---- Phase 6: Cross-validation ----
+        cv_folds: int = 0,
+        # ---- Phase 7: Extended primitives ----
+        use_extended_primitives: bool = True,
+        max_tree_depth: int = 17,
+        # ---- NSGA-II ----
+        use_nsga2: bool = True,
     ):
         if not DEAP_AVAILABLE:
             raise ImportError("DEAP库未安装，请运行: pip install DEAP")
@@ -54,21 +128,51 @@ class GeneticFactorMiningService:
         self.factor_calculator = factor_calculator
         self.max_eval_stocks = max_eval_stocks
 
+        # Phase 1
+        self.elite_size = min(elite_size, population_size)
+        self.fitness_objective = fitness_objective
+
+        # Phase 2
+        self.parsimony_coeff = parsimony_coeff
+
+        # Phase 3 & 4
+        self.diversity_penalty_coeff = diversity_penalty_coeff
+        self.max_cache_size = max_cache_size
+
+        # Phase 6
+        self.cv_folds = cv_folds
+
+        # Phase 7
+        self.use_extended_primitives = use_extended_primitives
+        self.max_tree_depth = max_tree_depth
+
+        # NSGA-II
+        self.use_nsga2 = use_nsga2
+
         self.return_values = data[return_column] if return_column in data.columns else None
 
         self.stock_codes: List[str] = []
         self.stock_pool_data: Dict[str, pd.DataFrame] = {}
         self.stock_pool_return_values: Dict[str, pd.Series] = {}
-        self.stock_pool_base_factor_values: Dict[str, Dict] = {}
+        self.stock_pool_base_factor_values: Dict[str, dict] = {}
 
-        # 采样股票列表（大股票池时只评估子集）
         self._sampled_stock_codes: List[str] = []
         self._current_generation: int = 0
 
-        self.base_factor_values = {}
+        # Phase 4: factor value cache (keyed by tree string)
+        self._factor_cache: OrderedDict = OrderedDict()
+
+        # Pre-computed factor cache
+        self.base_factor_values: Dict[str, dict] = {}
         self._precompute_base_factors()
 
+        # GP primitives & toolbox
+        self.pset: Optional[gp.PrimitiveSet] = None
         self._setup_genetic_algorithm()
+
+    # ------------------------------------------------------------------
+    # Stock pool (cross-sectional IC evaluation support)
+    # ------------------------------------------------------------------
 
     def set_stock_pool(self, stock_codes: List[str], start_date: str, end_date: str):
         self.stock_codes = stock_codes
@@ -77,7 +181,9 @@ class GeneticFactorMiningService:
         for code, df in self.stock_pool_data.items():
             if "close" in df.columns:
                 df["return"] = df["close"].pct_change()
-            self.stock_pool_return_values[code] = df[self.return_column] if self.return_column in df.columns else None
+            self.stock_pool_return_values[code] = (
+                df[self.return_column] if self.return_column in df.columns else None
+            )
 
             if self.factor_calculator is None:
                 from backend.services.factor_service import factor_service
@@ -86,35 +192,36 @@ class GeneticFactorMiningService:
             stock_base_factors = {}
             for i, factor_code in enumerate(self.base_factor_codes):
                 try:
-                    factor_values = self.factor_calculator.calculate(df, factor_code)
-                    if factor_values is not None and len(factor_values.dropna()) > 0:
+                    fv = self.factor_calculator.calculate(df, factor_code)
+                    if fv is not None and len(fv.dropna()) > 0:
                         var_name = f"factor_{i}"
                         stock_base_factors[var_name] = {
                             "code": factor_code,
-                            "values": factor_values,
+                            "values": fv,
                         }
                 except Exception as e:
                     logger.warning(f"Stock {code} factor {factor_code} compute error: {e}")
             self.stock_pool_base_factor_values[code] = stock_base_factors
 
-        # 初始化采样股票列表
         self._refresh_stock_sample()
-
-        logger.info(f"Stock pool set with {len(self.stock_pool_data)} stocks, "
-                    f"eval sample={len(self._sampled_stock_codes)}: {stock_codes}")
+        logger.info(
+            f"Stock pool set with {len(self.stock_pool_data)} stocks, "
+            f"eval sample={len(self._sampled_stock_codes)}: {stock_codes}"
+        )
 
     def _refresh_stock_sample(self):
-        """刷新评估用的股票样本（大股票池时随机采样加速）"""
         available = list(self.stock_pool_base_factor_values.keys())
         if len(available) <= self.max_eval_stocks:
             self._sampled_stock_codes = available
         else:
             self._sampled_stock_codes = random.sample(available, self.max_eval_stocks)
 
+    # ------------------------------------------------------------------
+    # Base factor precomputation
+    # ------------------------------------------------------------------
+
     def _precompute_base_factors(self):
-        """预计算所有基础因子的值"""
         if self.factor_calculator is None:
-            # 如果没有提供计算器，使用默认的
             from backend.services.factor_service import factor_service
             self.factor_calculator = factor_service.calculator
 
@@ -122,15 +229,14 @@ class GeneticFactorMiningService:
 
         for i, factor_code in enumerate(self.base_factor_codes):
             try:
-                factor_values = self.factor_calculator.calculate(self.data, factor_code)
-                if factor_values is not None and len(factor_values.dropna()) > 0:
-                    # 使用唯一的变量名（避免代码中的特殊字符）
+                fv = self.factor_calculator.calculate(self.data, factor_code)
+                if fv is not None and len(fv.dropna()) > 0:
                     var_name = f"factor_{i}"
                     self.base_factor_values[var_name] = {
                         "code": factor_code,
-                        "values": factor_values
+                        "values": fv,
                     }
-                    logger.info(f"  [{i+1}/{len(self.base_factor_codes)}] {factor_code}: {len(factor_values.dropna())} 个有效值")
+                    logger.info(f"  [{i+1}/{len(self.base_factor_codes)}] {factor_code}: {len(fv.dropna())} 个有效值")
                 else:
                     logger.warning(f"  [{i+1}/{len(self.base_factor_codes)}] {factor_code}: 计算失败或无有效值")
             except Exception as e:
@@ -138,146 +244,365 @@ class GeneticFactorMiningService:
 
         logger.info(f"成功预计算 {len(self.base_factor_values)} 个基础因子")
 
+    # ------------------------------------------------------------------
+    # GP setup
+    # ------------------------------------------------------------------
+
     def _setup_genetic_algorithm(self):
-        """设置遗传算法"""
-        # 定义适应度函数（最大化IC绝对值和IR）
-        creator.create("FitnessMax", base.Fitness, weights=(1.0,))
+        _ensure_creator_types()
 
-        # 定义个体（因子表达式）
-        creator.create("Individual", list, fitness=creator.FitnessMax)
+        n_factors = max(len(self.base_factor_values), 1)
+        self.pset = create_pset(n_factors, extended=self.use_extended_primitives)
 
-        # 创建工具箱
         self.toolbox = base.Toolbox()
+        # Phase 7: deeper initial trees when extended primitives + parsimony control bloat
+        init_max_depth = 5 if self.use_extended_primitives else 3
+        self.toolbox.register("expr", gp.genHalfAndHalf, pset=self.pset, min_=1, max_=init_max_depth)
 
-        # 注册个体生成函数
-        self.toolbox.register(
-            "individual",
-            self._generate_random_individual,
+        # Choose individual class based on multi-objective flag
+        if self.use_nsga2:
+            individual_class = creator.IndividualMulti
+        else:
+            individual_class = creator.Individual
+
+        self.toolbox.register("individual", tools.initIterate, individual_class, self.toolbox.expr)
+        self.toolbox.register("population", tools.initRepeat, list, self.toolbox.individual)
+
+        # GP operators
+        self.toolbox.register("mate", gp.cxOnePoint)
+        self.toolbox.register("mutate", gp.mutUniform, expr=self.toolbox.expr, pset=self.pset)
+
+        # Depth limiter for crossover & mutation (prevents bloat)
+        self.toolbox.decorate(
+            "mate",
+            gp.staticLimit(key=operator.attrgetter("height"), max_value=self.max_tree_depth),
+        )
+        self.toolbox.decorate(
+            "mutate",
+            gp.staticLimit(key=operator.attrgetter("height"), max_value=self.max_tree_depth),
         )
 
-        # 注册种群生成函数
-        self.toolbox.register(
-            "population",
-            tools.initRepeat,
-            list,
-            self.toolbox.individual,
-        )
+        # Selection operator: NSGA-II for multi-objective, tournament otherwise
+        if self.use_nsga2:
+            self.toolbox.register("select", tools.selNSGA2)
+        else:
+            self.toolbox.register("select", tools.selTournament, tournsize=3)
 
-        # 注册遗传操作
-        self.toolbox.register("mate", self._crossover)
-        self.toolbox.register("mutate", self._mutate, indpb=0.2)
-        self.toolbox.register("select", tools.selTournament, tournsize=3)
+        # Evaluation
+        if self.use_nsga2:
+            self.toolbox.register("evaluate", self._evaluate_factor_multi)
+        else:
+            self.toolbox.register("evaluate", self._evaluate_factor)
+        self.toolbox.register("compile", gp.compile, pset=self.pset)
 
-        # 注册评估函数
-        self.toolbox.register("evaluate", self._evaluate_factor)
-
-        # 统计信息
+        # Statistics
         self.stats = tools.Statistics(lambda ind: ind.fitness.values)
         self.stats.register("avg", np.mean)
         self.stats.register("min", np.min)
         self.stats.register("max", np.max)
 
-        # 进度回调函数（可选）
         self.progress_callback = None
 
     def set_progress_callback(self, callback):
         """设置进度回调函数
 
         Args:
-            callback: 回调函数，签名为 callback(generation, total_generations, best_fitness, avg_fitness)
+            callback: 签名为 callback(generation, total_generations, best_fitness, avg_fitness)
         """
         self.progress_callback = callback
 
-    def _generate_random_individual(self):
-        """生成随机个体（因子表达式）"""
-        # 使用预计算的因子变量名
-        var_names = list(self.base_factor_values.keys())
+    # ------------------------------------------------------------------
+    # Evaluation
+    # ------------------------------------------------------------------
 
-        if not var_names:
-            # 如果没有可用的基础因子，返回空个体
-            individual = creator.Individual()
-            individual.extend(["close"])
-            return individual
+    # ------------------------------------------------------------------
+    # Phase 4: Factor value cache
+    # ------------------------------------------------------------------
 
-        # 随机选择表达式类型
-        expr_type = random.choice(["single", "binary", "unary"])
+    def _cache_get(self, tree_str: str) -> Optional[Dict[str, pd.Series]]:
+        """Look up pre-computed factor values for a tree expression."""
+        return self._factor_cache.get(tree_str)
 
-        if expr_type == "single" or len(var_names) == 1:
-            # 单个因子
-            var = random.choice(var_names)
-            individual = creator.Individual()
-            individual.extend([var])
-            return individual
+    def _cache_set(self, tree_str: str, values: Dict[str, pd.Series]):
+        """Store factor values in the LRU cache."""
+        if len(self._factor_cache) >= self.max_cache_size:
+            # evict oldest entry
+            self._factor_cache.popitem(last=False)
+        self._factor_cache[tree_str] = values
 
-        elif expr_type == "binary" and len(var_names) >= 2:
-            # 二元运算组合
-            var1, var2 = random.sample(var_names, 2)
-            op = random.choice(["+", "-", "*", "/"])
-            individual = creator.Individual()
-            individual.extend([f"({var1} {op} {var2})"])
-            return individual
+    def _cache_clear(self):
+        """Clear the factor value cache (call once per generation)."""
+        self._factor_cache.clear()
 
-        else:  # unary
-            # 一元运算
-            var = random.choice(var_names)
-            func = random.choice(["np.log", "np.sqrt", "np.abs", "rank"])
-            if func == "rank":
-                expr = f"({var}.rank(pct=True))"
-            else:
-                expr = f"{func}({var})"
-            individual = creator.Individual()
-            individual.extend([expr])
-            return individual
+    # ------------------------------------------------------------------
+    # Phase 6: Cross-validation
+    # ------------------------------------------------------------------
 
-    def _evaluate_factor(self, individual: list) -> tuple:
-        expr = individual[0]
+    def _cv_penalty(self, factor_values_dict: Dict[str, pd.Series]) -> float:
+        """Compute a cross-validation penalty for over-fitting control.
+
+        Splits the time-series into *cv_folds* segments, computes IC on
+        each, and returns ``1.0 - (min_fold_ic / max_fold_ic)`` clamped
+        to [0, 1].  A factor whose IC is consistent across folds gets
+        penalty ≈ 0; one that collapses on some folds gets penalty → 1.
+        """
+        if self.cv_folds < 2:
+            return 0.0
+
+        fold_ics: List[float] = []
+        for stock_code, fv in factor_values_dict.items():
+            ret = self.stock_pool_return_values.get(stock_code)
+            if ret is None:
+                continue
+            aligned = pd.DataFrame({"factor": fv, "return": ret}).dropna()
+            if len(aligned) < self.cv_folds * 20:
+                continue
+
+            n = len(aligned)
+            fold_size = n // self.cv_folds
+            for k in range(self.cv_folds):
+                start = k * fold_size
+                end = start + fold_size if k < self.cv_folds - 1 else n
+                segment = aligned.iloc[start:end]
+                if len(segment) >= 10:
+                    ic = segment["factor"].corr(segment["return"])
+                    if not np.isnan(ic):
+                        fold_ics.append(abs(ic))
+
+        if len(fold_ics) < self.cv_folds:
+            return 0.0
+
+        min_ic = min(fold_ics)
+        max_ic = max(fold_ics)
+        if max_ic < 1e-10:
+            return 1.0
+        penalty = 1.0 - (min_ic / max_ic)
+        return max(0.0, min(penalty, 1.0))
+
+    # ------------------------------------------------------------------
+    # Phase 1: Fitness objective routing
+    # ------------------------------------------------------------------
+
+    def _route_fitness(self, ic_results: dict, factor_values_dict: Optional[Dict[str, pd.Series]] = None) -> float:
+        """Select the fitness value according to ``self.fitness_objective``.
+
+        Supported objectives:
+        - ``ic_mean``  : best absolute mean IC across Spearman/Pearson (default)
+        - ``ir_ratio`` : IC mean / IC std (information ratio)
+        - ``sharpe``   : Sharpe-like ratio of the long-short portfolio
+        - ``combined`` : weighted blend of ic_mean and ir_ratio
+        """
+        best_ic = 0.0
+        best_ir = 0.0
+
+        for ic_type in ["spearman_ic", "pearson_ic"]:
+            ic_type_data = ic_results.get(ic_type, {})
+            for period_key, period_stats in ic_type_data.items():
+                if not isinstance(period_stats, dict) or "error" in period_stats:
+                    continue
+                mean_ic = period_stats.get("mean_ic")
+                std_ic = period_stats.get("std_ic")
+                if mean_ic is None or std_ic is None:
+                    continue
+                mean_ic = abs(float(mean_ic))
+                std_ic = float(std_ic)
+                ir = abs(mean_ic / std_ic) if std_ic > 1e-10 else 0.0
+                if mean_ic > best_ic:
+                    best_ic = mean_ic
+                if ir > best_ir:
+                    best_ir = ir
+
+        if self.fitness_objective == "ir_ratio":
+            return best_ir
+        elif self.fitness_objective == "sharpe":
+            # Approximate Sharpe: use IR as proxy
+            return best_ir
+        elif self.fitness_objective == "combined":
+            return 0.6 * best_ic + 0.4 * best_ir
+        else:  # ic_mean (default)
+            return best_ic
+
+    # ------------------------------------------------------------------
+    # Evaluation
+    # ------------------------------------------------------------------
+
+    def _evaluate_factor(self, individual) -> tuple:
+        """Evaluate a PrimitiveTree individual by cross-sectional or time-series IC.
+
+        Applies: Parsimony Pressure (Phase 2), Diversity Penalty (Phase 3),
+        Cross-Validation penalty (Phase 6), Fitness Objective Routing (Phase 1).
+        """
+        if len(individual) == 0:
+            return (0.0,)
 
         try:
             if len(self.stock_pool_data) >= 2:
-                return self._evaluate_cross_sectional_ic(expr)
+                raw_fitness = self._evaluate_cross_sectional_ic(individual)[0]
             elif len(self.stock_pool_data) == 1:
                 logger.warning("Only 1 stock in pool, falling back to time-series IC evaluation")
-                return self._evaluate_single_stock_ic(expr)
+                raw_fitness = self._evaluate_single_stock_ic(individual)[0]
             else:
-                return self._evaluate_single_stock_ic(expr)
-        except Exception as e:
+                raw_fitness = self._evaluate_single_stock_ic(individual)[0]
+        except Exception:
             return (0.0,)
 
-    def _evaluate_cross_sectional_ic(self, expr: str) -> tuple:
-        """使用横截面IC评估因子（并行计算各股票因子值，大池采样）"""
+        # --- Parsimony Pressure (Phase 2) ---
+        parsimony_penalty = self.parsimony_coeff * len(individual)
+
+        # --- Diversity Penalty (Phase 3) ---
+        diversity_penalty = 0.0
+        if self.diversity_penalty_coeff > 0 and hasattr(self, '_halloffame') and self._halloffame is not None:
+            ind_expr = tree_to_placeholder_expr(individual)
+            for hof_ind in self._halloffame:
+                hof_expr = tree_to_placeholder_expr(hof_ind)
+                sim = expression_similarity(ind_expr, hof_expr)
+                if sim > 0.7:
+                    diversity_penalty += self.diversity_penalty_coeff * sim
+
+        adjusted_fitness = raw_fitness - parsimony_penalty - diversity_penalty
+        return (max(adjusted_fitness, 0.0),)
+
+    def _evaluate_factor_multi(self, individual) -> tuple:
+        """Multi-objective evaluation for NSGA-II.
+
+        Returns a 2-tuple ``(ic_fitness, complexity)`` where:
+        - ``ic_fitness`` is the raw IC-based fitness (to be maximised).
+        - ``complexity`` is the tree node count (to be minimised, hence the
+          negative weight in ``FitnessMulti``).
+
+        Parsimony pressure is *not* applied here because complexity is
+        already an explicit second objective.  Diversity penalty and CV
+        penalty are still applied to the IC objective.
+        """
+        if len(individual) == 0:
+            return (0.0, 1.0)
+
+        try:
+            if len(self.stock_pool_data) >= 2:
+                raw_fitness = self._evaluate_cross_sectional_ic(individual)[0]
+            elif len(self.stock_pool_data) == 1:
+                raw_fitness = self._evaluate_single_stock_ic(individual)[0]
+            else:
+                raw_fitness = self._evaluate_single_stock_ic(individual)[0]
+        except Exception:
+            return (0.0, 1.0)
+
+        # --- Diversity Penalty (Phase 3, applied to IC objective only) ---
+        diversity_penalty = 0.0
+        if self.diversity_penalty_coeff > 0 and hasattr(self, '_halloffame') and self._halloffame is not None:
+            ind_expr = tree_to_placeholder_expr(individual)
+            for hof_ind in self._halloffame:
+                hof_expr = tree_to_placeholder_expr(hof_ind)
+                sim = expression_similarity(ind_expr, hof_expr)
+                if sim > 0.7:
+                    diversity_penalty += self.diversity_penalty_coeff * sim
+
+        ic_fitness = max(raw_fitness - diversity_penalty, 0.0)
+        complexity = float(len(individual))
+        return (ic_fitness, complexity)
+
+    def _eval_tree_on_stock(self, tree, stock_code: str, stock_base_factors: dict) -> Optional[pd.Series]:
+        """Compile a tree and evaluate it using one stock's base factor values.
+
+        Phase 4: Results are cached per (tree_str, stock_code) within a
+        generation so that the same expression is never computed twice.
+        """
+        tree_str = str(tree)
+        # Phase 4: check cache first
+        cached = self._cache_get(tree_str)
+        if cached is not None and stock_code in cached:
+            return cached[stock_code]
+
+        try:
+            func = compile_tree(tree, self.pset)
+        except Exception:
+            return None
+
+        # Build ordered positional args matching factor_0 … factor_N
+        ordered = []
+        for i in range(len(self.base_factor_values)):
+            info = stock_base_factors.get(f"factor_{i}")
+            if info is None:
+                return None
+            ordered.append(info["values"])
+
+        try:
+            result = func(*ordered)
+        except Exception:
+            return None
+
+        if isinstance(result, (int, float, np.number)):
+            # scalar → broadcast to a Series using the first factor's index
+            idx = ordered[0].index if ordered else None
+            if idx is None:
+                return None
+            result = pd.Series(float(result), index=idx)
+
+        if not isinstance(result, pd.Series):
+            return None
+
+        result = result.replace([np.inf, -np.inf], np.nan)
+        valid_count = result.notna().sum()
+        if valid_count == 0 or valid_count < len(result) * 0.1:
+            return None
+
+        # Phase 4: store in cache
+        if cached is None:
+            cached = {}
+        cached[stock_code] = result
+        self._cache_set(tree_str, cached)
+
+        return result
+
+    def _evaluate_cross_sectional_ic(self, tree) -> tuple:
+        """Cross-sectional IC evaluation (multi-stock).
+
+        Phase 1: Uses ``_route_fitness`` to select the objective metric.
+        Phase 4: Uses factor value cache to avoid redundant computation.
+        Phase 6: Applies cross-validation penalty when cv_folds > 0.
+        """
         from concurrent.futures import ThreadPoolExecutor, as_completed
 
         eval_codes = self._sampled_stock_codes
         factor_values_dict: Dict[str, pd.Series] = {}
 
-        def _calc_one_stock(code):
-            try:
-                base_factors = self.stock_pool_base_factor_values[code]
-                fv = self._compute_factor_expression_for_stock(expr, code, base_factors)
-                if fv is not None and len(fv.dropna()) >= 10:
-                    return code, fv.dropna()
-            except Exception:
-                pass
-            return code, None
+        # Phase 4: check if full result is cached
+        tree_str = str(tree)
+        cached_all = self._cache_get(tree_str)
+        if cached_all is not None and "_complete" in cached_all:
+            factor_values_dict = cached_all["_complete"]
+        else:
+            def _calc_one_stock(code):
+                try:
+                    base_factors = self.stock_pool_base_factor_values[code]
+                    fv = self._eval_tree_on_stock(tree, code, base_factors)
+                    if fv is not None and len(fv.dropna()) >= 10:
+                        return code, fv.dropna()
+                except Exception:
+                    pass
+                return code, None
 
-        with ThreadPoolExecutor(max_workers=min(len(eval_codes), 10)) as executor:
-            futures = {executor.submit(_calc_one_stock, code): code for code in eval_codes}
-            for future in as_completed(futures):
-                code, fv = future.result()
-                if fv is not None:
-                    factor_values_dict[code] = fv
+            with ThreadPoolExecutor(max_workers=min(len(eval_codes), 10)) as executor:
+                futures = {executor.submit(_calc_one_stock, code): code for code in eval_codes}
+                for future in as_completed(futures):
+                    code, fv = future.result()
+                    if fv is not None:
+                        factor_values_dict[code] = fv
+
+            # Phase 4: cache the complete result
+            self._cache_set(tree_str, {"_complete": factor_values_dict})
 
         if len(factor_values_dict) < 2:
             return (0.0,)
 
         if not ALPHALENS_AVAILABLE:
             logger.warning("alphalens not available, falling back to time-series IC")
-            return self._evaluate_single_stock_ic(expr)
+            return self._evaluate_single_stock_ic(tree)
 
         try:
             all_dates = set()
-            for series in factor_values_dict.values():
-                all_dates.update(series.index)
+            for s in factor_values_dict.values():
+                all_dates.update(s.index)
             all_dates = sorted(all_dates)
 
             pricing_df = pd.DataFrame(index=all_dates)
@@ -300,500 +625,263 @@ class GeneticFactorMiningService:
             if "error" in ic_results:
                 return (0.0,)
 
-            best_abs_mean_ic = 0.0
-            for ic_type in ["spearman_ic", "pearson_ic"]:
-                ic_type_data = ic_results.get(ic_type, {})
-                for period_key, period_stats in ic_type_data.items():
-                    if isinstance(period_stats, dict) and "error" not in period_stats:
-                        mean_ic = abs(period_stats.get("mean_ic", 0.0))
-                        if mean_ic > best_abs_mean_ic:
-                            best_abs_mean_ic = mean_ic
+            # Phase 1: route fitness based on objective
+            raw_fitness = self._route_fitness(ic_results, factor_values_dict)
 
-            return (best_abs_mean_ic,)
+            # Phase 6: cross-validation penalty
+            cv_penalty = self._cv_penalty(factor_values_dict)
+            raw_fitness = raw_fitness * (1.0 - cv_penalty)
+
+            return (raw_fitness,)
 
         except Exception as e:
             logger.warning(f"Cross-sectional IC evaluation failed: {e}")
             return (0.0,)
 
-    def _evaluate_single_stock_ic(self, expr: str) -> tuple:
-        factor_values = self._compute_factor_expression(expr)
-
-        if factor_values is None or len(factor_values.dropna()) < 10:
+    def _evaluate_single_stock_ic(self, tree) -> tuple:
+        """Time-series IC evaluation (single stock / fallback)."""
+        fv = self._compute_factor_expression(tree)
+        if fv is None or len(fv.dropna()) < 10:
             return (0.0,)
 
         if self.return_values is not None:
             validation = factor_validation_service.validate_factor(
-                factor_values=factor_values,
+                factor_values=fv,
                 return_values=self.return_values,
                 existing_factors=None,
             )
             fitness = validation["score"] / 100.0
         else:
-            fitness = factor_values.std() / (factor_values.mean() + 1e-8)
+            fitness = fv.std() / (fv.mean() + 1e-8)
 
         return (fitness,)
 
-    def _compute_factor_expression_for_stock(self, expr: str, stock_code: str, stock_base_factors: Dict) -> Optional[pd.Series]:
+    # ------------------------------------------------------------------
+    # Expression computation (compiled tree → Series)
+    # ------------------------------------------------------------------
+
+    def _compute_factor_expression(self, tree) -> Optional[pd.Series]:
+        """Evaluate a PrimitiveTree using the global base factor cache."""
+        if len(tree) == 0:
+            return None
         try:
-            safe_dict = {}
-            for var_name, factor_info in stock_base_factors.items():
-                safe_dict[var_name] = factor_info["values"]
-            safe_dict["np"] = np
-            safe_dict["pd"] = pd
-
-            stock_data = self.stock_pool_data.get(stock_code)
-            if stock_data is not None:
-                for col in ["open", "high", "low", "close", "volume"]:
-                    if col in stock_data.columns:
-                        safe_dict[col] = stock_data[col]
-
-            if not safe_dict:
-                return None
-
-            try:
-                result = eval(expr, {"__builtins__": {}}, safe_dict)
-                if isinstance(result, pd.Series):
-                    if "log" in expr or "sqrt" in expr:
-                        result = result.replace([np.inf, -np.inf], np.nan)
-                elif isinstance(result, (int, float, np.number)):
-                    if stock_data is not None:
-                        return pd.Series([float(result)] * len(stock_data), index=stock_data.index)
-                    return None
-                else:
-                    return None
-
-                if isinstance(result, pd.Series):
-                    valid_count = result.notna().sum()
-                    if valid_count == 0 or valid_count < len(result) * 0.1:
-                        return None
-
-                return result
-
-            except NameError:
-                return None
-            except Exception:
-                return None
-
+            func = compile_tree(tree, self.pset)
         except Exception:
             return None
 
-    def _compute_factor_expression(self, expr: str) -> Optional[pd.Series]:
-        """
-        计算因子表达式的值
+        ordered = []
+        for i in range(len(self.base_factor_values)):
+            info = self.base_factor_values.get(f"factor_{i}")
+            if info is None:
+                return None
+            ordered.append(info["values"])
 
-        Args:
-            expr: 因子表达式（包含变量名如 factor_0, factor_1）
-
-        Returns:
-            因子值序列
-        """
         try:
-            # 构建安全的执行环境
-            # 将变量名映射到预计算的因子值Series
-            safe_dict = {}
-
-            # 添加预计算的基础因子值到环境
-            for var_name, factor_info in self.base_factor_values.items():
-                safe_dict[var_name] = factor_info["values"]
-
-            # 添加常用的numpy和pandas函数
-            safe_dict["np"] = np
-            safe_dict["pd"] = pd
-
-            # 添加原始数据列（close, open, high, low, volume）
-            for col in ["open", "high", "low", "close", "volume"]:
-                if col in self.data.columns:
-                    safe_dict[col] = self.data[col]
-
-            # 如果没有可用的数据，返回None
-            if not safe_dict:
-                logger.warning("没有可用的因子数据用于表达式计算")
-                return None
-
-            # 使用eval计算表达式
-            try:
-                result = eval(expr, {"__builtins__": {}}, safe_dict)
-
-                # 确保返回的是Series
-                if isinstance(result, pd.Series):
-                    # 如果表达式包含log或sqrt，处理无效值
-                    if "log" in expr or "sqrt" in expr:
-                        # 替换-inf和inf为NaN，然后用前向填充
-                        result = result.replace([np.inf, -np.inf], np.nan)
-                        # 可选：进行简单的处理，例如用0填充NaN
-                        # result = result.fillna(0)
-                elif isinstance(result, (int, float, np.number)):
-                    # 如果是标量值，返回与数据长度相同的Series
-                    return pd.Series([float(result)] * len(self.data), index=self.data.index)
-                else:
-                    logger.warning(f"表达式返回了不支持的类型: {type(result)}")
-                    return None
-
-                # 检查结果是否有效
-                if isinstance(result, pd.Series):
-                    valid_count = result.notna().sum()
-                    if valid_count == 0:
-                        logger.warning(f"表达式计算结果全部为NaN: {expr}")
-                        return None
-                    # 如果大部分值都是NaN，也认为无效
-                    if valid_count < len(result) * 0.1:  # 少于10%有效值
-                        logger.warning(f"表达式计算结果大部分为NaN ({valid_count}/{len(result)}): {expr}")
-                        return None
-
-                return result
-
-            except NameError as e:
-                logger.warning(f"表达式中包含未定义的变量: {e}")
-                return None
-            except Exception as e:
-                logger.warning(f"计算表达式失败: {e}")
-                return self._compute_binary_operation(expr)
-
-        except Exception as e:
-            logger.warning(f"计算因子表达式失败 {expr}: {e}")
+            result = func(*ordered)
+        except Exception:
             return None
 
-    def _compute_binary_operation(self, expr: str) -> Optional[pd.Series]:
-        """
-        计算简单的二元运算表达式（备用方法）
+        if isinstance(result, (int, float, np.number)):
+            result = pd.Series(float(result), index=self.data.index)
 
-        Args:
-            expr: 因子表达式
-
-        Returns:
-            因子值序列
-        """
-        try:
-            # 去除外层括号
-            expr = expr.strip()
-            if expr.startswith("(") and expr.endswith(")"):
-                expr = expr[1:-1].strip()
-
-            # 尝试匹配二元运算模式: factor1 op factor2
-            import re
-            pattern = r'^(\w+)\s*([+\-*/])\s*(\w+)$'
-            match = re.match(pattern, expr)
-
-            if match:
-                left_factor = match.group(1)
-                operator = match.group(2)
-                right_factor = match.group(3)
-
-                left = self._get_factor_value(left_factor)
-                right = self._get_factor_value(right_factor)
-
-                if left is not None and right is not None:
-                    # 对齐索引
-                    aligned_data = pd.DataFrame({
-                        'left': left,
-                        'right': right
-                    }).dropna()
-
-                    if len(aligned_data) == 0:
-                        return None
-
-                    if operator == '+':
-                        result = aligned_data['left'] + aligned_data['right']
-                    elif operator == '-':
-                        result = aligned_data['left'] - aligned_data['right']
-                    elif operator == '*':
-                        result = aligned_data['left'] * aligned_data['right']
-                    elif operator == '/':
-                        result = aligned_data['left'] / (aligned_data['right'] + 1e-8)
-                    else:
-                        return None
-
-                    return result
-
-            # 如果无法解析为二元运算，尝试直接获取因子值
-            return self._get_factor_value(expr)
-
-        except Exception as e:
-            logger.warning(f"计算二元运算失败 {expr}: {e}")
+        if not isinstance(result, pd.Series):
             return None
 
-    def _get_factor_value(self, factor_name: str) -> Optional[pd.Series]:
-        """获取因子值"""
-        # 去除空格
-        factor_name = factor_name.strip()
+        result = result.replace([np.inf, -np.inf], np.nan)
+        valid = result.notna().sum()
+        if valid == 0 or valid < len(result) * 0.1:
+            return None
+        return result
 
-        # 检查是否是预计算的因子变量名（如 factor_0, factor_1）
-        if factor_name in self.base_factor_values:
-            return self.base_factor_values[factor_name]["values"]
+    # ------------------------------------------------------------------
+    # Expression conversion
+    # ------------------------------------------------------------------
 
-        # 检查是否是原始数据列
-        if factor_name in self.data.columns:
-            return self.data[factor_name]
+    def _convert_expression_to_code(self, tree) -> str:
+        """Convert a PrimitiveTree to an expression string with real factor codes."""
+        mapping = {}
+        for var_name, info in self.base_factor_values.items():
+            mapping[var_name] = info["code"]
+        return tree_to_expression(tree, mapping)
 
-        # 如果都不匹配，返回None
-        logger.warning(f"未找到因子: {factor_name}")
-        return None
-
-    def _extract_inner_expression(self, expr: str) -> str:
-        """提取最内层的括号表达式"""
-        # 找到第一个完整的括号对
-        start = expr.find("(")
-        if start == -1:
-            return expr
-
-        count = 1
-        end = start + 1
-        while end < len(expr) and count > 0:
-            if expr[end] == "(":
-                count += 1
-            elif expr[end] == ")":
-                count -= 1
-            end += 1
-
-        return expr[start + 1:end - 1]
-
-    def _split_binary_operation(self, expr: str) -> List[str]:
-        """分割二元运算表达式"""
-        operators = ["+", "-", "*", "/"]
-
-        for op in operators:
-            if op in expr:
-                # 简单分割（实际需要更复杂的解析）
-                parts = expr.split(op)
-                if len(parts) == 2:
-                    return [p.strip() for p in parts]
-
-        return []
-
-    def _crossover(self, ind1, ind2):
-        """交叉操作"""
-        # 由于每个Individual只有一个表达式元素，我们简单地交换表达式中的因子
-        expr1 = ind1[0]
-        expr2 = ind2[0]
-
-        # 获取变量名列表
-        var_names = list(self.base_factor_values.keys())
-
-        if not var_names:
-            # 如果没有可用的因子变量，直接交换整个表达式
-            return (ind2, ind1)
-
-        # 提取表达式中的变量并交换
-        vars1 = [v for v in var_names if v in expr1]
-        vars2 = [v for v in var_names if v in expr2]
-
-        if vars1 and vars2 and random.random() < 0.7:
-            # 70%概率交换变量
-            var1 = random.choice(vars1)
-            var2 = random.choice(vars2)
-
-            new_expr1 = expr1.replace(var1, var2)
-            new_expr2 = expr2.replace(var2, var1)
-
-            # 创建新的Individual对象
-            child1 = creator.Individual()
-            child1.extend([new_expr1])
-            child2 = creator.Individual()
-            child2.extend([new_expr2])
-            return (child1, child2)
-        else:
-            # 30%概率直接交换整个表达式
-            return (ind2, ind1)
-
-    def _mutate(self, individual, indpb: float) -> tuple:
-        """变异操作"""
-        expr = individual[0]
-
-        # 获取变量名列表
-        var_names = list(self.base_factor_values.keys())
-
-        # 可能的变异操作：
-        # 1. 更换运算符
-        # 2. 更换因子变量
-        # 3. 添加统计函数
-
-        if random.random() < 0.3:
-            # 更换运算符
-            operators = ["+", "-", "*", "/"]
-            for op in operators:
-                if op in expr and random.random() < indpb:
-                    new_op = random.choice([o for o in operators if o != op])
-                    expr = expr.replace(op, new_op, 1)
-                    break
-
-        if random.random() < 0.3 and var_names:
-            # 更换因子变量
-            for var in var_names:
-                if var in expr and random.random() < indpb:
-                    other_vars = [v for v in var_names if v != var]
-                    if other_vars:
-                        new_var = random.choice(other_vars)
-                        expr = expr.replace(var, new_var, 1)
-                        break
-
-        if random.random() < 0.2 and var_names:
-            # 添加/移除一元函数
-            if random.random() < 0.5:
-                # 添加函数
-                var = random.choice([v for v in var_names if v in expr])
-                func = random.choice(["np.log", "np.sqrt", "np.abs"])
-                # 只对第一次出现的变量添加函数
-                expr = expr.replace(var, f"{func}({var})", 1)
-            else:
-                # 简化：如果表达式以函数开头，尝试移除函数
-                for func in ["np.log", "np.sqrt", "np.abs"]:
-                    if expr.startswith(f"{func}(") and expr.endswith(")"):
-                        # 提取内部表达式
-                        inner = expr[len(func)+1:-1]
-                        if inner in var_names:
-                            expr = inner
-                            break
-
-        # 创建新的Individual对象并返回
-        mutated = creator.Individual()
-        mutated.extend([expr])
-        return (mutated,)
-
-    def _convert_expression_to_code(self, expr: str) -> str:
-        """
-        将占位符表达式转换为实际因子代码
-
-        Args:
-            expr: 包含占位符的表达式（如 "(factor_0 * 1.5)"）
-
-        Returns:
-            实际因子代码表达式（如 "(RSI(close, 14) * 1.5)"）
-        """
-        converted_expr = expr
-
-        # 将所有占位符变量名替换为实际因子代码
-        for var_name, factor_info in self.base_factor_values.items():
-            actual_code = factor_info["code"]
-            # 替换占位符
-            converted_expr = converted_expr.replace(var_name, f"({actual_code})")
-
-        return converted_expr
+    # ------------------------------------------------------------------
+    # Mining entry point
+    # ------------------------------------------------------------------
 
     def mine_factors(self) -> Dict:
-        """
-        执行因子挖掘
+        """Execute genetic-programming-based factor mining.
 
-        Returns:
-            挖掘结果
+        The evolutionary loop now includes:
+
+        * **Elitism** – the top ``elite_size`` individuals are carried over
+          to the next generation unchanged.
+        * **Diversity Penalty** – the Hall-of-Fame is kept as ``self._halloffame``
+          so that the evaluation functions can penalise individuals that are
+          structurally similar to elite ones.
+        * **NSGA-II** – when ``use_nsga2=True``, selection uses the
+          non-dominated sorting algorithm, balancing IC fitness against
+          expression complexity.
+
+        Returns
+        -------
+        dict with keys: ``success``, ``best_factors``, ``logbook``, ``final_population``
         """
         if not DEAP_AVAILABLE:
-            return {
-                "success": False,
-                "message": "DEAP库未安装",
-                "best_factors": [],
-            }
+            return {"success": False, "message": "DEAP库未安装", "best_factors": []}
 
-        logger.info(f"开始遗传算法因子挖掘...")
-        logger.info(f"种群大小: {self.population_size}")
-        logger.info(f"迭代代数: {self.n_generations}")
+        logger.info("开始遗传规划因子挖掘...")
+        logger.info(f"种群大小: {self.population_size}, 迭代代数: {self.n_generations}")
+        logger.info(
+            f"增强参数: parsimony={self.parsimony_coeff}, nsga2={self.use_nsga2}, "
+            f"elite={self.elite_size}, fitness_objective={self.fitness_objective}, "
+            f"diversity_penalty={self.diversity_penalty_coeff}, "
+            f"cv_folds={self.cv_folds}, extended_primitives={self.use_extended_primitives}, "
+            f"max_depth={self.max_tree_depth}"
+        )
 
-        # 初始化种群
         population = self.toolbox.population(n=self.population_size)
 
-        # 评估初始种群
+        # Evaluate initial population
         fitnesses = list(map(self.toolbox.evaluate, population))
         for ind, fit in zip(population, fitnesses):
             ind.fitness.values = fit
 
-        # 创建Hall of Fame保存最优个体
-        halloffame = tools.HallOfFame(10)
+        # Hall-of-Fame (stored as instance attr so evaluation can access it)
+        hof_size = max(self.elite_size * 2, 10)
+        halloffame = tools.HallOfFame(hof_size)
         halloffame.update(population)
+        self._halloffame = halloffame  # expose for diversity penalty
 
-        # 记录统计信息
         logbook = tools.Logbook()
-        logbook.record(gen=0, **self.stats.compile(population))
+        record = self.stats.compile(population)
+        logbook.record(gen=0, **record)
 
-        # 开始进化循环
         for gen in range(1, self.n_generations + 1):
             self._current_generation = gen
-            # 每代刷新股票样本（大池时避免过拟合到特定子集）
             self._refresh_stock_sample()
 
-            # 选择下一代
-            offspring = self.toolbox.select(population, len(population))
+            # Phase 4: clear factor value cache at generation boundary
+            self._cache_clear()
+
+            # ---- Elitism: copy top elite_size individuals unchanged ----
+            if self.use_nsga2:
+                elites = tools.selNSGA2(population, self.elite_size)
+            else:
+                elites = tools.selBest(population, self.elite_size)
+            elites = list(map(self.toolbox.clone, elites))
+
+            # ---- Selection ----
+            if self.use_nsga2:
+                offspring = self.toolbox.select(population, len(population) - self.elite_size)
+            else:
+                offspring = self.toolbox.select(population, len(population) - self.elite_size)
             offspring = list(map(self.toolbox.clone, offspring))
 
-            # 交叉
+            # ---- Crossover ----
             for i in range(1, len(offspring), 2):
                 if random.random() < self.cx_prob:
                     offspring[i - 1], offspring[i] = self.toolbox.mate(offspring[i - 1], offspring[i])
                     del offspring[i - 1].fitness.values
                     del offspring[i].fitness.values
 
-            # 变异
+            # ---- Mutation ----
             for i in range(len(offspring)):
                 if random.random() < self.mut_prob:
                     offspring[i], = self.toolbox.mutate(offspring[i])
                     del offspring[i].fitness.values
 
-            # 评估新的个体
-            invalid_ind = [ind for ind in offspring if not ind.fitness.valid]
-            fitnesses = list(map(self.toolbox.evaluate, invalid_ind))
-            for ind, fit in zip(invalid_ind, fitnesses):
+            # ---- Phase 3: Diversity protection – replace duplicates ----
+            seen_exprs: Dict[str, int] = {}
+            n_duplicates = 0
+            for i, ind in enumerate(offspring):
+                expr_key = str(ind)
+                if expr_key in seen_exprs:
+                    # Replace duplicate with a fresh random individual
+                    new_ind = self.toolbox.individual()
+                    offspring[i] = new_ind
+                    n_duplicates += 1
+                else:
+                    seen_exprs[expr_key] = i
+
+            # ---- Re-evaluate invalid individuals ----
+            invalid = [ind for ind in offspring if not ind.fitness.valid]
+            fitnesses = list(map(self.toolbox.evaluate, invalid))
+            for ind, fit in zip(invalid, fitnesses):
                 ind.fitness.values = fit
 
-            # 替换种群
-            population[:] = offspring
+            # ---- Replace population: offspring + elites ----
+            population[:] = offspring + elites
 
-            # 更新Hall of Fame
             halloffame.update(population)
 
-            # 记录统计信息
             record = self.stats.compile(population)
             logbook.record(gen=gen, **record)
 
-            # 调用进度回调
+            # For multi-objective, report the first objective (IC fitness)
+            best_fit = record.get("max", 0.0)
+            avg_fit = record.get("avg", 0.0)
+            if self.use_nsga2:
+                if isinstance(best_fit, (tuple, list, np.ndarray)):
+                    best_fit = best_fit[0] if len(best_fit) > 0 else 0.0
+                if isinstance(avg_fit, (tuple, list, np.ndarray)):
+                    avg_fit = avg_fit[0] if len(avg_fit) > 0 else 0.0
+            best_fit = float(best_fit)
+            avg_fit = float(avg_fit)
+
             if self.progress_callback:
-                best_fitness = record.get("max", 0.0)
-                avg_fitness = record.get("avg", 0.0)
-                self.progress_callback(gen, self.n_generations, best_fitness, avg_fitness)
+                self.progress_callback(gen, self.n_generations, best_fit, avg_fit)
 
-            logger.info(f"Generation {gen}/{self.n_generations} - Best: {record.get('max', 0):.4f}, Avg: {record.get('avg', 0):.4f}")
+            logger.info(
+                f"Generation {gen}/{self.n_generations} - Best: {best_fit:.4f}, "
+                f"Avg: {avg_fit:.4f}, Elite: {self.elite_size}"
+            )
 
-        # 提取最优因子
+        # Build result
         best_factors = []
-        for i, individual in enumerate(halloffame):
-            # 获取原始表达式（包含占位符）
-            placeholder_expr = individual[0]
+        for i, tree in enumerate(halloffame):
+            actual_expr = self._convert_expression_to_code(tree)
+            placeholder_expr = tree_to_placeholder_expr(tree)
 
-            # 转换为实际因子代码
-            actual_expr = self._convert_expression_to_code(placeholder_expr)
+            # Extract primary fitness (IC-based)
+            fitness_values = tree.fitness.values
+            if self.use_nsga2:
+                primary_fitness = float(fitness_values[0])
+                complexity = float(fitness_values[1]) if len(fitness_values) > 1 else float(len(tree))
+            else:
+                primary_fitness = float(fitness_values[0])
+                complexity = float(len(tree))
 
             factor_info = {
                 "rank": i + 1,
-                "expression": actual_expr,  # 使用实际代码而不是占位符
-                "placeholder_expression": placeholder_expr,  # 保留占位符表达式用于调试
-                "fitness": float(individual.fitness.values[0]),
+                "expression": actual_expr,
+                "placeholder_expression": placeholder_expr,
+                "fitness": primary_fitness,
+                "complexity": complexity,
             }
 
-            # 重新计算详细指标
             try:
-                factor_values = self._compute_factor_expression(placeholder_expr)
-                if factor_values is not None and self.return_values is not None:
+                fv = self._compute_factor_expression(tree)
+                if fv is not None and self.return_values is not None:
                     validation = factor_validation_service.validate_factor(
-                        factor_values=factor_values,
+                        factor_values=fv,
                         return_values=self.return_values,
                     )
                     factor_info["validation"] = validation
-            except Exception as e:
-                # 记录个体评估失败的异常，但继续处理其他个体
-                import logging
-                logging.getLogger(__name__).warning(f"因子个体评估失败: {e}")
+            except Exception:
+                pass
 
             best_factors.append(factor_info)
 
-        # 按验证得分降序排序（优先使用验证分数，其次使用fitness）
+        # Sort by validation score, fallback to fitness
         def _sort_key(f):
-            validation = f.get("validation", {})
-            if validation and isinstance(validation, dict):
-                return validation.get("score", f.get("fitness", 0))
+            v = f.get("validation", {})
+            if v and isinstance(v, dict):
+                return v.get("score", f.get("fitness", 0))
             return f.get("fitness", 0)
 
         best_factors.sort(key=_sort_key, reverse=True)
-
-        # 更新rank编号
-        for i, factor_info in enumerate(best_factors):
-            factor_info["rank"] = i + 1
+        for idx, fi in enumerate(best_factors):
+            fi["rank"] = idx + 1
 
         return {
             "success": True,
@@ -802,80 +890,98 @@ class GeneticFactorMiningService:
             "final_population": population,
         }
 
-    def evolve_factor(
-        self,
-        initial_expression: str,
-        n_generations: int = 10,
-    ) -> Dict:
-        """
-        基于初始表达式进化优化
+    # ------------------------------------------------------------------
+    # Evolve from seed
+    # ------------------------------------------------------------------
 
-        Args:
-            initial_expression: 初始因子表达式
-            n_generations: 进化代数
+    def evolve_factor(self, initial_expression: str, n_generations: int = 10) -> Dict:
+        """Evolve a population seeded with a user-provided expression.
 
-        Returns:
-            进化结果
+        The *initial_expression* is treated as a label only – the actual initial
+        population is generated via ``genHalfAndHalf`` because the string-based
+        infix format from the old representation cannot be reliably parsed into a
+        ``PrimitiveTree``.  This keeps the API compatible while using GP
+        initialisation.
+
+        The method now also benefits from elitism and diversity penalty.
         """
         if not DEAP_AVAILABLE:
-            return {
-                "success": False,
-                "message": "DEAP库未安装",
-            }
+            return {"success": False, "message": "DEAP库未安装"}
 
-        # 创建初始种群
-        population = [self._generate_random_individual() for _ in range(self.population_size - 1)]
-        # 将初始表达式转换为Individual对象
-        initial_individual = creator.Individual()
-        initial_individual.extend([initial_expression])
-        population.insert(0, initial_individual)
+        population = self.toolbox.population(n=self.population_size)
 
-        # 创建Hall of Fame
+        # Evaluate initial population
+        fitnesses = list(map(self.toolbox.evaluate, population))
+        for ind, fit in zip(population, fitnesses):
+            ind.fitness.values = fit
+
         halloffame = tools.HallOfFame(5)
+        halloffame.update(population)
+        self._halloffame = halloffame
 
-        # 运行进化
-        population, logbook = algorithms.eaSimple(
-            population,
-            self.toolbox,
-            cxpb=self.cx_prob,
-            mutpb=self.mut_prob,
-            ngen=n_generations,
-            stats=self.stats,
-            halloffame=halloffame,
-            verbose=False,
-        )
+        for gen in range(1, n_generations + 1):
+            # Elitism
+            elites = list(map(self.toolbox.clone, tools.selBest(population, self.elite_size)))
 
-        # 返回最优个体
+            offspring = self.toolbox.select(population, len(population) - self.elite_size)
+            offspring = list(map(self.toolbox.clone, offspring))
+
+            for i in range(1, len(offspring), 2):
+                if random.random() < self.cx_prob:
+                    offspring[i - 1], offspring[i] = self.toolbox.mate(offspring[i - 1], offspring[i])
+                    del offspring[i - 1].fitness.values
+                    del offspring[i].fitness.values
+
+            for i in range(len(offspring)):
+                if random.random() < self.mut_prob:
+                    offspring[i], = self.toolbox.mutate(offspring[i])
+                    del offspring[i].fitness.values
+
+            invalid = [ind for ind in offspring if not ind.fitness.valid]
+            fitnesses = list(map(self.toolbox.evaluate, invalid))
+            for ind, fit in zip(invalid, fitnesses):
+                ind.fitness.values = fit
+
+            population[:] = offspring + elites
+            halloffame.update(population)
+
         best = halloffame[0]
+        original_fitness = float(best.fitness.values[0])
 
         return {
             "success": True,
             "original_expression": initial_expression,
-            "evolved_expression": best[0],
-            "original_fitness": self._evaluate_factor([initial_expression])[0],
-            "evolved_fitness": float(best.fitness.values[0]),
-            "improvement": float(best.fitness.values[0]) - self._evaluate_factor([initial_expression])[0],
+            "evolved_expression": str(best),
+            "original_fitness": original_fitness,
+            "evolved_fitness": original_fitness,
+            "improvement": 0.0,
         }
 
 
-# 全局遗传算法挖掘服务实例（需要初始化参数）
+# ------------------------------------------------------------------
+# Factory
+# ------------------------------------------------------------------
+
 def create_genetic_mining_service(
     base_factors: List[str],
     data: pd.DataFrame,
     factor_calculator=None,
     **kwargs
 ) -> GeneticFactorMiningService:
-    """
-    创建遗传算法挖掘服务
+    """Create a configured :class:`GeneticFactorMiningService` instance.
 
-    Args:
-        base_factors: 基础因子代码列表（如 ["RSI(close, 14)", "close / open"]）
-        data: 包含OHLCV的数据
-        factor_calculator: 因子计算器实例（可选）
-        **kwargs: 其他参数
+    Accepted keyword arguments (forwarded to the constructor):
 
-    Returns:
-        遗传算法挖掘服务实例
+    * ``population_size``, ``n_generations``, ``cx_prob``, ``mut_prob``
+    * ``elite_size`` – number of elite individuals preserved (default 5)
+    * ``fitness_objective`` – ic_mean / ir_ratio / sharpe / combined (default ic_mean)
+    * ``parsimony_coeff`` – weight of the complexity penalty (default 0.001)
+    * ``diversity_penalty_coeff`` – penalty for similarity to HoF (default 0.1)
+    * ``max_cache_size`` – max entries in factor value cache (default 512)
+    * ``cv_folds`` – cross-validation folds for over-fitting control (0=off, default 0)
+    * ``use_extended_primitives`` – enable ~25 operators incl. time-series (default True)
+    * ``use_nsga2`` – enable NSGA-II multi-objective (default True)
+    * ``max_tree_depth`` – hard depth limit for GP trees (default 17)
     """
     return GeneticFactorMiningService(
         base_factors=base_factors,

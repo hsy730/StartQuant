@@ -10,7 +10,40 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
+import numpy as np
+import math
+
 router = APIRouter()
+
+
+def _safe_float(value, default=0.0) -> float:
+    """Convert to float, replacing NaN/Inf/None with *default*.
+
+    FastAPI's JSON encoder rejects non-finite floats, so this must be
+    applied to every numeric value that reaches the front-end.
+    """
+    if value is None:
+        return default
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return default
+    if math.isnan(v) or math.isinf(v):
+        return default
+    return v
+
+
+def _extract_first_fitness(value) -> float:
+    """Extract the primary (IC-based) fitness from a stat value.
+
+    When NSGA-II multi-objective optimisation is active the compiled
+    statistics contain element-wise tuples/arrays ``(ic, complexity)``.
+    This helper returns the first component so that frontend charts
+    always display scalar floats.
+    """
+    if isinstance(value, (tuple, list, np.ndarray)):
+        return _safe_float(value[0]) if len(value) > 0 else 0.0
+    return _safe_float(value)
 
 
 # ========== 数据模型 ==========
@@ -28,6 +61,17 @@ class GeneticMiningRequest(BaseModel):
     elite_size: int = 5
     fitness_objective: str = "ic_mean"
     ic_threshold: float = 0.03
+    # ---- Phase 2: Parsimony pressure ----
+    parsimony_coeff: float = 0.001
+    # ---- Phase 3 & 4: Diversity + cache ----
+    diversity_penalty_coeff: float = 0.1
+    # ---- Phase 6: Cross-validation ----
+    cv_folds: int = 0
+    # ---- Phase 7: Extended primitives ----
+    use_extended_primitives: bool = True
+    max_tree_depth: int = 17
+    # ---- NSGA-II ----
+    use_nsga2: bool = True
 
 
 # ========== 任务存储（内存） ==========
@@ -155,6 +199,20 @@ async def _run_genetic_mining(task_id: str, request: GeneticMiningRequest):
                 cx_prob=request.cx_prob,
                 mut_prob=request.mut_prob,
                 factor_calculator=factor_service.calculator,
+                # Phase 1: Elitism + fitness objective
+                elite_size=request.elite_size,
+                fitness_objective=request.fitness_objective,
+                # Phase 2: Parsimony pressure
+                parsimony_coeff=request.parsimony_coeff,
+                # Phase 3 & 4: Diversity + cache
+                diversity_penalty_coeff=request.diversity_penalty_coeff,
+                # Phase 6: Cross-validation
+                cv_folds=request.cv_folds,
+                # Phase 7: Extended primitives
+                use_extended_primitives=request.use_extended_primitives,
+                max_tree_depth=request.max_tree_depth,
+                # NSGA-II
+                use_nsga2=request.use_nsga2,
             )
 
             if len(stock_codes) >= 2:
@@ -166,15 +224,15 @@ async def _run_genetic_mining(task_id: str, request: GeneticMiningRequest):
                 mining_tasks[task_id]["progress"] = progress
                 mining_tasks[task_id]["current_generation"] = gen
                 mining_tasks[task_id]["total_generations"] = total_gen
-                mining_tasks[task_id]["best_fitness"] = float(best_fitness)
-                mining_tasks[task_id]["avg_fitness"] = float(avg_fitness)
+                mining_tasks[task_id]["best_fitness"] = _safe_float(best_fitness)
+                mining_tasks[task_id]["avg_fitness"] = _safe_float(avg_fitness)
 
                 if "fitness_history" not in mining_tasks[task_id]:
                     mining_tasks[task_id]["fitness_history"] = {"best": [], "average": []}
-                mining_tasks[task_id]["fitness_history"]["best"].append(float(best_fitness))
-                mining_tasks[task_id]["fitness_history"]["average"].append(float(avg_fitness))
+                mining_tasks[task_id]["fitness_history"]["best"].append(_safe_float(best_fitness))
+                mining_tasks[task_id]["fitness_history"]["average"].append(_safe_float(avg_fitness))
 
-                logger.info(f"Progress: {progress}%, Gen {gen}/{total_gen}, Best: {best_fitness:.4f}, Avg: {avg_fitness:.4f}")
+                logger.info(f"Progress: {progress}%, Gen {gen}/{total_gen}, Best: {_safe_float(best_fitness):.4f}, Avg: {_safe_float(avg_fitness):.4f}")
 
             mining_service.set_progress_callback(progress_callback)
 
@@ -191,28 +249,30 @@ async def _run_genetic_mining(task_id: str, request: GeneticMiningRequest):
                 ic = validation.get("ic_validation", {}).get("ic", 0.0)
                 ir = validation.get("ir_validation", {}).get("ir", 0.0)
                 fitness = factor_info.get("fitness", 0.0)
+                complexity = factor_info.get("complexity", 0.0)
 
                 discovered_factors.append({
                     "name": f"Mined_Factor_{i+1}",
                     "expression": factor_info["expression"],
-                    "ic": float(ic) if ic else 0.0,
-                    "ir": float(ir) if ir else 0.0,
-                    "fitness": float(fitness),
+                    "ic": _safe_float(ic),
+                    "ir": _safe_float(ir),
+                    "fitness": _safe_float(fitness),
+                    "complexity": _safe_float(complexity),
                 })
 
             logbook = result.get("logbook")
             if logbook is not None:
                 fitness_history = {
-                    "best": [float(gen["max"]) for gen in logbook],
-                    "average": [float(gen["avg"]) for gen in logbook]
+                    "best": [_extract_first_fitness(gen["max"]) for gen in logbook],
+                    "average": [_extract_first_fitness(gen["avg"]) for gen in logbook]
                 }
             else:
                 fitness_history = {"best": [], "average": []}
 
             result_data = {
                 "factors": discovered_factors,
-                "best_fitness": float(discovered_factors[0]["fitness"]) if discovered_factors else 0.0,
-                "avg_fitness": sum(f["fitness"] for f in discovered_factors) / len(discovered_factors) if discovered_factors else 0.0,
+                "best_fitness": _safe_float(discovered_factors[0]["fitness"]) if discovered_factors else 0.0,
+                "avg_fitness": _safe_float(sum(f["fitness"] for f in discovered_factors) / len(discovered_factors)) if discovered_factors else 0.0,
                 "generations": request.n_generations,
                 "fitness_history": fitness_history
             }
