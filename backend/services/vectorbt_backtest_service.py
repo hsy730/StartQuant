@@ -6,6 +6,7 @@ import pandas as pd
 import numpy as np
 from typing import Dict, List, Optional
 from datetime import datetime
+import logging
 
 try:
     import vectorbt as vbt
@@ -13,11 +14,21 @@ try:
 except ImportError:
     VECTORBT_AVAILABLE = False
 
+from backend.services.smart_slippage_detector import smart_slippage_detector, SlippageRecommendation
+
+logger = logging.getLogger(__name__)
+
 
 class VectorBTBacktestService:
     """基于 vectorbt 的回测服务"""
 
-    def __init__(self, initial_capital: float = 1000000, commission_rate: float = 0.0003, slippage: float = 0.0):
+    def __init__(
+        self,
+        initial_capital: float = 1000000,
+        commission_rate: float = 0.0003,
+        slippage: float = 0.0,
+        slippage_mode: str = "custom",  # "smart" 或 "custom"
+    ):
         """
         初始化回测服务
 
@@ -25,6 +36,9 @@ class VectorBTBacktestService:
             initial_capital: 初始资金，默认100万
             commission_rate: 手续费率，默认万三
             slippage: 滑点率，默认0（不考虑滑点）
+            slippage_mode: 滑点模式
+                         - "smart": 使用智能检测器自动推荐
+                         - "custom": 使用用户指定的滑点值
         """
         if not VECTORBT_AVAILABLE:
             raise ImportError("vectorbt未安装，请运行: pip install vectorbt")
@@ -32,6 +46,71 @@ class VectorBTBacktestService:
         self.initial_capital = initial_capital
         self.commission_rate = commission_rate
         self.slippage = slippage
+        self.slippage_mode = slippage_mode
+        self._slippage_recommendation: Optional[SlippageRecommendation] = None
+
+    def set_smart_slippage(
+        self,
+        stock_codes: List[str],
+        strategy_turnover: float = 12.0,
+        market_data: Optional[pd.DataFrame] = None,
+        price_data: Optional[Dict[str, pd.DataFrame]] = None,
+        user_preference: Optional[str] = None,
+    ) -> SlippageRecommendation:
+        """
+        使用智能检测器设置滑点参数
+
+        Args:
+            stock_codes: 股票代码列表
+            strategy_turnover: 策略年化换手率（倍数/年）
+            market_data: 市场数据（可选）
+            price_data: 价格数据（可选）
+            user_preference: 用户偏好 ("conservative"/"aggressive"/None)
+
+        Returns:
+            滑点推荐结果
+        """
+        logger.info(f"启动智能滑点检测: {len(stock_codes)}只股票, 换手率{strategy_turnover:.1f}倍/年")
+
+        self._slippage_recommendation = smart_slippage_detector.recommend_slippage(
+            stock_codes=stock_codes,
+            strategy_turnover=strategy_turnover,
+            market_data=market_data,
+            price_data=price_data,
+            user_preference=user_preference,
+        )
+
+        # 应用推荐的滑点值
+        self.slippage = self._slippage_recommendation.recommended_slippage
+        self.slippage_mode = "smart"
+
+        logger.info(
+            f"智能滑点推荐完成: {self.slippage*100:.3f}% "
+            f"(置信度{self._slippage_recommendation.confidence*100:.0f}%)"
+        )
+
+        return self._slippage_recommendation
+
+    def get_slippage_info(self) -> Dict:
+        """获取当前滑点配置信息"""
+        if self._slippage_recommendation and self.slippage_mode == "smart":
+            return {
+                "mode": "smart",
+                "slippage": self.slippage,
+                "recommendation": {
+                    "recommended": self._slippage_recommendation.recommended_slippage,
+                    "conservative": self._slippage_recommendation.conservative_slippage,
+                    "aggressive": self._slippage_recommendation.aggressive_slippage,
+                    "confidence": self._slippage_recommendation.confidence,
+                    "reasoning": self._slippage_recommendation.reasoning,
+                    "sensitivity": self._slippage_recommendation.sensitivity_analysis,
+                }
+            }
+        else:
+            return {
+                "mode": "custom",
+                "slippage": self.slippage,
+            }
 
     def single_factor_backtest(
         self,
@@ -253,6 +332,8 @@ class VectorBTBacktestService:
             "volatility": float(volatility),
             "var_95": float(var_95),
             "cvar_95": float(cvar_95),
+            # 滑点信息
+            "slippage_info": self.get_slippage_info(),
         }
 
     def multi_factor_backtest(
@@ -580,6 +661,8 @@ class VectorBTBacktestService:
             "volatility": float(volatility),
             "var_95": float(var_95),
             "cvar_95": float(cvar_95),
+            # 滑点信息
+            "slippage_info": self.get_slippage_info(),
         }
 
     def calculate_metrics(

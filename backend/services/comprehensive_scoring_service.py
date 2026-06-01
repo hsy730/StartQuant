@@ -5,6 +5,8 @@ from typing import Dict, List, Optional
 import pandas as pd
 import numpy as np
 
+from backend.services.smart_slippage_detector import smart_slippage_detector
+
 
 class ComprehensiveScoringService:
     """综合评分服务"""
@@ -85,6 +87,194 @@ class ComprehensiveScoringService:
             "details": details,
             "weights": weights,
         }
+
+    def analyze_slippage_sensitivity(
+        self,
+        strategy_metrics: Dict,
+        stock_codes: Optional[List[str]] = None,
+        base_slippage: float = 0.002,
+        test_slippages: Optional[List[float]] = None,
+    ) -> Dict:
+        """
+        分析策略对交易滑点的敏感性
+
+        评估不同滑点水平对策略收益的影响，帮助用户理解交易成本风险
+
+        Args:
+            strategy_metrics: 策略指标字典，必须包含：
+                            - annual_return: 年化收益率
+                            - turnover: 换手率（可选，默认12倍/年）
+            stock_codes: 股票代码列表（可选，用于智能检测）
+            base_slippage: 基准滑点率（默认0.2%）
+            test_slippages: 测试的滑点列表（可选）
+
+        Returns:
+            滑点敏感性分析结果字典
+        """
+        # 获取基础指标
+        annual_return = strategy_metrics.get("annual_return", 0.15)
+        turnover = strategy_metrics.get("turnover", 12.0)  # 默认年化换手率12倍
+
+        # 如果提供了股票代码，使用智能检测器获取更准确的推荐
+        smart_recommendation = None
+        if stock_codes and len(stock_codes) > 0:
+            try:
+                smart_recommendation = smart_slippage_detector.recommend_slippage(
+                    stock_codes=stock_codes,
+                    strategy_turnover=turnover,
+                )
+                # 使用智能推荐的基准滑点
+                base_slippage = smart_recommendation.recommended_slippage
+            except Exception as e:
+                pass  # 智能检测失败时回退到默认值
+
+        # 定义测试场景
+        if test_slippages is None:
+            test_slippages = [0.0, 0.001, 0.002, 0.003, 0.005, 0.01, base_slippage]
+
+        # 计算不同滑点下的净收益
+        scenarios = []
+        for slip in sorted(test_slippages):
+            # 年化滑点成本 = 滑点率 * 换手率 * 2（买入+卖出）
+            annual_cost = slip * turnover * 2
+            net_return = annual_return - annual_cost
+            return_decay = (annual_cost / annual_return * 100) if annual_return != 0 else 0
+
+            scenario = {
+                "slippage_rate": slip,
+                "slippage_pct": f"{slip * 100:.2f}%",
+                "annual_cost_pct": round(annual_cost * 100, 2),
+                "net_annual_return": round(net_return * 100, 2),
+                "return_decay_pct": round(return_decay, 2),
+                "is_recommended": abs(slip - base_slippage) < 0.0001,
+            }
+            scenarios.append(scenario)
+
+        # 敏感性等级评估
+        base_cost = base_slippage * turnover * 2
+        sensitivity_ratio = abs(base_cost / annual_return) if annual_return != 0 else float('inf')
+
+        if sensitivity_ratio < 0.1:
+            sensitivity_level = "low"
+            sensitivity_desc = "低敏感：滑点对收益影响较小（<10%）"
+        elif sensitivity_ratio < 0.25:
+            sensitivity_level = "medium"
+            sensitivity_desc = "中敏感：滑点对收益有适度影响（10-25%）"
+        elif sensitivity_ratio < 0.5:
+            sensitivity_level = "high"
+            sensitivity_desc = "高敏感：滑点显著侵蚀收益（25-50%）"
+        else:
+            sensitivity_level = "very_high"
+            sensitivity_desc = "极高敏感：滑点严重损害收益（>50%），需优化执行"
+
+        # 生成建议
+        recommendations = self._generate_slippage_recommendations(
+            sensitivity_level, turnover, base_slippage, annual_return
+        )
+
+        # 构建结果
+        result = {
+            "base_slippage": base_slippage,
+            "base_slippage_pct": f"{base_slippage * 100:.3f}%",
+            "strategy_turnover": turnover,
+            "original_annual_return": round(annual_return * 100, 2),
+            "sensitivity_level": sensitivity_level,
+            "sensitivity_description": sensitivity_desc,
+            "cost_impact_ratio": round(sensitivity_ratio * 100, 2),
+            "scenarios": scenarios,
+            "recommendations": recommendations,
+        }
+
+        # 如果有智能推荐，添加到结果中
+        if smart_recommendation:
+            result["smart_recommendation"] = {
+                "recommended_slippage": smart_recommendation.recommended_slippage,
+                "conservative_slippage": smart_recommendation.conservative_slippage,
+                "aggressive_slippage": smart_recommendation.aggressive_slippage,
+                "confidence": smart_recommendation.confidence,
+                "reasoning": smart_recommendation.reasoning,
+                "sensitivity_analysis": smart_recommendation.sensitivity_analysis,
+                "warnings": smart_recommendation.warnings,
+                "tips": smart_recommendation.tips,
+            }
+
+        return result
+
+    def _generate_slippage_recommendations(
+        self,
+        sensitivity_level: str,
+        turnover: float,
+        base_slippage: float,
+        annual_return: float,
+    ) -> List[Dict]:
+        """根据敏感性分析生成优化建议"""
+        recommendations = []
+
+        if sensitivity_level in ["high", "very_high"]:
+            recommendations.append({
+                "priority": "critical",
+                "category": "execution",
+                "title": "优化交易执行",
+                "description": f"当前策略对滑点{sensitivity_level.replace('_', ' ')}敏感，年化成本可能达到{base_slippage * turnover * 2 * 100:.1f}%",
+                "actions": [
+                    "使用算法交易（VWAP/TWAP）降低冲击成本",
+                    "分批建仓/平仓，避免大额单笔交易",
+                    "选择流动性较好的时段交易（开盘后30分钟或收盘前30分钟）",
+                    "考虑使用限价单而非市价单",
+                ]
+            })
+
+            if turnover > 24:
+                recommendations.append({
+                    "priority": "critical",
+                    "category": "strategy",
+                    "title": "降低换手频率",
+                    "description": f"年化换手率{turnover:.0f}倍过高，导致交易成本累积严重",
+                    "actions": [
+                        "增加持仓周期，减少不必要的调仓",
+                        "设置调仓阈值（如因子排名变化>20%才调仓）",
+                        "考虑使用因子平滑或信号过滤降低噪声交易",
+                    ]
+                })
+        elif sensitivity_level == "medium":
+            recommendations.append({
+                "priority": "moderate",
+                "category": "optimization",
+                "title": "适度优化执行质量",
+                "description": "滑点成本适中，可通过简单优化改善",
+                "actions": [
+                    "监控实际成交价与预期价格的偏差",
+                    "在波动剧烈时减少交易频率",
+                    "优先选择流动性好的标的",
+                ]
+            })
+        else:
+            recommendations.append({
+                "priority": "low",
+                "category": "monitoring",
+                "title": "保持当前策略",
+                "description": "滑点影响较小，当前参数设置合理",
+                "actions": [
+                    "定期回顾实际滑点与假设的差异",
+                    "关注市场微观结构变化",
+                ]
+            })
+
+        # 针对不同换手率的通用建议
+        if turnover > 12 and sensitivity_level != "low":
+            recommendations.append({
+                "priority": "moderate",
+                "category": "cost_control",
+                "title": "建立交易成本预算",
+                "description": f"建议将年化交易成本控制在{annual_return * 0.1 * 100:.1f}%以内（目标收益的10%）",
+                "actions": [
+                    "设定单笔交易成本上限",
+                    "定期统计实际执行滑点",
+                    "将交易成本纳入策略绩效归因分析",
+                ]
+            })
+
+        return recommendations
 
     def score_strategy(
         self,

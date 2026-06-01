@@ -32,6 +32,8 @@ class SingleBacktestRequest(BaseModel):
     initial_capital: float = 1000000
     commission_rate: float = 0.0003
     slippage: float = 0.0
+    slippage_mode: str = "custom"  # "smart" 智能推荐 或 "custom" 自定义
+    slippage_preference: Optional[str] = None  # "conservative"/"aggressive"/None
     percentile: int = 50
     direction: str = "long"
     n_quantiles: int = 5
@@ -124,7 +126,24 @@ async def run_single_backtest(request: SingleBacktestRequest):
             initial_capital=request.initial_capital,
             commission_rate=request.commission_rate,
             slippage=request.slippage,
+            slippage_mode=request.slippage_mode,
         )
+
+        # 如果是智能模式，使用智能检测器设置滑点
+        if request.slippage_mode == "smart":
+            # 准备价格数据用于智能检测（可选）
+            price_data = {}
+            for stock_code, df in all_factor_data.items():
+                if "close" in df.columns:
+                    price_data[stock_code] = df[["close", "volume"]]
+
+            # 调用智能滑点检测器
+            slippage_rec = backtest_service.set_smart_slippage(
+                stock_codes=request.stock_codes,
+                strategy_turnover=12.0,  # 默认年化换手率12倍（可在后续版本中从回测结果动态计算）
+                price_data=price_data if price_data else None,
+                user_preference=request.slippage_preference,
+            )
 
         is_single_stock = len(all_factor_data) == 1
 
