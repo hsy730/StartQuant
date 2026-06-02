@@ -198,36 +198,118 @@ class FactorCalculator:
             """常量序列"""
             return pd.Series([value] * length)
 
+        def TSRANK(series, n=10):
+            if isinstance(series, pd.Series):
+                return series.rolling(window=n, min_periods=1).apply(
+                    lambda x: pd.Series(x).rank(pct=True).iloc[-1], raw=False
+                )
+            return pd.Series(series).rolling(window=n, min_periods=1).apply(
+                lambda x: pd.Series(x).rank(pct=True).iloc[-1], raw=False
+            )
+
+        def CORR(x, y, n=10):
+            if isinstance(x, pd.Series) and isinstance(y, pd.Series):
+                result = x.rolling(window=n, min_periods=2).corr(y)
+                return result.replace([np.inf, -np.inf], np.nan)
+            result = pd.Series(x).rolling(window=n, min_periods=2).corr(pd.Series(y))
+            return result.replace([np.inf, -np.inf], np.nan)
+
+        def COV(x, y, n=10):
+            if isinstance(x, pd.Series) and isinstance(y, pd.Series):
+                return x.rolling(window=n, min_periods=2).cov(y)
+            return pd.Series(x).rolling(window=n, min_periods=2).cov(pd.Series(y))
+
+        def DELTA(series, n=1):
+            if isinstance(series, pd.Series):
+                return series - series.shift(n)
+            return pd.Series(series) - pd.Series(series).shift(n)
+
+        def SIGN(series):
+            if isinstance(series, pd.Series):
+                return np.sign(series)
+            return np.sign(series)
+
+        def SIGNEDPOWER(series, a=2):
+            if isinstance(series, pd.Series):
+                return np.sign(series) * np.power(np.abs(series), a)
+            return np.sign(series) * np.power(np.abs(series), a)
+
+        def RETURNS(close_series):
+            if isinstance(close_series, pd.Series):
+                return close_series.pct_change()
+            return pd.Series(close_series).pct_change()
+
+        def TS_PRODUCT(series, n=5):
+            if isinstance(series, pd.Series):
+                return series.rolling(window=n, min_periods=1).apply(np.prod, raw=True)
+            return pd.Series(series).rolling(window=n, min_periods=1).apply(np.prod, raw=True)
+
+        def TS_ARGMAX(series, n=5):
+            if isinstance(series, pd.Series):
+                return series.rolling(window=n, min_periods=1).apply(np.argmax, raw=True)
+            return pd.Series(series).rolling(window=n, min_periods=1).apply(np.argmax, raw=True)
+
+        def TS_ARGMIN(series, n=5):
+            if isinstance(series, pd.Series):
+                return series.rolling(window=n, min_periods=1).apply(np.argmin, raw=True)
+            return pd.Series(series).rolling(window=n, min_periods=1).apply(np.argmin, raw=True)
+
+        def SCALE(series):
+            if isinstance(series, pd.Series):
+                abs_sum = series.abs().sum()
+                if abs_sum == 0 or np.isnan(abs_sum):
+                    return series * 0
+                return series / abs_sum
+            abs_sum = np.abs(series).sum()
+            if abs_sum == 0:
+                return series * 0
+            return series / abs_sum
+
+        def DECAY_LINEAR(series, n=10):
+            if not isinstance(series, pd.Series):
+                series = pd.Series(series)
+            weights = np.arange(1, n + 1, dtype=float)
+
+            def weighted_avg(x):
+                w = weights[-len(x):]
+                return np.dot(x, w) / w.sum()
+
+            return series.rolling(window=n, min_periods=1).apply(weighted_avg, raw=True)
+
         return {
-            # 移动平均函数
             "SMA": SMA,
             "MA": MA,
-            # 引用函数
             "REF": REF,
-            # 极值函数
             "HHV": HHV,
             "LLV": LLV,
-            # 统计函数
             "SUM": SUM,
             "AVE": AVE,
             "STD": STD,
             "COUNT": COUNT,
-            # 逻辑函数
             "EVERY": EVERY,
             "EXIST": EXIST,
             "CROSS": CROSS,
             "LONGCROSS": LONGCROSS,
             "UP": UP,
             "DOWN": DOWN,
-            # 条件函数
             "IF": IF,
             "BETWEEN": BETWEEN,
-            # 数学函数
             "MAX": MAX,
             "MIN": MIN,
-            # 其他函数
             "BARSLAST": BARSLAST,
             "CONST": CONST,
+            "TSRANK": TSRANK,
+            "CORR": CORR,
+            "COV": COV,
+            "DELTA": DELTA,
+            "SIGN": SIGN,
+            "SIGNEDPOWER": SIGNEDPOWER,
+            "RETURNS": RETURNS,
+            "TS_PRODUCT": TS_PRODUCT,
+            "TS_ARGMAX": TS_ARGMAX,
+            "TS_ARGMIN": TS_ARGMIN,
+            "SCALE": SCALE,
+            "DECAY_LINEAR": DECAY_LINEAR,
         }
 
     def calculate(self, df: pd.DataFrame, factor_code: str) -> pd.Series:
@@ -319,6 +401,7 @@ class FactorCalculator:
                 "HIGH": df["high"],
                 "LOW": df["low"],
                 "VOL": df["volume"],
+                "VWAP": (df["high"] + df["low"] + df["close"]) / 3,
                 # Python内置函数
                 "int": int,
                 "float": float,
@@ -502,7 +585,9 @@ class FactorService:
 
     def _get_default_factors(self) -> Dict[str, List[Dict]]:
         """获取默认预置因子定义"""
-        return {
+        from backend.services.alpha101_factors import get_alpha101_factors
+        alpha101_factors = get_alpha101_factors()
+        base_factors = {
             "价格收益率": [
                 {
                     "name": "log_return_1",
@@ -900,6 +985,8 @@ class FactorService:
                 },
             ],
         }
+        base_factors.update(alpha101_factors)
+        return base_factors
 
     def get_all_factors(self) -> List[Dict]:
         """获取所有因子"""
@@ -1155,7 +1242,19 @@ class FactorService:
                         'MAX': 'MAX (最大值)',
                         'MIN': 'MIN (最小值)',
                         'BARSLAST': 'BARSLAST (上一次满足条件到当前的周期数)',
-                        'CONST': 'CONST (常量序列)'
+                        'CONST': 'CONST (常字列)',
+                        'TSRANK': 'TSRANK (时序排名百分位)',
+                        'CORR': 'CORR (滚动相关系数)',
+                        'COV': 'COV (滚动协方差)',
+                        'DELTA': 'DELTA (差值：当前值减去n天前的值)',
+                        'SIGN': 'SIGN (符号函数)',
+                        'SIGNEDPOWER': 'SIGNEDPOWER (带符号的幂函数)',
+                        'RETURNS': 'RETURNS (日收益率)',
+                        'TS_PRODUCT': 'TS_PRODUCT (滚动乘积)',
+                        'TS_ARGMAX': 'TS_ARGMAX (滚动窗口内最大值距今天数)',
+                        'TS_ARGMIN': 'TS_ARGMIN (滚动窗口内最小值距今天数)',
+                        'SCALE': 'SCALE (标准化)',
+                        'DECAY_LINEAR': 'DECAY_LINEAR (线性衰减加权移动平均)'
                     }
 
                     for func, desc in common_funcs.items():
