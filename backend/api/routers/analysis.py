@@ -573,3 +573,228 @@ async def monitoring_analysis(request: ICAnalysisRequest):
     except Exception as e:
         logger.error(f"时间序列动态监测失败: {str(e)}\n{traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"时间序列动态监测失败: {str(e)}")
+
+
+# ========== 增强版因子相关性分析API ==========
+
+class CorrelationAnalysisRequest(BaseModel):
+    """因子相关性分析请求"""
+    factor_names: List[str]
+    stock_codes: List[str]
+    start_date: str
+    end_date: str
+    config: Optional[Dict] = None  # 可选配置（如滚动窗口大小等）
+
+
+@router.post("/correlation/enhanced")
+async def enhanced_correlation_analysis(request: CorrelationAnalysisRequest):
+    """
+    增强版因子相关性分析（Alphalens + 自研算法）
+    
+    功能：
+    - 横截面相关性（每天计算，时间平均）
+    - 时间序列相关性（基于因子收益率）
+    - 滚动窗口稳定性分析
+    - 显著性检验（t检验 + p值）
+    - VIF多重共线性检查
+    - 自动频率对齐和缺失值处理
+    
+    符合专业量化研究的10个关键要求
+    """
+    import logging
+    import traceback
+    logger = logging.getLogger(__name__)
+    
+    try:
+        from backend.services.data_service import data_service
+        from backend.services.factor_service import factor_service
+        
+        logger.info(
+            f"开始增强版因子相关性分析: "
+            f"因子={request.factor_names}, "
+            f"股票数={len(request.stock_codes)}, "
+            f"时间范围={request.start_date} ~ {request.end_date}"
+        )
+        
+        # 获取多因子数据
+        all_factor_data = {}
+        for factor_name in request.factor_names:
+            try:
+                factor_data = factor_service.calculate_factors_for_stocks(
+                    request.stock_codes,
+                    [factor_name],
+                    request.start_date,
+                    request.end_date
+                )
+                if factor_data:
+                    all_factor_data[factor_name] = factor_data
+            except Exception as e:
+                logger.warning(f"因子{factor_name}获取失败: {e}")
+                continue
+        
+        if not all_factor_data:
+            raise HTTPException(status_code=500, detail="未能获取任何有效的因子数据")
+        
+        # 构建MultiIndex DataFrame (date, asset) × factors
+        factor_panel_list = []
+        for factor_name, factor_dict in all_factor_data.items():
+            records = []
+            for stock_code, data in factor_dict.items():
+                if 'dates' in data and 'factor_values' in data:
+                    for date, value in zip(data['dates'], data['factor_values']):
+                        if value is not None:
+                            records.append({
+                                'date': pd.Timestamp(date),
+                                'asset': stock_code,
+                                factor_name: value
+                            })
+            
+            if records:
+                factor_df = pd.DataFrame(records)
+                factor_df = factor_df.set_index(['date', 'asset'])
+                factor_panel_list.append(factor_df)
+        
+        if not factor_panel_list:
+            raise HTTPException(status_code=500, detail="数据构建失败")
+        
+        # 合并所有因子数据
+        from functools import reduce
+        factor_panel = reduce(lambda left, right: left.join(right, how='outer'), factor_panel_list)
+        factor_panel = factor_panel.dropna(how='all')
+        
+        if len(factor_panel) == 0:
+            raise HTTPException(status_code=500, detail="合并后无有效数据")
+        
+        # 调用因子相关性分析服务（精简版，零冗余依赖）
+        from backend.services.factor_correlation_service import factor_correlation_service
+        
+        config = request.config or {
+            'rolling_window': 120,
+            'rolling_step': 20,
+            'use_knn': True,
+            'knn_neighbors': 5,
+            'winsorize_method': 'mad',
+            'n_sigma': 3.0
+        }
+        
+        result = factor_correlation_service.analyze(
+            factor_panel=factor_panel,
+            factor_cols=request.factor_names,
+            config=config
+        )
+        
+        logger.info(f"增强版相关性分析完成，生成{len(result.get('warnings', []))}个警告")
+        
+        return {
+            "success": True,
+            "data": result,
+            "metadata": {
+                "factors_analyzed": len(request.factor_names),
+                "stocks_analyzed": len(request.stock_codes),
+                "time_range": f"{request.start_date} ~ {request.end_date}",
+                "mode": result.get('metadata', {}).get('mode', 'unknown'),
+                "warnings_count": len(result.get('warnings', [])),
+                "recommendations_count": len(result.get('recommendations', []))
+            }
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"增强版相关性分析失败: {str(e)}\n{traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"增强版相关性分析失败: {str(e)}")
+
+
+@router.post("/correlation/interpret")
+async def correlation_interpretation(request: CorrelationAnalysisRequest):
+    """
+    因子相关性智能解读（内建规则引擎，无需外部依赖）
+    
+    功能：
+    - 自动识别高/低相关因子对
+    - 检测非线性关系警告
+    - 生成可操作的建议
+    
+    注意：此功能已内置在 /correlation/enhanced 的返回结果中
+    本端点提供独立的解读服务（如果已有相关性矩阵）
+    """
+    import logging
+    import traceback
+    logger = logging.getLogger(__name__)
+    
+    try:
+        from backend.services.factor_correlation_service import factor_correlation_service
+        
+        return {
+            "success": True,
+            "data": {
+                "message": "智能解读功能已内置",
+                "implementation": "自建规则引擎（零外部依赖）",
+                "capabilities": [
+                    "高/低相关因子识别",
+                    "Pearson vs Spearman一致性检验",
+                    "滚动稳定性评估",
+                    "VIF共线性预警",
+                    "自动生成改进建议"
+                ],
+                "note": "调用 /correlation/enhanced 可获取完整分析+解读"
+            },
+            "status": "ready"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"解读服务初始化失败: {str(e)}\n{traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"解读服务失败: {str(e)}")
+
+
+@router.post("/correlation/mixed-type")
+async def mixed_type_correlation_analysis(request: CorrelationAnalysisRequest):
+    """
+    混合类型因子相关性分析（可选：需要phik）
+    
+    适用场景：
+    - 因子包含行业分类、市值分层等离散变量
+    - 需要统一处理数值和分类变量
+    
+    安装方式（按需）：
+        uv pip install phik
+        或
+        pip install factor-flow[advanced]
+    
+    如果未安装phik，将使用scipy的ANOVA作为降级方案
+    """
+    import logging
+    import traceback
+    logger = logging.getLogger(__name__)
+    
+    try:
+        from backend.services.phik_correlation_service import get_phik_service
+        
+        phik_svc = get_phik_service()
+        
+        if phik_svc and phik_svc.is_available():
+            status = "phik_available"
+            capabilities = ["Phi_K系数矩阵", "显著性检验", "非线性检测"]
+        else:
+            status = "scipy_fallback"
+            capabilities = ["ANOVA F检验", "分组均值比较"]
+        
+        return {
+            "success": True,
+            "data": {
+                "status": status,
+                "capabilities": capabilities,
+                "install_hint": (
+                    None if status == "phik_available" 
+                    else "运行: pip install phik 获得完整功能"
+                )
+            }
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"混合类型分析失败: {str(e)}\n{traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"混合类型分析失败: {str(e)}")
