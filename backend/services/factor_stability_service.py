@@ -1,6 +1,7 @@
 """
 因子稳定性分析服务
 """
+import logging
 import pandas as pd
 import numpy as np
 from typing import Dict, List, Optional, Tuple
@@ -8,6 +9,10 @@ from scipy import stats
 from statsmodels.tsa.stattools import adfuller
 
 from backend.services.analysis_service import AnalysisService
+from backend.services.data_service import data_service
+from backend.services.factor_service import factor_service
+from backend.repositories.factor_repository import FactorRepository
+from backend.core.database import get_db_session
 
 
 class FactorStabilityService:
@@ -319,6 +324,354 @@ class FactorStabilityService:
             }
 
         return results
+
+
+    def comprehensive_stability_test(
+        self,
+        factor_name: str,
+        stock_codes: List[str],
+        start_date: str,
+        end_date: str
+    ) -> Dict:
+        """
+        综合稳定性检验 - 整合多个维度评估因子稳定性
+
+        Args:
+            factor_name: 因子名称
+            stock_codes: 股票代码列表
+            start_date: 开始日期 (YYYY-MM-DD)
+            end_date: 结束日期 (YYYY-MM-DD)
+
+        Returns:
+            综合稳定性分析报告，包含：
+            - distribution_stability: 分布稳定性（KS检验）
+            - time_series_stationarity: 时间序列平稳性（ADF检验）
+            - coefficient_of_variation: 变异系数
+            - rolling_window_analysis: 滚动窗口稳定性
+            - market_regime_performance: 市场环境适应性
+            - overall_score: 综合评分 (0-1)
+            - recommendation: 推荐建议
+        """
+        logger = logging.getLogger(__name__)
+
+        try:
+            logger.info(
+                f"开始综合稳定性检验: 因子={factor_name}, "
+                f"股票数={len(stock_codes)}, "
+                f"时间范围={start_date} ~ {end_date}"
+            )
+
+            # 1. 参数校验
+            if not factor_name or not isinstance(factor_name, str):
+                raise ValueError("因子名称不能为空")
+            
+            if not stock_codes or len(stock_codes) == 0:
+                raise ValueError("股票代码列表不能为空")
+            
+            if len(stock_codes) < 3:
+                raise ValueError(f"稳定性检验至少需要3只股票，当前{len(stock_codes)}只")
+
+            # 2. 获取因子定义
+            db = get_db_session()
+            repo = FactorRepository(db)
+            factor = repo.get_by_name(factor_name)
+            db.close()
+
+            if not factor:
+                raise ValueError(f"因子 '{factor_name}' 不存在")
+
+            logger.info(f"获取到因子定义: {factor_name} (code={factor.code})")
+
+            # 3. 获取所有股票的因子数据
+            all_factor_data = []
+            all_ic_series = []
+
+            for stock_code in stock_codes:
+                try:
+                    data = data_service.get_stock_data(
+                        stock_code, start_date, end_date
+                    )
+
+                    if data is None or len(data) < 60:
+                        logger.warning(f"股票 {stock_code} 数据不足(需>60天)，跳过")
+                        continue
+
+                    # 计算因子值
+                    factor_series = factor_service.calculator.calculate(
+                        data, factor.code
+                    )
+
+                    if factor_series is None or len(factor_series.dropna()) < 30:
+                        logger.warning(f"股票 {stock_code} 因子计算失败或有效值不足")
+                        continue
+
+                    # 计算未来收益率（用于IC计算）
+                    future_return = data['close'].pct_change(20).shift(-20)
+                    
+                    # 构建该股票的分析数据框
+                    stock_df = pd.DataFrame({
+                        'factor': factor_series,
+                        'future_return': future_return,
+                        'close': data['close']
+                    }).dropna()
+
+                    if len(stock_df) < 30:
+                        continue
+
+                    all_factor_data.append({
+                        'stock_code': stock_code,
+                        'data': stock_df,
+                        'factor_series': factor_series.dropna()
+                    })
+
+                    # 计算该股票的滚动IC序列
+                    ic_series = stock_df['factor'].rolling(20).corr(
+                        stock_df['future_return']
+                    ).dropna()
+                    
+                    if len(ic_series) > 0:
+                        all_ic_series.append(ic_series)
+
+                except Exception as e:
+                    logger.warning(f"处理股票 {stock_code} 时出错: {e}")
+                    continue
+
+            # 4. 验证数据有效性
+            if len(all_factor_data) == 0:
+                raise ValueError(
+                    "未能获取任何有效的因子数据。"
+                    "请检查：1) 股票代码是否正确 2) 时间范围是否合理 "
+                    "3) 因子定义是否有效"
+                )
+
+            if len(all_ic_series) == 0:
+                raise ValueError("未能计算有效的IC序列，数据可能不足")
+
+            logger.info(
+                f"成功获取 {len(all_factor_data)} 只股票的有效数据, "
+                f"{len(all_ic_series)} 个IC序列"
+            )
+
+            # 5. 合并所有IC序列（跨股票平均）
+            combined_ic = pd.concat(all_ic_series, axis=1).mean(axis=1)
+            combined_factor = pd.concat([
+                d['factor_series'] for d in all_factor_data
+            ], axis=0).dropna()
+
+            # 6. 执行多维度稳定性分析
+            results = {}
+            scores = []
+
+            # 6.1 分布稳定性分析
+            try:
+                if len(combined_factor) >= 504:  # 至少2年数据(252*2)
+                    dist_result = self.calculate_distribution_stability(
+                        combined_factor, window=252, method="ks"
+                    )
+                    results["distribution_stability"] = dist_result
+                    scores.append(dist_result.get("stability_score", 0.5))
+                    logger.info(f"分布稳定性得分: {dist_result.get('stability_score', 0):.3f}")
+                else:
+                    results["distribution_stability"] = {
+                        "warning": "数据不足504个点，跳过分布稳定性检验",
+                        "data_points": len(combined_factor),
+                        "required": 504
+                    }
+                    logger.warning("数据不足，跳过分布稳定性检验")
+            except Exception as e:
+                results["distribution_stability"] = {"error": str(e)}
+                logger.error(f"分布稳定性检验失败: {e}")
+
+            # 6.2 时间序列平稳性分析（ADF检验）
+            try:
+                ts_result = self.calculate_time_series_stability(
+                    combined_ic, maxlag=10
+                )
+                results["time_series_stationarity"] = ts_result
+                
+                # 平稳性得分：p < 0.05 得高分
+                if ts_result.get("is_stationary"):
+                    scores.append(0.8)
+                else:
+                    scores.append(0.3)
+                
+                logger.info(
+                    f"时间序列平稳性: p_value={ts_result.get('p_value', 1):.4f}, "
+                    f"is_stationary={ts_result.get('is_stationary')}"
+                )
+            except Exception as e:
+                results["time_series_stationarity"] = {"error": str(e)}
+                logger.error(f"时间序列平稳性检验失败: {e}")
+
+            # 6.3 变异系数分析
+            try:
+                cv_result = self.calculate_coefficient_of_variation(combined_ic)
+                results["coefficient_of_variation"] = cv_result
+                
+                # CV得分：CV越小越稳定
+                cv = cv_result.get("cv", float('inf'))
+                if np.isnan(cv) or np.isinf(cv):
+                    cv_score = 0.3
+                elif cv < 0.5:
+                    cv_score = 0.9
+                elif cv < 1.0:
+                    cv_score = 0.7
+                elif cv < 2.0:
+                    cv_score = 0.5
+                else:
+                    cv_score = 0.2
+                scores.append(cv_score)
+                
+                logger.info(f"变异系数 CV={cv:.3f}, 得分={cv_score:.3f}")
+            except Exception as e:
+                results["coefficient_of_variation"] = {"error": str(e)}
+                logger.error(f"变异系数计算失败: {e}")
+
+            # 6.4 滚动窗口稳定性分析
+            try:
+                # 合并所有股票的数据用于滚动分析
+                all_rolling_data = pd.concat([d['data'] for d in all_factor_data])
+                rolling_result = self.calculate_rolling_stability(
+                    all_rolling_data, 
+                    factor_name='factor',
+                    return_col='future_return',
+                    windows=[20, 60, 120]
+                )
+                results["rolling_window_analysis"] = rolling_result
+                
+                # 滚动稳定性得分：基于IR的均值
+                ir_values = [
+                    v.get('ir') for v in rolling_result.values() 
+                    if v.get('ir') is not None and not np.isnan(v.get('ir'))
+                ]
+                if ir_values:
+                    mean_ir = np.mean([abs(ir) for ir in ir_values])
+                    if mean_ir > 0.5:
+                        roll_score = 0.9
+                    elif mean_ir > 0.3:
+                        roll_score = 0.7
+                    elif mean_ir > 0.1:
+                        roll_score = 0.5
+                    else:
+                        roll_score = 0.3
+                    scores.append(roll_score)
+                
+                logger.info(f"滚动窗口分析完成，包含 {len(rolling_result)} 个周期")
+            except Exception as e:
+                results["rolling_window_analysis"] = {"error": str(e)}
+                logger.error(f"滚动窗口稳定性分析失败: {e}")
+
+            # 6.5 市场环境适应性分析
+            try:
+                all_market_data = pd.concat([d['data'] for d in all_factor_data])
+                regime_result = self.calculate_market_regime_performance(
+                    all_market_data,
+                    factor_name='factor',
+                    return_col='future_return',
+                    price_col='close'
+                )
+                results["market_regime_performance"] = regime_result
+                
+                # 市场环境适应性得分：各环境IC差异越小越好
+                regime_ics = [v.get('mean_ic') for v in regime_result.values()]
+                if len(regime_ics) >= 2:
+                    ic_std = np.std(regime_ics)
+                    if ic_std < 0.02:
+                        regime_score = 0.9
+                    elif ic_std < 0.05:
+                        regime_score = 0.7
+                    elif ic_std < 0.10:
+                        regime_score = 0.5
+                    else:
+                        regime_score = 0.3
+                    scores.append(regime_score)
+                
+                logger.info(f"市场环境分析完成，包含 {len(regime_result)} 个状态")
+            except Exception as e:
+                results["market_regime_performance"] = {"error": str(e)}
+                logger.error(f"市场环境适应性分析失败: {e}")
+
+            # 7. 计算综合评分和推荐建议
+            overall_score = np.mean(scores) if scores else 0.0
+            
+            if overall_score >= 0.75:
+                recommendation = "因子稳定性优秀，适合实盘应用"
+                risk_level = "低"
+            elif overall_score >= 0.55:
+                recommendation = "因子稳定性良好，可考虑用于策略构建"
+                risk_level = "中低"
+            elif overall_score >= 0.40:
+                recommendation = "因子稳定性一般，建议结合其他因子使用"
+                risk_level = "中"
+            else:
+                recommendation = "因子稳定性较差，存在较高失效风险，谨慎使用"
+                risk_level = "高"
+
+            # 8. 构建最终返回结果
+            final_result = {
+                **results,
+                "summary": {
+                    "overall_score": round(float(overall_score), 4),
+                    "risk_level": risk_level,
+                    "recommendation": recommendation,
+                    "analysis_dimensions": len([k for k in results.keys() if 'error' not in k]),
+                    "total_stocks_analyzed": len(all_factor_data),
+                    "valid_data_points": {
+                        "factor_values": int(len(combined_factor)),
+                        "ic_observations": int(len(combined_ic))
+                    },
+                    "warnings": self._generate_warnings(results)
+                },
+                "metadata": {
+                    "factor_name": factor_name,
+                    "stock_codes_count": len(stock_codes),
+                    "effective_stocks": len(all_factor_data),
+                    "date_range": f"{start_date} ~ {end_date}",
+                    "analysis_timestamp": pd.Timestamp.now().isoformat()
+                }
+            }
+
+            logger.info(
+                f"综合稳定性检验完成: 总体得分={overall_score:.3f}, "
+                f"风险等级={risk_level}, 建议={recommendation}"
+            )
+
+            return final_result
+
+        except ValueError as ve:
+            logger.error(f"参数校验失败: {ve}")
+            raise ve
+        except Exception as e:
+            logger.error(f"综合稳定性检验异常: {e}", exc_info=True)
+            raise RuntimeError(f"综合稳定性检验失败: {str(e)}") from e
+
+    def _generate_warnings(self, results: Dict) -> List[str]:
+        """生成警告信息"""
+        warnings = []
+
+        # 分布稳定性警告
+        dist = results.get("distribution_stability", {})
+        if dist.get("stable_ratio", 1.0) < 0.6:
+            warnings.append("⚠️ 因子分布在不同时期差异显著，可能存在结构性变化")
+
+        # 平稳性警告
+        ts = results.get("time_series_stationarity", {})
+        if not ts.get("is_stationary") and ts.get("p_value", 1) > 0.1:
+            warnings.append("⚠️ IC序列不平稳，因子预测能力可能不稳定")
+
+        # 变异系数警告
+        cv = results.get("coefficient_of_variation", {})
+        if cv.get("cv", 0) > 1.5:
+            warnings.append("⚠️ IC变异程度较高，因子收益波动较大")
+
+        # 市场环境警告
+        regime = results.get("market_regime_performance", {})
+        bull_ic = regime.get("bull", {}).get("mean_ic", 0)
+        bear_ic = regime.get("bear", {}).get("mean_ic", 0)
+        if abs(bull_ic - bear_ic) > 0.1:
+            warnings.append("⚠️ 因子在牛熊市表现差异较大，需注意市场环境风险")
+
+        return warnings
 
 
 # 全局因子稳定性分析服务实例
