@@ -150,16 +150,18 @@ class AnalysisService:
             from backend.core.database import get_db_session
 
             db = get_db_session()
-            repo = FactorRepository(db)
-            codes = []
-            for name in factor_names:
-                factor = repo.get_by_name(name)
-                if factor and hasattr(factor, 'code') and factor.code:
-                    codes.append(f"{name}:{factor.code}")
-            db.close()
+            try:
+                repo = FactorRepository(db)
+                codes = []
+                for name in factor_names:
+                    factor = repo.get_by_name(name)
+                    if factor and hasattr(factor, 'code') and factor.code:
+                        codes.append(f"{name}:{factor.code}")
 
-            if codes:
-                return hashlib.md5("|".join(sorted(codes)).encode()).hexdigest()[:16]
+                if codes:
+                    return hashlib.md5("|".join(sorted(codes)).encode()).hexdigest()[:16]
+            finally:
+                db.close()
         except Exception as e:
             logger.debug(f"计算因子版本哈希失败: {e}")
         return ""
