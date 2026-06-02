@@ -32,7 +32,7 @@ def get_alpha101_factors() -> Dict[str, List[Dict]]:
             {
                 "name": "alpha019",
                 "code": "-1 * SIGN((close - REF(close, 7)) + DELTA(close, 7)) * (1 + SUM(RETURNS(close), 250))",
-                "description": "Alpha#9: 周度价格变化方向与年累计收益的交互",
+                "description": "Alpha#19: 周度价格变化方向与年累计收益的交互",
             },
             {
                 "name": "alpha020",

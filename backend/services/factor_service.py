@@ -254,16 +254,22 @@ class FactorCalculator:
                 return series.rolling(window=n, min_periods=1).apply(np.argmin, raw=True)
             return pd.Series(series).rolling(window=n, min_periods=1).apply(np.argmin, raw=True)
 
-        def SCALE(series):
-            if isinstance(series, pd.Series):
+        def SCALE(series, n=None):
+            if not isinstance(series, pd.Series):
+                series = pd.Series(series)
+            if n is None:
                 abs_sum = series.abs().sum()
                 if abs_sum == 0 or np.isnan(abs_sum):
                     return series * 0
                 return series / abs_sum
-            abs_sum = np.abs(series).sum()
-            if abs_sum == 0:
-                return series * 0
-            return series / abs_sum
+
+            def scale_window(x):
+                abs_sum = np.abs(x).sum()
+                if abs_sum == 0:
+                    return x[-1] * 0
+                return x[-1] / abs_sum
+
+            return series.rolling(window=n, min_periods=1).apply(scale_window, raw=True)
 
         def DECAY_LINEAR(series, n=10):
             if not isinstance(series, pd.Series):
@@ -1242,7 +1248,7 @@ class FactorService:
                         'MAX': 'MAX (最大值)',
                         'MIN': 'MIN (最小值)',
                         'BARSLAST': 'BARSLAST (上一次满足条件到当前的周期数)',
-                        'CONST': 'CONST (常字列)',
+                        'CONST': 'CONST (常量序列)',
                         'TSRANK': 'TSRANK (时序排名百分位)',
                         'CORR': 'CORR (滚动相关系数)',
                         'COV': 'COV (滚动协方差)',
