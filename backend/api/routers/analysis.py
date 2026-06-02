@@ -7,6 +7,8 @@ from typing import List, Optional, Dict
 import pandas as pd
 import numpy as np
 import sys
+import logging
+import traceback
 from pathlib import Path
 
 
@@ -71,8 +73,6 @@ class MultiPeriodRequest(BaseModel):
 @router.post("/calculate")
 async def calculate_factor(request: CalculateRequest):
     """计算因子值"""
-    import logging
-    import traceback
     logger = logging.getLogger(__name__)
 
     try:
@@ -82,10 +82,9 @@ async def calculate_factor(request: CalculateRequest):
         from backend.core.database import get_db_session
 
         # 获取因子定义
-        db = get_db_session()
-        repo = FactorRepository(db)
-        factor = repo.get_by_name(request.factor_name)
-        db.close()
+        with get_db_session() as db:
+            repo = FactorRepository(db)
+            factor = repo.get_by_name(request.factor_name)
 
         if not factor:
             raise HTTPException(status_code=404, detail=f"因子 '{request.factor_name}' 不存在")
@@ -195,8 +194,6 @@ async def calculate_factor(request: CalculateRequest):
 @router.post("/ic")
 async def calculate_ic(request: ICAnalysisRequest):
     """计算IC/IR"""
-    import logging
-    import traceback
     logger = logging.getLogger(__name__)
 
     try:
@@ -312,10 +309,9 @@ async def decay_analysis(request: ICAnalysisRequest):
         import numpy as np
 
         # 获取因子定义
-        db = get_db_session()
-        repo = FactorRepository(db)
-        factor = repo.get_by_name(request.factor_name)
-        db.close()
+        with get_db_session() as db:
+            repo = FactorRepository(db)
+            factor = repo.get_by_name(request.factor_name)
 
         if not factor:
             raise HTTPException(status_code=404, detail=f"因子 '{request.factor_name}' 不存在")
@@ -367,8 +363,6 @@ async def decay_analysis(request: ICAnalysisRequest):
 @router.post("/exposure")
 async def exposure_analysis(request: CalculateRequest):
     """因子暴露度分析"""
-    import logging
-    import traceback
     logger = logging.getLogger(__name__)
 
     try:
@@ -380,10 +374,9 @@ async def exposure_analysis(request: CalculateRequest):
         logger.info(f"开始因子暴露度分析: {request.factor_name}, 股票: {request.stock_codes}")
 
         # 获取因子定义
-        db = get_db_session()
-        repo = FactorRepository(db)
-        factor = repo.get_by_name(request.factor_name)
-        db.close()
+        with get_db_session() as db:
+            repo = FactorRepository(db)
+            factor = repo.get_by_name(request.factor_name)
 
         if not factor:
             raise HTTPException(status_code=404, detail=f"因子 '{request.factor_name}' 不存在")
@@ -420,8 +413,6 @@ async def exposure_analysis(request: CalculateRequest):
 @router.post("/effectiveness")
 async def effectiveness_analysis(request: ICAnalysisRequest):
     """因子有效性分析"""
-    import logging
-    import traceback
     logger = logging.getLogger(__name__)
 
     try:
@@ -433,10 +424,9 @@ async def effectiveness_analysis(request: ICAnalysisRequest):
         logger.info(f"开始因子有效性分析: {request.factor_name}, 股票: {request.stock_codes}")
 
         # 获取因子定义
-        db = get_db_session()
-        repo = FactorRepository(db)
-        factor = repo.get_by_name(request.factor_name)
-        db.close()
+        with get_db_session() as db:
+            repo = FactorRepository(db)
+            factor = repo.get_by_name(request.factor_name)
 
         if not factor:
             raise HTTPException(status_code=404, detail=f"因子 '{request.factor_name}' 不存在")
@@ -473,8 +463,6 @@ async def effectiveness_analysis(request: ICAnalysisRequest):
 @router.post("/attribution")
 async def attribution_analysis(request: ICAnalysisRequest):
     """因子贡献度分解"""
-    import logging
-    import traceback
     logger = logging.getLogger(__name__)
 
     try:
@@ -486,10 +474,9 @@ async def attribution_analysis(request: ICAnalysisRequest):
         logger.info(f"开始因子贡献度分解: {request.factor_name}, 股票: {request.stock_codes}")
 
         # 获取因子定义
-        db = get_db_session()
-        repo = FactorRepository(db)
-        factor = repo.get_by_name(request.factor_name)
-        db.close()
+        with get_db_session() as db:
+            repo = FactorRepository(db)
+            factor = repo.get_by_name(request.factor_name)
 
         if not factor:
             raise HTTPException(status_code=404, detail=f"因子 '{request.factor_name}' 不存在")
@@ -526,8 +513,6 @@ async def attribution_analysis(request: ICAnalysisRequest):
 @router.post("/monitoring")
 async def monitoring_analysis(request: ICAnalysisRequest):
     """时间序列动态监测"""
-    import logging
-    import traceback
     logger = logging.getLogger(__name__)
 
     try:
@@ -539,10 +524,9 @@ async def monitoring_analysis(request: ICAnalysisRequest):
         logger.info(f"开始时间序列动态监测: {request.factor_name}, 股票: {request.stock_codes}")
 
         # 获取因子定义
-        db = get_db_session()
-        repo = FactorRepository(db)
-        factor = repo.get_by_name(request.factor_name)
-        db.close()
+        with get_db_session() as db:
+            repo = FactorRepository(db)
+            factor = repo.get_by_name(request.factor_name)
 
         if not factor:
             raise HTTPException(status_code=404, detail=f"因子 '{request.factor_name}' 不存在")
@@ -601,8 +585,6 @@ async def enhanced_correlation_analysis(request: CorrelationAnalysisRequest):
     
     符合专业量化研究的10个关键要求
     """
-    import logging
-    import traceback
     logger = logging.getLogger(__name__)
     
     try:
@@ -718,8 +700,6 @@ async def correlation_interpretation(request: CorrelationAnalysisRequest):
     注意：此功能已内置在 /correlation/enhanced 的返回结果中
     本端点提供独立的解读服务（如果已有相关性矩阵）
     """
-    import logging
-    import traceback
     logger = logging.getLogger(__name__)
     
     try:
@@ -765,8 +745,6 @@ async def mixed_type_correlation_analysis(request: CorrelationAnalysisRequest):
     
     如果未安装phik，将使用scipy的ANOVA作为降级方案
     """
-    import logging
-    import traceback
     logger = logging.getLogger(__name__)
     
     try:
@@ -827,8 +805,6 @@ async def quantile_returns_analysis(request: QuantileReturnsRequest):
     
     对比表状态更新：❌ → ✅ 已实现
     """
-    import logging
-    import traceback
     logger = logging.getLogger(__name__)
     
     try:
@@ -842,10 +818,9 @@ async def quantile_returns_analysis(request: QuantileReturnsRequest):
             f"股票数={len(request.stock_codes)}"
         )
         
-        db = get_db_session()
-        repo = FactorRepository(db)
-        factor = repo.get_by_name(request.factor_name)
-        db.close()
+        with get_db_session() as db:
+            repo = FactorRepository(db)
+            factor = repo.get_by_name(request.factor_name)
         
         if not factor:
             raise HTTPException(status_code=404, detail=f"因子 '{request.factor_name}' 不存在")
@@ -910,8 +885,6 @@ async def cumulative_returns_analysis(request: QuantileReturnsRequest):
     
     对比表状态更新：❌ → ✅ 已实现
     """
-    import logging
-    import traceback
     logger = logging.getLogger(__name__)
     
     try:
@@ -922,10 +895,9 @@ async def cumulative_returns_analysis(request: QuantileReturnsRequest):
         
         logger.info(f"开始累计收益曲线分析: {request.factor_name}")
         
-        db = get_db_session()
-        repo = FactorRepository(db)
-        factor = repo.get_by_name(request.factor_name)
-        db.close()
+        with get_db_session() as db:
+            repo = FactorRepository(db)
+            factor = repo.get_by_name(request.factor_name)
         
         if not factor:
             raise HTTPException(status_code=404, detail=f"因子 '{request.factor_name}' 不存在")
@@ -987,8 +959,6 @@ async def turnover_analysis(request: ICAnalysisRequest):
     
     对比表状态更新：⚠️ → ✅ 已完善
     """
-    import logging
-    import traceback
     logger = logging.getLogger(__name__)
     
     try:
@@ -999,10 +969,9 @@ async def turnover_analysis(request: ICAnalysisRequest):
         
         logger.info(f"开始换手率分析: {request.factor_name}")
         
-        db = get_db_session()
-        repo = FactorRepository(db)
-        factor = repo.get_by_name(request.factor_name)
-        db.close()
+        with get_db_session() as db:
+            repo = FactorRepository(db)
+            factor = repo.get_by_name(request.factor_name)
         
         if not factor:
             raise HTTPException(status_code=404, detail=f"因子 '{request.factor_name}' 不存在")
@@ -1066,8 +1035,6 @@ async def full_tear_sheet(request: QuantileReturnsRequest):
     
     对比表状态更新：⚠️ → ✅ 升级完成
     """
-    import logging
-    import traceback
     logger = logging.getLogger(__name__)
     
     try:
@@ -1078,10 +1045,9 @@ async def full_tear_sheet(request: QuantileReturnsRequest):
         
         logger.info(f"🎯 开始生成Tear Sheet全貌报告: {request.factor_name}")
         
-        db = get_db_session()
-        repo = FactorRepository(db)
-        factor = repo.get_by_name(request.factor_name)
-        db.close()
+        with get_db_session() as db:
+            repo = FactorRepository(db)
+            factor = repo.get_by_name(request.factor_name)
         
         if not factor:
             raise HTTPException(status_code=404, detail=f"因子 '{request.factor_name}' 不存在")
@@ -1159,8 +1125,6 @@ async def weighted_ic_analysis(request: WeightedICRequest):
     
     对比表状态更新：❌ → ✅ 已实现
     """
-    import logging
-    import traceback
     logger = logging.getLogger(__name__)
     
     try:
@@ -1279,8 +1243,6 @@ async def factor_importance_analysis(request: WeightedICRequest):
     
     对比表状态更新：❌ → ✅ 已实现
     """
-    import logging
-    import traceback
     logger = logging.getLogger(__name__)
     
     try:
