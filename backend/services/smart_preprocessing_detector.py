@@ -181,7 +181,7 @@ class SmartPreprocessingDetector:
                 
                 # 异常值检测（MAD法）
                 median = factor_col.median()
-                mad = np.median(np.abs(factor_col - median))
+                mad = 1.4826 * np.median(np.abs(factor_col - median))
                 if mad > 0:
                     outliers = np.abs(factor_col - median) > 3 * mad
                     has_outliers = outliers.any()

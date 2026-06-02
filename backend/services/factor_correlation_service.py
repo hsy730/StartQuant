@@ -221,16 +221,20 @@ class FactorCorrelationService:
         """对齐到最低频率"""
         lowest = max(freq_info.values(), key=['daily', 'weekly', 'monthly', 'quarterly'].index)
         
+        if not isinstance(df.index, pd.MultiIndex):
+            return df
+        
+        dates = df.index.get_level_values(0)
+        
         if lowest == 'monthly':
-            if isinstance(df.index, pd.MultiIndex):
-                dates = df.index.get_level_values(0)
-                month_ends = dates.groupby([dates.year, dates.month]).last()
-                df = df.loc[df.index.isin(month_ends, level=0)]
+            month_ends = dates.groupby([dates.year, dates.month]).last()
+            df = df.loc[df.index.isin(month_ends, level=0)]
         elif lowest == 'weekly':
-            if isinstance(df.index, pd.MultiIndex):
-                dates = df.index.get_level_values(0)
-                week_ends = dates.groupby(dates.isocalendar().week).last()
-                df = df.loc[df.index.isin(week_ends, level=0)]
+            week_ends = dates.groupby(dates.isocalendar().week).last()
+            df = df.loc[df.index.isin(week_ends, level=0)]
+        elif lowest == 'quarterly':
+            quarter_ends = dates.groupby([dates.year, dates.quarter]).last()
+            df = df.loc[df.index.isin(quarter_ends, level=0)]
         
         return df
     
@@ -287,7 +291,7 @@ class FactorCorrelationService:
     
     def _time_series_corr(self, df, factor_cols) -> Dict:
         """时间序列相关性（基于因子收益率）"""
-        returns = df[factor_cols].pct_change().dropna()
+        returns = df[factor_cols].groupby(level='asset').pct_change(fill_method=None).dropna()
         
         if len(returns) < 30:
             return {'error': '样本不足'}

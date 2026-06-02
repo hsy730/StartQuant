@@ -159,7 +159,6 @@ class AnalysisService:
         """
         cache_key = self._generate_cache_key(stock_codes, factor_names, start_date, end_date)
 
-        # 计算因子数据（始终需要，因为缓存不包含原始数据）
         factor_data = factor_service.calculate_factors_for_stocks(
             stock_codes, factor_names, start_date, end_date, rolling_window
         )
@@ -167,37 +166,32 @@ class AnalysisService:
         if not factor_data:
             raise ValueError("未能获取任何有效的因子数据")
 
-        # 【核心改进】对因子数据进行完整的"美颜"预处理
-        # 业界标准流程：去极值 → 中性化(市值+行业) → 标准化
         logger.info("开始执行因子数据美颜处理...")
         preprocessing_pipeline = FactorPreprocessingPipeline(config=PreprocessingConfig(
-            winsorize_method="mad",  # MAD法对肥尾分布最稳健
+            winsorize_method="mad",
             enable_market_cap_neutralization=True,
             enable_industry_neutralization=True,
             standardize_method="zscore",
-            cross_sectional=(len(stock_codes) > 1),  # 多股票时使用横截面模式
+            cross_sectional=(len(stock_codes) > 1),
         ))
 
         factor_data, preprocessing_stats = preprocessing_pipeline.process_multi_stock_factors(
             factor_data=factor_data,
             factor_names=factor_names,
-            parallel_stocks=(len(stock_codes) > 3),  # 股票数>3时启用并行
+            parallel_stocks=(len(stock_codes) > 3),
         )
 
         logger.info(f"因子数据美颜完成，统计信息:\n{preprocessing_pipeline.get_processing_summary(preprocessing_stats)}")
 
-        # 检查缓存（仅获取分析结果，factor_data 已重新计算）
         if use_cache:
             db = get_db_session()
             repo = AnalysisCacheRepository(db)
             cached = repo.get_by_key(cache_key)
             if cached:
                 db.close()
-                # 从缓存反序列化并合并当前的 factor_data
                 return self._deserialize_from_cache(cached.result_data, factor_data)
             db.close()
 
-        # 执行各种分析
         results = {
             "metadata": {
                 "stock_codes": stock_codes,
@@ -210,12 +204,10 @@ class AnalysisService:
             "factor_data": factor_data,
         }
 
-        # IC/IR 分析
-        ic_ir_results = self.calculate_ic_ir(factor_data, factor_names)
+        ic_ir_results = self.calculate_ic_ir(factor_data, factor_names, stock_codes)
         results["ic_ir"] = ic_ir_results
 
         if ALPHALENS_AVAILABLE and len(stock_codes) >= 2:
-            # 股票数>30时跳过行业分类（太慢，对IC分析非必须）
             skip_industry = len(stock_codes) > 30
             alphalens_results = self._run_alphalens_analysis(
                 factor_data, factor_names, stock_codes, skip_industry=skip_industry
@@ -228,11 +220,9 @@ class AnalysisService:
         else:
             results["shap"] = {"error": "SHAP not available"}
 
-        # 保存到缓存（不包含原始 factor_data，因为数据量太大）
         if use_cache:
             db = get_db_session()
             repo = AnalysisCacheRepository(db)
-            # 序列化结果（移除 factor_data）
             serialized_results = self._serialize_for_cache(results)
             cache = AnalysisCacheModel(
                 cache_key=cache_key,
@@ -321,63 +311,48 @@ class AnalysisService:
         return all_results
 
     def calculate_ic_ir(
-        self, factor_data: Dict[str, pd.DataFrame], factor_names: List[str]
+        self, factor_data: Dict[str, pd.DataFrame], factor_names: List[str],
+        stock_codes: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """
-        计算IC和IR统计
+        计算IC和IR统计（统一入口，自动路由到单股票或多股票模式）
 
         Args:
             factor_data: 股票代码到因子数据的映射
             factor_names: 因子名称列表
+            stock_codes: 股票代码列表（多股票模式需要）
 
         Returns:
             IC/IR统计结果
         """
-        # 计算未来收益率（用于计算IC）
         for stock_code in factor_data.keys():
-            factor_data[stock_code]["future_return_1"] = factor_data[stock_code]["close"].pct_change(1).shift(-1)
-            factor_data[stock_code]["future_return_5"] = factor_data[stock_code]["close"].pct_change(5).shift(-5)
+            df = factor_data[stock_code]
+            df["future_return_1"] = df["close"].pct_change(1).shift(-1)
+            df["future_return_5"] = df["close"].pct_change(5).shift(-5)
+            for col in df.columns:
+                df[col] = df[col].replace([np.inf, -np.inf], np.nan)
 
-            # 清理无穷大值和NaN值
-            for col in factor_data[stock_code].columns:
-                factor_data[stock_code][col] = factor_data[stock_code][col].replace([np.inf, -np.inf], np.nan)
-
-        # 判断是单股票还是多股票
-        is_single_stock = len(factor_data) == 1
-
-        if is_single_stock:
+        if len(factor_data) == 1:
             result = self._calculate_single_stock_ic(factor_data, factor_names)
             result["warning"] = "时序IC仅评估择时能力，不能回答选股问题。建议使用多只股票进行横截面IC分析。"
             return result
+
+        if ALPHALENS_AVAILABLE:
+            return self._calculate_multi_stock_ic_alphalens(factor_data, factor_names, stock_codes)
         else:
-            if ALPHALENS_AVAILABLE:
-                return self._calculate_cross_sectional_ic_via_alphalens(factor_data, factor_names)
-            else:
-                return self._calculate_cross_sectional_ic(factor_data, factor_names)
+            return self._calculate_multi_stock_ic_fallback(factor_data, factor_names)
 
     def _calculate_single_stock_ic(
         self, factor_data: Dict[str, pd.DataFrame], factor_names: List[str],
-        use_tradable_mask: bool = True  # 新增参数
+        use_tradable_mask: bool = True
     ) -> Dict[str, Any]:
-        """
-        单股票时序IC计算（Mask-First增强版）
-        
-        Args:
-            factor_data: 因子数据字典 {stock_code: DataFrame}
-            factor_names: 因子名称列表
-            use_tradable_mask: 是否使用Mask-First设计（默认True）
-        
-        Returns:
-            包含IC统计、月度IC、滚动IR的字典
-        """
+        """单股票时序IC计算（Mask-First增强版）"""
         stock_code = list(factor_data.keys())[0]
         df = factor_data[stock_code]
 
-        # ✅ Mask-First: 检查并应用可交易性掩码
         if use_tradable_mask and "tradable_mask" in df.columns:
             tradable_mask = df["tradable_mask"]
             logger.info(f"✅ IC分析: 使用Mask-First设计，可交易比例 {tradable_mask.mean():.1%}")
-            
             mask_stats = {
                 "total_days": len(df),
                 "tradable_days": int(tradable_mask.sum()),
@@ -388,66 +363,37 @@ class AnalysisService:
         else:
             tradable_mask = None
             mask_stats = None
-            
             if use_tradable_mask:
-                logger.warning(
-                    "⚠️ IC分析: 未找到tradable_mask列！"
-                    "IC可能虚高18%，建议在data_service中启用Mask-First"
-                )
+                logger.warning("⚠️ IC分析: 未找到tradable_mask列！IC可能虚高18%")
 
         ic_series = {}
         rank_ic_series = {}
         for factor_name in factor_names:
             if factor_name not in df.columns:
                 continue
-
-            # 获取因子值和收益率
             factor_values = df[factor_name]
             return_values = df["future_return_1"]
 
-            # ✅ Mask-First: 应用可交易性掩码
             if tradable_mask is not None:
-                # 基础有效性检查（非NaN、非无穷大）
                 valid_mask = (
-                    factor_values.notna() &
-                    return_values.notna() &
-                    ~np.isinf(factor_values) &
-                    ~np.isinf(return_values)
+                    factor_values.notna() & return_values.notna()
+                    & ~np.isinf(factor_values) & ~np.isinf(return_values)
                 )
-                
-                # 叠加可交易性掩码（AND逻辑）
                 combined_mask = valid_mask & tradable_mask
-                
                 factor_clean = factor_values[combined_mask]
                 return_clean = return_values[combined_mask]
-                
-                logger.info(
-                    f"📊 因子 [{factor_name}] | "
-                    f"原始数据: {len(factor_values)} | "
-                    f"有效+可交易: {len(factor_clean)} ({len(factor_clean)/len(factor_values)*100:.1f}%)"
-                )
-            else:
-                # 传统方式：仅做基础有效性检查
-                valid_mask = (
-                    factor_values.notna() &
-                    return_values.notna() &
-                    ~np.isinf(factor_values) &
-                    ~np.isinf(return_values)
-                )
-                factor_clean = factor_values[valid_mask]
-                return_clean = return_values[valid_mask]
-
-            if len(factor_clean) < 20:  # 至少需要20个数据点
-                continue
-
-            # 计算滚动相关性（窗口大小20）- ✅ 使用更严格的min_periods
-            if tradable_mask is not None:
-                # Mask-First: 要求至少60%的数据点有效
                 min_periods = max(2, int(20 * 0.6))
                 rolling_ic = factor_clean.rolling(window=20, min_periods=min_periods).corr(return_clean)
                 rolling_rank_ic = factor_clean.rank().rolling(window=20, min_periods=min_periods).corr(return_clean.rank())
             else:
-                # 传统方式
+                valid_mask = (
+                    factor_values.notna() & return_values.notna()
+                    & ~np.isinf(factor_values) & ~np.isinf(return_values)
+                )
+                factor_clean = factor_values[valid_mask]
+                return_clean = return_values[valid_mask]
+                if len(factor_clean) < 20:
+                    continue
                 rolling_ic = factor_clean.rolling(window=20).corr(return_clean)
                 rolling_rank_ic = factor_clean.rank().rolling(window=20).corr(return_clean.rank())
 
@@ -459,133 +405,128 @@ class AnalysisService:
             if len(rolling_rank_ic) > 0:
                 rank_ic_series[factor_name] = rolling_rank_ic
 
-        # 计算IC统计指标
         ic_stats = {}
         for factor_name, ic_s in ic_series.items():
             ic_mean = ic_s.mean()
             ic_std = ic_s.std()
             ir = ic_mean / ic_std if ic_std != 0 else 0
-
             stats = {
-                "IC均值": ic_mean,
-                "IC标准差": ic_std,
-                "IR": ir,
-                "IC>0占比": (ic_s > 0).mean(),
-                "IC绝对值均值": abs(ic_s).mean(),
-                "IC序列": ic_s.to_dict(),
-                "IC类型": "时序IC（单股票）",
-                "Mask-First": tradable_mask is not None,  # 标记是否使用了mask
+                "IC均值": ic_mean, "IC标准差": ic_std, "IR": ir,
+                "IC>0占比": (ic_s > 0).mean(), "IC绝对值均值": abs(ic_s).mean(),
+                "IC序列": ic_s.to_dict(), "IC类型": "时序IC（单股票）",
+                "Mask-First": tradable_mask is not None,
             }
-
             if factor_name in rank_ic_series:
                 rank_ic_s = rank_ic_series[factor_name]
                 rank_ic_mean = rank_ic_s.mean()
                 rank_ic_std = rank_ic_s.std()
-                rank_ir = rank_ic_mean / rank_ic_std if rank_ic_std != 0 else 0
                 stats["Rank_IC均值"] = rank_ic_mean
                 stats["Rank_IC标准差"] = rank_ic_std
-                stats["Rank_IR"] = rank_ir
-
+                stats["Rank_IR"] = rank_ic_mean / rank_ic_std if rank_ic_std != 0 else 0
             ic_stats[factor_name] = stats
-
-        # 月度IC热力图数据
-        monthly_ic = self._calculate_monthly_ic(ic_series)
-
-        # 滚动窗口IR（使用更小的窗口）
-        rolling_ir = self._calculate_rolling_ir(ic_series, window=20)
 
         result = {
             "ic_stats": ic_stats,
-            "monthly_ic": monthly_ic,
-            "rolling_ir": rolling_ir,
+            "monthly_ic": self._calculate_monthly_ic(ic_series),
+            "rolling_ir": self._calculate_rolling_ir(ic_series, window=20),
         }
-        
-        # ✅ 添加mask统计信息
         if mask_stats:
             result["mask_statistics"] = mask_stats
-        
         return result
 
-    def _calculate_cross_sectional_ic_via_alphalens(
-        self, factor_data: Dict[str, pd.DataFrame], factor_names: List[str]
+    def _calculate_multi_stock_ic_alphalens(
+        self, factor_data: Dict[str, pd.DataFrame], factor_names: List[str],
+        stock_codes: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
-        stock_codes = list(factor_data.keys())
+        """多股票横截面IC计算（委托Alphalens——业界金标准）"""
+        codes = stock_codes or list(factor_data.keys())
 
+        prices = None
         for factor_name in factor_names:
             factor_values_dict = {}
-            pricing_dict = {}
-            for stock_code in stock_codes:
+            for stock_code in codes:
                 df = factor_data[stock_code]
                 if factor_name in df.columns and "close" in df.columns:
                     factor_values_dict[stock_code] = df[factor_name].dropna()
+            if len(factor_values_dict) >= 2:
+                all_dates = set()
+                for s in factor_values_dict.values():
+                    all_dates.update(s.index)
+                all_dates = sorted(all_dates)
+                prices = pd.DataFrame(index=all_dates)
+                for stock_code in codes:
+                    df = factor_data[stock_code]
+                    if "close" in df.columns:
+                        prices[stock_code] = df["close"]
+                prices = prices.dropna(how="all")
+                break
+
+        if prices is None:
+            logger.warning("无法构建pricing数据，使用fallback计算IC")
+            return self._calculate_multi_stock_ic_fallback(factor_data, factor_names)
+
+        try:
+            groupby_dict = data_service.get_industry_classification(codes)
+            groupby_dict = {k: v for k, v in groupby_dict.items() if v}
+        except Exception:
+            groupby_dict = None
+
+        all_ic_stats = {}
+        all_monthly_ic = {}
+        all_rolling_ir = {}
+        is_single_factor = len(factor_names) == 1
+
+        for factor_name in factor_names:
+            factor_values_dict = {}
+            for stock_code in codes:
+                df = factor_data[stock_code]
+                if factor_name in df.columns and "close" in df.columns:
+                    series = df[factor_name].dropna()
+                    if len(series) > 0:
+                        factor_values_dict[stock_code] = series
 
             if len(factor_values_dict) < 2:
-                logger.warning(f"因子 {factor_name} 有效股票数不足2只，跳过alphalens分析")
+                logger.warning(f"因子 {factor_name} 有效股票数不足2只，跳过")
                 continue
 
-            all_dates = set()
-            for series in factor_values_dict.values():
-                all_dates.update(series.index)
-            all_dates = sorted(all_dates)
-
-            pricing_df = pd.DataFrame(index=all_dates)
-            for stock_code in stock_codes:
-                df = factor_data[stock_code]
-                if "close" in df.columns:
-                    pricing_df[stock_code] = df["close"]
-
-            pricing_df = pricing_df.dropna(how="all")
-
             try:
-                groupby_dict = data_service.get_industry_classification(stock_codes)
-                groupby_dict = {k: v for k, v in groupby_dict.items() if v}
-            except Exception:
-                groupby_dict = None
+                al_result = alphalens_analysis_service.full_analysis(
+                    factor_values_dict=factor_values_dict,
+                    pricing_df=prices,
+                    groupby_dict=groupby_dict,
+                )
+            except Exception as e:
+                logger.warning(f"因子 {factor_name} Alphalens分析失败: {e}")
+                continue
 
-            alphalens_result = alphalens_analysis_service.full_analysis(
-                factor_values_dict=factor_values_dict,
-                pricing_df=pricing_df,
-                groupby_dict=groupby_dict,
-            )
+            if "error" in al_result:
+                logger.warning(f"因子 {factor_name} Alphalens分析失败: {al_result['error']}")
+                continue
 
-            if "error" in alphalens_result:
-                logger.warning(f"Alphalens分析失败: {alphalens_result['error']}，回退到自定义横截面IC")
-                return self._calculate_cross_sectional_ic(factor_data, factor_names)
-
-            return self._convert_alphalens_to_ic_ir(alphalens_result, factor_names)
-
-        return self._calculate_cross_sectional_ic(factor_data, factor_names)
-
-    def _convert_alphalens_to_ic_ir(
-        self, alphalens_result: Dict[str, Any], factor_names: List[str]
-    ) -> Dict[str, Any]:
-        ic_stats = {}
-        monthly_ic = {}
-        rolling_ir = {}
-
-        ic_analysis = alphalens_result.get("ic_analysis", {})
-
-        for ic_type_key in ["spearman_ic", "pearson_ic"]:
-            ic_data = ic_analysis.get(ic_type_key, {})
-            for period_label, period_stats in ic_data.items():
-                if isinstance(period_stats, dict) and "error" not in period_stats:
-                    factor_key = f"{ic_type_key}_{period_label}"
+            ic_analysis = al_result.get("ic_analysis", {})
+            for ic_type_key in ["spearman_ic", "pearson_ic"]:
+                ic_data = ic_analysis.get(ic_type_key, {})
+                for period_label, period_stats in ic_data.items():
+                    if not isinstance(period_stats, dict) or "error" in period_stats:
+                        continue
                     ic_series_data = period_stats.get("ic_series", {})
                     dates = ic_series_data.get("dates", [])
                     values = ic_series_data.get("values", [])
-
                     valid_values = [v for v in values if v is not None]
                     if not valid_values:
                         continue
-
                     ic_s = pd.Series(
                         [v if v is not None else np.nan for v in values],
                         index=pd.to_datetime(dates) if dates else range(len(values)),
                     ).dropna()
 
                     ic_type_name = period_stats.get("ic_type", ic_type_key)
+                    if is_single_factor:
+                        factor_key = f"{ic_type_key}_{period_label}"
+                    else:
+                        factor_key = f"{factor_name}_{ic_type_key}_{period_label}"
 
-                    ic_stats[factor_key] = {
+                    all_ic_stats[factor_key] = {
                         "IC均值": period_stats.get("mean_ic", 0),
                         "IC标准差": period_stats.get("std_ic", 0),
                         "IR": period_stats.get("ir", 0),
@@ -596,91 +537,70 @@ class AnalysisService:
                         "t统计量": period_stats.get("t_statistic", 0),
                         "p值": period_stats.get("p_value", 1),
                     }
-
                     if len(ic_s) > 0:
-                        monthly_ic[factor_key] = self._calculate_monthly_ic({factor_key: ic_s})[factor_key]
-                        rolling_ir[factor_key] = self._calculate_rolling_ir({factor_key: ic_s}, window=60)[factor_key]
+                        all_monthly_ic[factor_key] = self._calculate_monthly_ic({factor_key: ic_s})[factor_key]
+                        all_rolling_ir[factor_key] = self._calculate_rolling_ir({factor_key: ic_s}, window=60)[factor_key]
+
+        if not all_ic_stats:
+            logger.warning("Alphalens未能返回有效IC数据，回退到fallback")
+            return self._calculate_multi_stock_ic_fallback(factor_data, factor_names)
 
         return {
-            "ic_stats": ic_stats,
-            "monthly_ic": monthly_ic,
-            "rolling_ir": rolling_ir,
-            "alphalens_detail": alphalens_result,
+            "ic_stats": all_ic_stats,
+            "monthly_ic": all_monthly_ic,
+            "rolling_ir": all_rolling_ir,
         }
 
-    def _calculate_cross_sectional_ic(
+    def _calculate_multi_stock_ic_fallback(
         self, factor_data: Dict[str, pd.DataFrame], factor_names: List[str]
     ) -> Dict[str, Any]:
-        """多股票横截面IC计算"""
-        # 合并所有股票数据用于横截面IC计算
+        """多股票横截面IC fallback（Alphalens不可用时）"""
+        logger.warning("使用fallback横截面IC计算（Alphalens不可用）")
         all_data = []
         for stock_code, df in factor_data.items():
             stock_df = df.copy()
             stock_df["stock_code"] = stock_code
             all_data.append(stock_df)
-
         merged_df = pd.concat(all_data, ignore_index=False)
 
-        # 计算IC时间序列
         ic_series = {}
         for factor_name in factor_names:
-            ics = []
-            dates = []
-
-            # 按日期横截面计算IC
+            ics, dates_list = [], []
             for date in merged_df.index.unique():
                 date_data = merged_df.loc[[date]]
                 if len(date_data) < 2 or factor_name not in date_data.columns:
                     continue
-
-                # 计算未来收益率（需要与原数据对应）
-                factor_values = []
-                return_values = []
+                factor_vals, return_vals = [], []
                 for stock_code in date_data["stock_code"]:
                     if stock_code in factor_data and date in factor_data[stock_code].index:
-                        factor_val = factor_data[stock_code].loc[date, factor_name]
-                        return_val = factor_data[stock_code].loc[date, "future_return_1"]
-                        # 检查非NaN且非无穷大
-                        if pd.notna(factor_val) and pd.notna(return_val) and not np.isinf(factor_val) and not np.isinf(return_val):
-                            factor_values.append(factor_val)
-                            return_values.append(return_val)
-
-                if len(factor_values) >= 2:
-                    ic = pd.Series(factor_values).corr(pd.Series(return_values))
+                        fv = factor_data[stock_code].loc[date, factor_name]
+                        rv = factor_data[stock_code].loc[date, "future_return_1"]
+                        if pd.notna(fv) and pd.notna(rv) and not np.isinf(fv) and not np.isinf(rv):
+                            factor_vals.append(fv)
+                            return_vals.append(rv)
+                if len(factor_vals) >= 2:
+                    ic = pd.Series(factor_vals).corr(pd.Series(return_vals))
                     if pd.notna(ic) and not np.isinf(ic):
                         ics.append(ic)
-                        dates.append(date)
-
+                        dates_list.append(date)
             if ics:
-                ic_series[factor_name] = pd.Series(ics, index=dates)
+                ic_series[factor_name] = pd.Series(ics, index=dates_list)
 
-        # 计算IC统计指标
         ic_stats = {}
         for factor_name, ic_s in ic_series.items():
             ic_mean = ic_s.mean()
             ic_std = ic_s.std()
-            ir = ic_mean / ic_std if ic_std != 0 else 0
-
             ic_stats[factor_name] = {
-                "IC均值": ic_mean,
-                "IC标准差": ic_std,
-                "IR": ir,
-                "IC>0占比": (ic_s > 0).mean(),
-                "IC绝对值均值": abs(ic_s).mean(),
-                "IC序列": ic_s.to_dict(),
-                "IC类型": "横截面IC（多股票）",
+                "IC均值": ic_mean, "IC标准差": ic_std,
+                "IR": ic_mean / ic_std if ic_std != 0 else 0,
+                "IC>0占比": (ic_s > 0).mean(), "IC绝对值均值": abs(ic_s).mean(),
+                "IC序列": ic_s.to_dict(), "IC类型": "横截面IC（多股票）",
             }
-
-        # 月度IC热力图数据
-        monthly_ic = self._calculate_monthly_ic(ic_series)
-
-        # 滚动窗口IR
-        rolling_ir = self._calculate_rolling_ir(ic_series, window=60)
 
         return {
             "ic_stats": ic_stats,
-            "monthly_ic": monthly_ic,
-            "rolling_ir": rolling_ir,
+            "monthly_ic": self._calculate_monthly_ic(ic_series),
+            "rolling_ir": self._calculate_rolling_ir(ic_series, window=60),
         }
 
     def _calculate_monthly_ic(
@@ -689,11 +609,9 @@ class AnalysisService:
         """计算月度IC热力图数据"""
         monthly_ic = {}
         for factor_name, ic_s in ic_series.items():
-            # 按年月分组计算平均IC
             ic_df = pd.DataFrame({"ic": ic_s})
             ic_df["year"] = ic_df.index.year
             ic_df["month"] = ic_df.index.month
-
             pivot = ic_df.pivot_table(values="ic", index="year", columns="month", aggfunc="mean")
             monthly_ic[factor_name] = pivot
         return monthly_ic
@@ -704,12 +622,10 @@ class AnalysisService:
         """计算滚动窗口IR"""
         rolling_ir = {}
         for factor_name, ic_s in ic_series.items():
-            # 使用较小的 min_periods 以便在数据不足时也能产生一些结果
             min_periods = max(1, window // 4)
             rolling_mean = ic_s.rolling(window=window, min_periods=min_periods).mean()
             rolling_std = ic_s.rolling(window=window, min_periods=min_periods).std()
-            ir = rolling_mean / rolling_std
-            rolling_ir[factor_name] = ir
+            rolling_ir[factor_name] = rolling_mean / rolling_std
         return rolling_ir
 
     def calculate_shap(

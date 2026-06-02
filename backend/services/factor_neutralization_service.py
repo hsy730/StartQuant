@@ -75,7 +75,7 @@ class FactorNeutralizationService:
         industry_column: str = "industry"
     ) -> pd.Series:
         """
-        行业中性化 - 在行业内标准化因子
+        行业中性化 - 使用行业哑变量回归残差法（JoinQuant/BigQuant标准）
 
         Args:
             df: 包含因子值和行业分类的数据框
@@ -83,7 +83,7 @@ class FactorNeutralizationService:
             industry_column: 行业分类列名
 
         Returns:
-            行业中性化后的因子值
+            行业中性化后的因子值（回归残差）
         """
         if industry_column not in df.columns:
             raise ValueError(f"数据框中缺少行业列: {industry_column}")
@@ -91,25 +91,31 @@ class FactorNeutralizationService:
         if factor_name not in df.columns:
             raise ValueError(f"数据框中缺少因子列: {factor_name}")
 
-        # 创建结果Series
+        valid_data = df[[factor_name, industry_column]].dropna()
+        if len(valid_data) < 10:
+            raise ValueError("有效数据不足，无法进行行业中性化")
+
+        industries = valid_data[industry_column].astype(str)
+        unique_industries = sorted(industries.unique())
+        n_industries = len(unique_industries)
+
+        if n_industries < 2:
+            logger.warning("行业分类不足2个，跳过行业中性化")
+            return df[factor_name]
+
+        industry_dummies = pd.get_dummies(industries, drop_first=True)
+        industry_dummies = industry_dummies.astype(float)
+
+        X = industry_dummies.values
+        y = valid_data[factor_name].values
+
+        model = LinearRegression()
+        model.fit(X, y)
+
+        residuals = y - model.predict(X)
+
         result = pd.Series(index=df.index, dtype=float)
-
-        # 按行业分组，每组内标准化
-        for industry, group in df.groupby(industry_column):
-            factor_values = group[factor_name]
-
-            # 计算行业内的均值和标准差
-            industry_mean = factor_values.mean()
-            industry_std = factor_values.std()
-
-            if industry_std > 0:
-                # 标准化
-                normalized = (factor_values - industry_mean) / industry_std
-            else:
-                # 如果标准差为0，直接使用原值
-                normalized = factor_values - industry_mean
-
-            result.loc[group.index] = normalized
+        result.loc[valid_data.index] = residuals
 
         return result
 
@@ -121,7 +127,7 @@ class FactorNeutralizationService:
         industry_column: str = "industry"
     ) -> pd.Series:
         """
-        同时进行市值和行业中性化
+        行业+市值联合中性化（JoinQuant/BigQuant标准：一次回归同时剥离）
 
         Args:
             df: 数据框
@@ -132,21 +138,51 @@ class FactorNeutralizationService:
         Returns:
             双重中性化后的因子值
         """
-        # 先进行市值中性化
-        market_cap_neutralized = self.neutralize_market_cap(
-            df, factor_name, market_cap_column
-        )
+        has_mc = market_cap_column in df.columns
+        has_industry = industry_column in df.columns
 
-        # 创建临时数据框用于行业中性化
-        temp_df = df.copy()
-        temp_df[f"{factor_name}_mc_neutral"] = market_cap_neutralized
+        if not has_mc and not has_industry:
+            return df[factor_name]
 
-        # 再进行行业中性化
-        industry_neutralized = self.neutralize_industry(
-            temp_df, f"{factor_name}_mc_neutral", industry_column
-        )
+        cols = [factor_name]
+        if has_mc:
+            cols.append(market_cap_column)
+        if has_industry:
+            cols.append(industry_column)
 
-        return industry_neutralized
+        valid_data = df[cols].dropna()
+        if len(valid_data) < 10:
+            raise ValueError("有效数据不足，无法进行联合中性化")
+
+        y = valid_data[factor_name].values
+        X_list = []
+
+        if has_industry:
+            industries = valid_data[industry_column].astype(str)
+            unique_industries = sorted(industries.unique())
+            if len(unique_industries) >= 2:
+                industry_dummies = pd.get_dummies(industries, drop_first=True).astype(float)
+                X_list.append(industry_dummies.values)
+
+        if has_mc:
+            log_mc = np.log(valid_data[market_cap_column].replace(0, np.nan))
+            log_mc = log_mc.fillna(log_mc.mean())
+            X_list.append(log_mc.values.reshape(-1, 1))
+
+        if not X_list:
+            return df[factor_name]
+
+        X = np.hstack(X_list)
+
+        model = LinearRegression()
+        model.fit(X, y)
+
+        residuals = y - model.predict(X)
+
+        result = pd.Series(index=df.index, dtype=float)
+        result.loc[valid_data.index] = residuals
+
+        return result
 
     def get_industry_classification(self, stock_codes: List[str]) -> Dict[str, str]:
         try:

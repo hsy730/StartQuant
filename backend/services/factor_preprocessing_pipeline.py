@@ -347,7 +347,7 @@ class FactorPreprocessingPipeline:
         if method == WinsorizeMethod.MAD:
             # MAD法：对肥尾分布最稳健
             median = series.median()
-            mad = np.median(np.abs(series - median))
+            mad = 1.4826 * np.median(np.abs(series - median))
             
             if mad == 0:
                 mad = series.std() * 0.6745
@@ -429,7 +429,7 @@ class FactorPreprocessingPipeline:
             # 去极值
             if self.config.winsorize_method == WinsorizeMethod.MAD:
                 median = factor_vals.median()
-                mad = np.median(np.abs(factor_vals - median))
+                mad = 1.4826 * np.median(np.abs(factor_vals - median))
                 if mad == 0:
                     mad = factor_vals.std() * 0.6745
                 factor_vals = factor_vals.clip(
@@ -466,17 +466,22 @@ class FactorPreprocessingPipeline:
                     residuals = y - model.predict(X)
                     factor_vals.loc[valid_mask] = residuals
 
-            # 行业中性化
+            # 行业中性化（回归残差法——JoinQuant/BigQuant标准）
             if self.config.enable_industry_neutralization and industry_column in group.columns:
-                for ind_name, ind_group in group.groupby(industry_column):
-                    idx = ind_group.index
-                    if len(idx) >= 3:
-                        ind_mean = factor_vals[idx].mean()
-                        ind_std = factor_vals[idx].std()
-                        if ind_std > 0:
-                            factor_vals[idx] = (factor_vals[idx] - ind_mean) / ind_std
-                        else:
-                            factor_vals[idx] = factor_vals[idx] - ind_mean
+                valid_mask = factor_vals.notna() & group[industry_column].notna()
+                if valid_mask.sum() >= self.config.min_samples:
+                    industries = group.loc[valid_mask, industry_column].astype(str)
+                    unique_inds = sorted(industries.unique())
+                    if len(unique_inds) >= 2:
+                        industry_dummies = pd.get_dummies(industries, drop_first=True).astype(float)
+                        X = industry_dummies.values
+                        y = factor_vals[valid_mask].values
+                        
+                        from sklearn.linear_model import LinearRegression
+                        model = LinearRegression()
+                        model.fit(X, y)
+                        residuals = y - model.predict(X)
+                        factor_vals.loc[valid_mask] = residuals
 
             # 标准化
             if self.config.standardize_method == StandardizeMethod.ZSCORE:
@@ -488,7 +493,7 @@ class FactorPreprocessingPipeline:
                 factor_vals = factor_vals.rank(pct=True)
             elif self.config.standardize_method == StandardizeMethod.MEDIAN_MAD:
                 median = factor_vals.median()
-                mad = np.median(np.abs(factor_vals - median))
+                mad = 1.4826 * np.median(np.abs(factor_vals - median))
                 if mad > 0:
                     factor_vals = (factor_vals - median) / mad
 
@@ -589,7 +594,7 @@ class FactorPreprocessingPipeline:
         elif method == StandardizeMethod.MEDIAN_MAD:
             # 中位数-MAD标准化（对异常值更稳健）
             median = factor_values.median()
-            mad = np.median(np.abs(factor_values - median))
+            mad = 1.4826 * np.median(np.abs(factor_values - median))
             if mad == 0:
                 return factor_values - median
             return (factor_values - median) / mad
