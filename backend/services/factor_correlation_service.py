@@ -412,7 +412,72 @@ class FactorCorrelationService:
             }
         except ImportError:
             return {'error': 'statsmodels未安装'}
-    
+
+    # ==================== P2-3: RMS相关性指标 ====================
+
+    def calculate_rms_correlation(self, correlation_matrix: pd.DataFrame) -> Dict[str, Any]:
+        """
+        计算RMS(均方根)相关性 — 多因子组合分散化评估指标
+
+        BigQuant AlphaMiner 使用PCA分析因子解释方差比例，
+        FactorHub 用 RMS 相关性作为等价且更直观的替代方案。
+
+        Args:
+            correlation_matrix: 因子间相关系数矩阵
+
+        Returns:
+            {
+                "rms_corr": float,          # RMS(平均绝对相关性)
+                "mean_abs_corr": float,     # 平均绝对相关性
+                "max_abs_corr": float,      # 最大绝对相关性
+                "interpretation": str,       # 可读解读
+                "diversification_score": float  # 分散化评分 (0-100)
+            }
+        """
+        if correlation_matrix is None or correlation_matrix.empty:
+            return {"error": "相关矩阵为空"}
+
+        n_factors = correlation_matrix.shape[0]
+        if n_factors < 2:
+            return {
+                "error": f"相关矩阵仅包含{n_factors}个因子，计算RMS相关性至少需要2个因子",
+                "rms_corr": 0.0,
+                "mean_abs_corr": 0.0,
+                "max_abs_corr": 0.0,
+                "interpretation": "因子数量不足，无法评估分散化程度",
+                "diversification_score": 100.0
+            }
+
+        vals = correlation_matrix.values
+        upper_indices = np.triu_indices(n_factors, k=1)
+        upper_vals = vals[upper_indices]
+
+        mean_abs_corr = float(np.mean(np.abs(upper_vals)))
+        rms_corr = float(np.sqrt(np.mean(np.square(upper_vals))))
+        max_abs_corr = float(np.max(np.abs(upper_vals)))
+
+        diversification_score = max(0.0, (1.0 - rms_corr) * 100)
+
+        if rms_corr < 0.1:
+            interpretation = f"极低相关性(RMS={rms_corr:.3f})，因子间高度独立，组合分散性优秀"
+        elif rms_corr < 0.25:
+            interpretation = f"低相关性(RMS={rms_corr:.3f})，因子间基本独立，组合分散性良好"
+        elif rms_corr < 0.4:
+            interpretation = f"中等相关性(RMS={rms_corr:.3f})，部分因子存在重叠，建议关注"
+        elif rms_corr < 0.6:
+            interpretation = f"较高相关性(RMS={rms_corr:.3f})，因子重叠明显，考虑去重或降维"
+        else:
+            interpretation = f"高相关性(RMS={rms_corr:.3f})，因子严重重叠，强烈建议去重"
+
+        return {
+            "rms_corr": rms_corr,
+            "mean_abs_corr": mean_abs_corr,
+            "max_abs_corr": max_abs_corr,
+            "n_factor_pairs": len(upper_vals),
+            "interpretation": interpretation,
+            "diversification_score": diversification_score,
+        }
+
     def _interpret_results(self, result: Dict) -> Dict:
         """
         智能解读（自建规则引擎 - 替代Corrpy）

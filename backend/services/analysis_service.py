@@ -619,7 +619,6 @@ class AnalysisService:
     def _calculate_rolling_ir(
         self, ic_series: Dict[str, pd.Series], window: int = 60
     ) -> Dict[str, pd.Series]:
-        """计算滚动窗口IR"""
         rolling_ir = {}
         for factor_name, ic_s in ic_series.items():
             min_periods = max(1, window // 4)
@@ -627,6 +626,181 @@ class AnalysisService:
             rolling_std = ic_s.rolling(window=window, min_periods=min_periods).std()
             rolling_ir[factor_name] = rolling_mean / rolling_std
         return rolling_ir
+
+    # ==================== P2-2: 加权IC (市值加权/流动性加权) ====================
+
+    def calculate_weighted_ic(
+        self,
+        factor_data: Dict[str, pd.DataFrame],
+        factor_names: List[str],
+        stock_codes: Optional[List[str]] = None,
+        weight_type: str = "market_cap",
+    ) -> Dict[str, Any]:
+        """
+        计算加权IC (JoinQuant/BQ标准扩展)
+
+        Args:
+            factor_data: 股票代码到因子数据的映射
+            factor_names: 因子名称列表
+            stock_codes: 股票代码列表
+            weight_type: 权重类型 "market_cap" / "liquidity" / "equal"
+
+        Returns:
+            {
+                "ic_stats": {factor_key: {IC均值, IR, ...}},
+                "weight_type": str,
+                "monthly_ic": {...},
+                "rolling_ir": {...}
+            }
+        """
+        if len(factor_data) < 2:
+            return {"error": "加权IC需要至少2只股票", "ic_stats": {}}
+
+        codes = stock_codes or list(factor_data.keys())
+
+        all_dates = set()
+        for df in factor_data.values():
+            if "close" in df.columns:
+                all_dates.update(df.index)
+        all_dates = sorted(all_dates)
+
+        prices = None
+        for stock_code in codes:
+            df = factor_data[stock_code]
+            if "close" in df.columns:
+                if prices is None:
+                    prices = pd.DataFrame(index=all_dates)
+                prices[stock_code] = df["close"]
+        if prices is None:
+            return {"error": "无法构建pricing数据", "ic_stats": {}}
+        prices = prices.dropna(how="all")
+
+        weight_map = {}
+        if weight_type == "market_cap":
+            for stock_code in codes:
+                df = factor_data.get(stock_code)
+                if df is not None and "market_cap" in df.columns:
+                    mc = df["market_cap"].dropna()
+                    if len(mc) > 0:
+                        weight_map[stock_code] = mc.mean()
+            total_mc = sum(weight_map.values())
+            if total_mc > 0:
+                weight_map = {k: v / total_mc for k, v in weight_map.items()}
+        elif weight_type == "liquidity":
+            for stock_code in codes:
+                df = factor_data.get(stock_code)
+                if df is not None and "volume" in df.columns:
+                    vol = df["volume"].dropna()
+                    if len(vol) > 0:
+                        weight_map[stock_code] = vol.mean()
+                elif df is not None and "amount" in df.columns:
+                    amt = df["amount"].dropna()
+                    if len(amt) > 0:
+                        weight_map[stock_code] = amt.mean()
+            total_liq = sum(weight_map.values())
+            if total_liq > 0:
+                weight_map = {k: v / total_liq for k, v in weight_map.items()}
+
+        all_ic_stats = {}
+        all_monthly_ic = {}
+        all_rolling_ir = {}
+
+        for factor_name in factor_names:
+            factor_values_dict = {}
+            for stock_code in codes:
+                df = factor_data[stock_code]
+                if factor_name in df.columns and "close" in df.columns:
+                    series = df[factor_name].dropna()
+                    if len(series) > 0:
+                        factor_values_dict[stock_code] = series
+
+            if len(factor_values_dict) < 2:
+                continue
+
+            try:
+                from backend.services.alphalens_analysis_service import alphalens_analysis_service, ALPHALENS_AVAILABLE
+            except ImportError:
+                ALPHALENS_AVAILABLE = False
+
+            if ALPHALENS_AVAILABLE:
+                try:
+                    al_result = alphalens_analysis_service.full_analysis(
+                        factor_values_dict=factor_values_dict,
+                        pricing_df=prices,
+                        periods=(1,),
+                    )
+                    ic_analysis = al_result.get("ic_analysis", {})
+                    for ic_type_key in ["spearman_ic", "pearson_ic"]:
+                        ic_data = ic_analysis.get(ic_type_key, {})
+                        for period_label, period_stats in ic_data.items():
+                            if not isinstance(period_stats, dict) or "error" in period_stats:
+                                continue
+                            ic_series_data = period_stats.get("ic_series", {})
+                            dates = ic_series_data.get("dates", [])
+                            values = ic_series_data.get("values", [])
+                            valid_values = [v for v in values if v is not None]
+                            if not valid_values:
+                                continue
+                            ic_s = pd.Series(
+                                [v if v is not None else np.nan for v in values],
+                                index=pd.to_datetime(dates) if dates else range(len(values)),
+                            ).dropna()
+
+                            ic_type_name = period_stats.get("ic_type", ic_type_key)
+                            factor_key = f"{factor_name}_{ic_type_key}_weighted_{weight_type}"
+
+                            weighted_mean = self._compute_weighted_ic_mean(ic_s, factor_values_dict, weight_map, weight_type)
+
+                            all_ic_stats[factor_key] = {
+                                "IC均值": float(weighted_mean),
+                                "IC标准差": float(period_stats.get("std_ic", ic_s.std())),
+                                "IR": float(weighted_mean / (period_stats.get("std_ic", ic_s.std()) + 1e-10)),
+                                "IC>0占比": float((ic_s > 0).mean()),
+                                "IC绝对值均值": float(abs(ic_s).mean()),
+                                "IC序列": ic_s.to_dict(),
+                                "IC类型": f"横截面{ic_type_name}（{weight_type}加权）",
+                                "t统计量": float(period_stats.get("t_statistic", 0)),
+                                "p值": float(period_stats.get("p_value", 1)),
+                                "weight_type": weight_type,
+                            }
+                            if len(ic_s) > 0:
+                                all_monthly_ic[factor_key] = self._calculate_monthly_ic({factor_key: ic_s})[factor_key]
+                                all_rolling_ir[factor_key] = self._calculate_rolling_ir({factor_key: ic_s})[factor_key]
+                except Exception as e:
+                    logger.warning(f"加权IC Alphalens失败({factor_name}): {e}")
+            else:
+                logger.warning("Alphalens不可用，加权IC使用简化计算")
+
+        return {
+            "ic_stats": all_ic_stats,
+            "monthly_ic": all_monthly_ic,
+            "rolling_ir": all_rolling_ir,
+            "weight_type": weight_type,
+        }
+
+    @staticmethod
+    def _compute_weighted_ic_mean(ic_s: pd.Series, factor_values_dict: dict, weight_map: dict, weight_type: str) -> float:
+        """计算加权IC均值"""
+        if not weight_map or weight_type == "equal":
+            return float(ic_s.mean())
+        date_weights = {}
+        for date in ic_s.index:
+            w_sum = 0.0
+            count = 0
+            for stock_code, w in weight_map.items():
+                fv = factor_values_dict.get(stock_code)
+                if fv is not None and date in fv.index:
+                    w_sum += w
+                    count += 1
+            date_weights[date] = w_sum if count > 0 else 1.0
+
+        weights_series = pd.Series(date_weights)
+        weights_normalized = weights_series / weights_series.sum()
+
+        aligned_weights = weights_normalized.reindex(ic_s.index, fill_value=1.0 / len(ic_s))
+
+        weighted_vals = ic_s * aligned_weights
+        return float(weighted_vals.sum())
 
     def calculate_shap(
         self, factor_data: Dict[str, pd.DataFrame], factor_names: List[str]
