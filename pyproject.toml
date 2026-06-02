@@ -33,6 +33,19 @@ dependencies = [
 advanced = [
     "phik>=0.12.0",  # 混合类型相关性（含分类变量时需要）
 ]
+# 树模型预筛选符号回归（推荐安装）
+tree-prescreen = [
+    "lightgbm>=4.0.0",  # 树模型特征重要性（比XGBoost更快）
+]
+# GFlowNet增强遗传规划 + 深度隐式因子模型
+deep-learning = [
+    "torch>=2.0.0",  # PyTorch（GFlowNet策略网络 + Transformer隐因子）
+]
+# 全部高级算法
+all-algorithms = [
+    "lightgbm>=4.0.0",
+    "torch>=2.0.0",
+]
 
 [dependency-groups]
 dev = [

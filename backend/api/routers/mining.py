@@ -1,19 +1,18 @@
 """
 因子挖掘API路由
 
-支持三种算法模式:
+支持六种算法模式:
   - genetic: DEAP遗传规划（向后兼容）
   - pysr: PySR符号回归
   - dual: 两者并行执行，合并最优结果
+  - tree_prescreen: 树模型预筛选 → 符号回归管道
+  - gflownet: GFlowNet增强遗传规划（实验性）
+  - deep_implicit: 深度隐式因子模型（Transformer，前沿赛道）
 """
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 from pydantic import BaseModel
 from typing import List, Optional, Dict
-import sys
 import asyncio
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
 import numpy as np
 import math
@@ -74,6 +73,35 @@ class GeneticMiningRequest(BaseModel):
     pysr_parsimony: float = 0.0032
     pysr_procs: int = 8
     pysr_population_size: int = 33
+    # ---- Tree Prescreen parameters ----
+    tree_model_type: str = "auto"
+    top_k: int = 0
+    importance_threshold: float = 0.01
+    tree_n_estimators: int = 100
+    tree_max_depth: int = 5
+    downstream_algorithm: str = "dual"
+    # ---- GFlowNet parameters ----
+    gflownet_n_trajectories: int = 200
+    gflownet_n_iterations: int = 50
+    gflownet_hidden_dim: int = 128
+    gflownet_learning_rate: float = 1e-3
+    gflownet_max_expression_depth: int = 5
+    gflownet_temperature: float = 1.0
+    gflownet_reward_scale: float = 10.0
+    gflownet_buffer_size: int = 1000
+    # ---- Deep Factor parameters ----
+    deep_d_model: int = 64
+    deep_n_heads: int = 4
+    deep_n_layers: int = 3
+    deep_d_ff: int = 256
+    deep_n_latent_factors: int = 5
+    deep_dropout: float = 0.1
+    deep_seq_length: int = 20
+    deep_learning_rate: float = 1e-4
+    deep_n_epochs: int = 50
+    deep_batch_size: int = 32
+    deep_weight_decay: float = 1e-5
+    deep_early_stopping_patience: int = 5
 
 
 # ========== 任务存储（内存） ==========
@@ -103,7 +131,14 @@ async def start_genetic_mining(request: GeneticMiningRequest, background_tasks: 
             request
         )
 
-        algo_label = {"genetic": "遗传规划", "pysr": "PySR符号回归", "dual": "双算法并行"}
+        algo_label = {
+            "genetic": "遗传规划",
+            "pysr": "PySR符号回归",
+            "dual": "双算法并行",
+            "tree_prescreen": "树模型预筛选",
+            "gflownet": "GFlowNet增强GP",
+            "deep_implicit": "深度隐式因子",
+        }
         return {
             "success": True,
             "data": {
@@ -194,6 +229,11 @@ async def _run_mining(task_id: str, request: GeneticMiningRequest):
                 )
             elif algorithm == "pysr":
                 result = await _run_pysr_only(
+                    task_id, request, data, base_factor_codes,
+                    factor_service, stock_codes, logger
+                )
+            elif algorithm in ("tree_prescreen", "gflownet", "deep_implicit"):
+                result = await _run_unified_mining(
                     task_id, request, data, base_factor_codes,
                     factor_service, stock_codes, logger
                 )
@@ -298,6 +338,98 @@ async def _run_pysr_only(
     mining_service.set_progress_callback(progress_callback)
     result = mining_service.mine_factors()
     result["source"] = "pysr"
+    return result
+
+
+async def _run_unified_mining(
+    task_id, request, data, base_factor_codes, factor_service, stock_codes, logger
+) -> dict:
+    """Run tree_prescreen / gflownet / deep_implicit via DualMiningService."""
+    from backend.services.dual_mining_service import create_dual_mining_service
+
+    algorithm = request.algorithm
+    algo_names = {
+        "tree_prescreen": "树模型预筛选符号回归",
+        "gflownet": "GFlowNet增强遗传规划",
+        "deep_implicit": "深度隐式因子模型",
+    }
+    logger.info(f"Using {algo_names.get(algorithm, algorithm)} mining")
+
+    mining_service = create_dual_mining_service(
+        base_factors=base_factor_codes,
+        data=data,
+        return_column="return",
+        factor_calculator=factor_service.calculator,
+        algorithm=algorithm,
+        # GP params
+        population_size=request.population_size,
+        n_generations=request.n_generations,
+        cx_prob=request.cx_prob,
+        mut_prob=request.mut_prob,
+        elite_size=request.elite_size,
+        fitness_objective=request.fitness_objective,
+        parsimony_coeff=request.parsimony_coeff,
+        diversity_penalty_coeff=request.diversity_penalty_coeff,
+        cv_folds=request.cv_folds,
+        use_extended_primitives=request.use_extended_primitives,
+        max_tree_depth=request.max_tree_depth,
+        use_nsga2=request.use_nsga2,
+        # PySR params
+        pysr_niterations=request.pysr_niterations,
+        pysr_populations=request.pysr_populations,
+        pysr_binary_operators=request.pysr_binary_operators,
+        pysr_unary_operators=request.pysr_unary_operators,
+        pysr_maxsize=request.pysr_maxsize,
+        pysr_maxdepth=request.pysr_maxdepth,
+        pysr_constraints=request.pysr_constraints,
+        pysr_nested_constraints=request.pysr_nested_constraints,
+        pysr_parsimony=request.pysr_parsimony,
+        pysr_procs=request.pysr_procs,
+        pysr_population_size=request.pysr_population_size,
+        # Tree Prescreen params
+        tree_model_type=request.tree_model_type,
+        top_k=request.top_k,
+        importance_threshold=request.importance_threshold,
+        tree_n_estimators=request.tree_n_estimators,
+        tree_max_depth=request.tree_max_depth,
+        downstream_algorithm=request.downstream_algorithm,
+        # GFlowNet params
+        gflownet_n_trajectories=request.gflownet_n_trajectories,
+        gflownet_n_iterations=request.gflownet_n_iterations,
+        gflownet_hidden_dim=request.gflownet_hidden_dim,
+        gflownet_learning_rate=request.gflownet_learning_rate,
+        gflownet_max_expression_depth=request.gflownet_max_expression_depth,
+        gflownet_temperature=request.gflownet_temperature,
+        gflownet_reward_scale=request.gflownet_reward_scale,
+        gflownet_buffer_size=request.gflownet_buffer_size,
+        # Deep Factor params
+        deep_d_model=request.deep_d_model,
+        deep_n_heads=request.deep_n_heads,
+        deep_n_layers=request.deep_n_layers,
+        deep_d_ff=request.deep_d_ff,
+        deep_n_latent_factors=request.deep_n_latent_factors,
+        deep_dropout=request.deep_dropout,
+        deep_seq_length=request.deep_seq_length,
+        deep_learning_rate=request.deep_learning_rate,
+        deep_n_epochs=request.deep_n_epochs,
+        deep_batch_size=request.deep_batch_size,
+        deep_weight_decay=request.deep_weight_decay,
+        deep_early_stopping_patience=request.deep_early_stopping_patience,
+    )
+
+    if len(stock_codes) >= 2:
+        logger.info(f"Setting stock pool with {len(stock_codes)} stocks for {algorithm}")
+        mining_service.set_stock_pool(stock_codes, request.start_date, request.end_date)
+
+    def progress_callback(gen, total_gen, best_fitness, avg_fitness, algorithm=algorithm, **kwargs):
+        _update_progress(task_id, gen, total_gen, best_fitness, avg_fitness, algorithm, logger)
+
+    mining_service.set_progress_callback(progress_callback)
+    result = mining_service.mine_factors()
+
+    if result.get("fitness_history"):
+        mining_tasks[task_id]["fitness_history"] = result["fitness_history"]
+
     return result
 
 
@@ -434,6 +566,18 @@ def _finalize_task(task_id: str, result: dict, request: GeneticMiningRequest, lo
         result_data["pysr_best_fitness"] = _safe_float(
             pysr_factors[0].get("fitness", 0) if pysr_factors else 0
         )
+
+    # 新算法特有结果
+    if result.get("feature_importance"):
+        result_data["feature_importance"] = result["feature_importance"]
+    if result.get("selected_features"):
+        result_data["selected_features"] = result["selected_features"]
+    if result.get("model_info"):
+        result_data["model_info"] = result["model_info"]
+    if result.get("training_history"):
+        result_data["training_history"] = result["training_history"]
+    if result.get("policy_loss_history"):
+        result_data["policy_loss_history"] = result["policy_loss_history"]
 
     mining_tasks[task_id]["status"] = "completed"
     mining_tasks[task_id]["progress"] = 100

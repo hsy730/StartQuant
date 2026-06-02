@@ -4,11 +4,6 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import List, Optional
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
-
 from backend.services.factor_service import factor_service
 from backend.services.factor_generator_service import factor_generator_service
 

@@ -4,11 +4,7 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import List, Optional, Dict
-import sys
 import numpy as np
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
 from backend.services.vectorbt_backtest_service import VectorBTBacktestService, check_vectorbt_available
 from backend.repositories.backtest_repository import BacktestRepository

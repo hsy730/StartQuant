@@ -1,11 +1,13 @@
 """
-双算法并行因子挖掘服务
+统一因子挖掘服务（原双算法并行服务扩展）
 
-同时运行DEAP遗传规划和PySR符号回归，取两者中更优秀的结果。
-支持三种模式:
+支持六种算法模式:
   - "genetic": 仅DEAP遗传规划（向后兼容）
   - "pysr": 仅PySR符号回归
   - "dual": 两者并行执行，合并最优结果
+  - "tree_prescreen": 树模型预筛选 → 符号回归管道
+  - "gflownet": GFlowNet增强遗传规划（实验性）
+  - "deep_implicit": 深度隐式因子模型（Transformer，前沿赛道）
 """
 import logging
 from typing import List, Dict, Optional
@@ -28,15 +30,50 @@ from backend.services.pysr_factor_mining_service import (
 )
 from backend.services.factor_validation_service import factor_validation_service
 
+# 新算法模块（可选依赖）
+try:
+    from backend.services.tree_prescreen_mining_service import (
+        TreePrescreenMiningService,
+        create_tree_prescreen_mining_service,
+        TREE_PRESCREEN_AVAILABLE,
+    )
+except ImportError:
+    TREE_PRESCREEN_AVAILABLE = False
+
+try:
+    from backend.services.gflownet_mining_service import (
+        GFlowNetMiningService,
+        create_gflownet_mining_service,
+        GFLOWNET_AVAILABLE,
+    )
+except ImportError:
+    GFLOWNET_AVAILABLE = False
+
+try:
+    from backend.services.deep_factor_mining_service import (
+        DeepFactorMiningService,
+        create_deep_factor_mining_service,
+        DEEP_FACTOR_AVAILABLE,
+    )
+except ImportError:
+    DEEP_FACTOR_AVAILABLE = False
+
 
 class DualMiningService:
-    """双算法并行因子挖掘服务
+    """统一因子挖掘服务
 
-    Runs DEAP GP and PySR symbolic regression in parallel, then merges
-    and ranks the results from both algorithms.  The best factors from
-    each algorithm are kept, deduplicated, and sorted by validation
-    score.
+    支持六种算法模式，统一接口调度：
+    - genetic / pysr / dual: 原有三种模式
+    - tree_prescreen: 树模型预筛选 → 符号回归管道
+    - gflownet: GFlowNet增强遗传规划
+    - deep_implicit: 深度隐式因子模型
     """
+
+    # 支持的算法模式
+    SUPPORTED_ALGORITHMS = {
+        "genetic", "pysr", "dual",
+        "tree_prescreen", "gflownet", "deep_implicit",
+    }
 
     def __init__(
         self,
@@ -72,6 +109,35 @@ class DualMiningService:
         pysr_parsimony: float = 0.0032,
         pysr_procs: int = 8,
         pysr_population_size: int = 33,
+        # ---- Tree Prescreen parameters ----
+        tree_model_type: str = "auto",
+        top_k: int = 0,
+        importance_threshold: float = 0.01,
+        tree_n_estimators: int = 100,
+        tree_max_depth: int = 5,
+        downstream_algorithm: str = "dual",
+        # ---- GFlowNet parameters ----
+        gflownet_n_trajectories: int = 200,
+        gflownet_n_iterations: int = 50,
+        gflownet_hidden_dim: int = 128,
+        gflownet_learning_rate: float = 1e-3,
+        gflownet_max_expression_depth: int = 5,
+        gflownet_temperature: float = 1.0,
+        gflownet_reward_scale: float = 10.0,
+        gflownet_buffer_size: int = 1000,
+        # ---- Deep Factor parameters ----
+        deep_d_model: int = 64,
+        deep_n_heads: int = 4,
+        deep_n_layers: int = 3,
+        deep_d_ff: int = 256,
+        deep_n_latent_factors: int = 5,
+        deep_dropout: float = 0.1,
+        deep_seq_length: int = 20,
+        deep_learning_rate: float = 1e-4,
+        deep_n_epochs: int = 50,
+        deep_batch_size: int = 32,
+        deep_weight_decay: float = 1e-5,
+        deep_early_stopping_patience: int = 5,
     ):
         self.base_factor_codes = base_factors
         self.data = data
@@ -112,15 +178,65 @@ class DualMiningService:
             cv_folds=cv_folds,
         )
 
+        self._tree_prescreen_params = dict(
+            tree_model_type=tree_model_type,
+            top_k=top_k,
+            importance_threshold=importance_threshold,
+            tree_n_estimators=tree_n_estimators,
+            tree_max_depth=tree_max_depth,
+            downstream_algorithm=downstream_algorithm,
+            fitness_objective=fitness_objective,
+            cv_folds=cv_folds,
+        )
+
+        self._gflownet_params = dict(
+            n_trajectories=gflownet_n_trajectories,
+            n_iterations=gflownet_n_iterations,
+            hidden_dim=gflownet_hidden_dim,
+            learning_rate=gflownet_learning_rate,
+            max_expression_depth=gflownet_max_expression_depth,
+            temperature=gflownet_temperature,
+            reward_scale=gflownet_reward_scale,
+            buffer_size=gflownet_buffer_size,
+            fitness_objective=fitness_objective,
+            cv_folds=cv_folds,
+        )
+
+        self._deep_factor_params = dict(
+            d_model=deep_d_model,
+            n_heads=deep_n_heads,
+            n_layers=deep_n_layers,
+            d_ff=deep_d_ff,
+            n_latent_factors=deep_n_latent_factors,
+            dropout=deep_dropout,
+            seq_length=deep_seq_length,
+            learning_rate=deep_learning_rate,
+            n_epochs=deep_n_epochs,
+            batch_size=deep_batch_size,
+            weight_decay=deep_weight_decay,
+            early_stopping_patience=deep_early_stopping_patience,
+            fitness_objective=fitness_objective,
+            cv_folds=cv_folds,
+        )
+
         self.progress_callback = None
         self._gp_service: Optional[GeneticFactorMiningService] = None
         self._pysr_service: Optional[PySRFactorMiningService] = None
+        self._tree_prescreen_service = None
+        self._gflownet_service = None
+        self._deep_factor_service = None
 
     def set_stock_pool(self, stock_codes: List[str], start_date: str, end_date: str):
         if self._gp_service is not None:
             self._gp_service.set_stock_pool(stock_codes, start_date, end_date)
         if self._pysr_service is not None:
             self._pysr_service.set_stock_pool(stock_codes, start_date, end_date)
+        if self._tree_prescreen_service is not None:
+            self._tree_prescreen_service.set_stock_pool(stock_codes, start_date, end_date)
+        if self._gflownet_service is not None:
+            self._gflownet_service.set_stock_pool(stock_codes, start_date, end_date)
+        if self._deep_factor_service is not None:
+            self._deep_factor_service.set_stock_pool(stock_codes, start_date, end_date)
 
     def set_progress_callback(self, callback):
         self.progress_callback = callback
@@ -326,6 +442,9 @@ class DualMiningService:
         - ``"genetic"``: DEAP GP only
         - ``"pysr"``: PySR only
         - ``"dual"``: both in parallel, merge best results
+        - ``"tree_prescreen"``: tree model pre-screening → symbolic regression
+        - ``"gflownet"``: GFlowNet-enhanced genetic programming
+        - ``"deep_implicit"``: Transformer-based deep implicit factors
         """
         if self.algorithm == "genetic":
             return self._run_genetic()
@@ -333,9 +452,117 @@ class DualMiningService:
             return self._run_pysr()
         elif self.algorithm == "dual":
             return self._run_dual()
+        elif self.algorithm == "tree_prescreen":
+            return self._run_tree_prescreen()
+        elif self.algorithm == "gflownet":
+            return self._run_gflownet()
+        elif self.algorithm == "deep_implicit":
+            return self._run_deep_implicit()
         else:
             logger.warning(f"Unknown algorithm mode '{self.algorithm}', falling back to genetic")
             return self._run_genetic()
+
+    def _run_tree_prescreen(self) -> Dict:
+        """Run tree model pre-screening → symbolic regression pipeline."""
+        if not TREE_PRESCREEN_AVAILABLE:
+            return {
+                "success": False,
+                "message": "树模型预筛选不可用（需安装 lightgbm 或 xgboost）",
+                "best_factors": [],
+            }
+
+        logger.info("启动树模型预筛选符号回归管道...")
+
+        # 传递GP/PySR参数给下游
+        downstream_gp_params = self._gp_params.copy()
+        downstream_pysr_params = self._pysr_params.copy()
+
+        self._tree_prescreen_service = create_tree_prescreen_mining_service(
+            base_factors=self.base_factor_codes,
+            data=self.data,
+            return_column=self.return_column,
+            factor_calculator=self.factor_calculator,
+            max_eval_stocks=self.max_eval_stocks,
+            gp_params=downstream_gp_params,
+            pysr_params=downstream_pysr_params,
+            **self._tree_prescreen_params,
+        )
+
+        if self.progress_callback:
+            def tp_progress(iteration, total_iter, best_fitness, avg_fitness, **kwargs):
+                self.progress_callback(
+                    iteration, total_iter, best_fitness, avg_fitness,
+                    algorithm="tree_prescreen"
+                )
+            self._tree_prescreen_service.set_progress_callback(tp_progress)
+
+        result = self._tree_prescreen_service.mine_factors()
+        result["source"] = "tree_prescreen"
+        return result
+
+    def _run_gflownet(self) -> Dict:
+        """Run GFlowNet-enhanced genetic programming."""
+        if not GFLOWNET_AVAILABLE:
+            return {
+                "success": False,
+                "message": "GFlowNet不可用（需安装 torch）",
+                "best_factors": [],
+            }
+
+        logger.info("启动GFlowNet增强遗传规划...")
+
+        self._gflownet_service = create_gflownet_mining_service(
+            base_factors=self.base_factor_codes,
+            data=self.data,
+            return_column=self.return_column,
+            factor_calculator=self.factor_calculator,
+            max_eval_stocks=self.max_eval_stocks,
+            **self._gflownet_params,
+        )
+
+        if self.progress_callback:
+            def gfn_progress(iteration, total_iter, best_fitness, avg_fitness, **kwargs):
+                self.progress_callback(
+                    iteration, total_iter, best_fitness, avg_fitness,
+                    algorithm="gflownet"
+                )
+            self._gflownet_service.set_progress_callback(gfn_progress)
+
+        result = self._gflownet_service.mine_factors()
+        result["source"] = "gflownet"
+        return result
+
+    def _run_deep_implicit(self) -> Dict:
+        """Run deep implicit factor model (Transformer)."""
+        if not DEEP_FACTOR_AVAILABLE:
+            return {
+                "success": False,
+                "message": "深度隐式因子模型不可用（需安装 torch）",
+                "best_factors": [],
+            }
+
+        logger.info("启动深度隐式因子模型 (Transformer)...")
+
+        self._deep_factor_service = create_deep_factor_mining_service(
+            base_factors=self.base_factor_codes,
+            data=self.data,
+            return_column=self.return_column,
+            factor_calculator=self.factor_calculator,
+            max_eval_stocks=self.max_eval_stocks,
+            **self._deep_factor_params,
+        )
+
+        if self.progress_callback:
+            def deep_progress(epoch, total_epochs, best_fitness, avg_fitness, **kwargs):
+                self.progress_callback(
+                    epoch, total_epochs, best_fitness, avg_fitness,
+                    algorithm="deep_implicit"
+                )
+            self._deep_factor_service.set_progress_callback(deep_progress)
+
+        result = self._deep_factor_service.mine_factors()
+        result["source"] = "deep_implicit"
+        return result
 
     def _run_dual(self) -> Dict:
         """Run both algorithms in parallel and merge results."""
@@ -390,10 +617,11 @@ def create_dual_mining_service(
 ) -> DualMiningService:
     """Create a configured :class:`DualMiningService` instance.
 
-    Accepted keyword arguments include all DEAP GP and PySR parameters,
+    Accepted keyword arguments include all algorithm parameters,
     plus:
 
-    * ``algorithm`` – "genetic" / "pysr" / "dual" (default "dual")
+    * ``algorithm`` – "genetic" / "pysr" / "dual" / "tree_prescreen" /
+      "gflownet" / "deep_implicit" (default "dual")
     """
     return DualMiningService(
         base_factors=base_factors,

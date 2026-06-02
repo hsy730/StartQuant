@@ -4,11 +4,7 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import List, Dict, Optional
-import sys
-from pathlib import Path
 import numpy as np
-
-sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
 from backend.services.portfolio_analysis_service import portfolio_analysis_service
 

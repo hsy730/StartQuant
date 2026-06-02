@@ -1,5 +1,5 @@
 """
-因子分析服务模块 - IC/IR统计、SHAP分析
+因子分析服务模块 - IC/IR统计、SHAP分析（含未来函数检测）
 """
 import hashlib
 import logging
@@ -34,6 +34,10 @@ from backend.services.factor_preprocessing_pipeline import (
     PreprocessingConfig,
     default_pipeline,
 )
+from backend.services.lookahead_bias_detector import (
+    lookahead_bias_detector,
+    BiasRiskLevel,
+)
 
 
 class AnalysisService:
@@ -49,6 +53,7 @@ class AnalysisService:
             "ic_ir": {},
             "shap": results.get("shap", {}),
             "alphalens": results.get("alphalens", {}),
+            "lookahead_bias": results.get("lookahead_bias", {}),
         }
 
         # 序列化 IC/IR 结果
@@ -241,6 +246,11 @@ class AnalysisService:
 
         ic_ir_results = self.calculate_ic_ir(factor_data, factor_names, stock_codes)
         results["ic_ir"] = ic_ir_results
+
+        # 未来函数检测（Look-ahead Bias Detection）
+        results["lookahead_bias"] = self._detect_lookahead_bias_for_all_factors(
+            factor_data, factor_names, stock_codes
+        )
 
         if ALPHALENS_AVAILABLE and len(stock_codes) >= 2:
             skip_industry = len(stock_codes) > 30
@@ -662,6 +672,133 @@ class AnalysisService:
             rolling_ir[factor_name] = rolling_mean / rolling_std
         return rolling_ir
 
+    def _detect_lookahead_bias_for_all_factors(
+        self,
+        factor_data: Dict[str, pd.DataFrame],
+        factor_names: List[str],
+        stock_codes: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        """
+        对所有因子执行未来函数检测（多股票模式优先使用横截面检测）
+
+        Args:
+            factor_data: {stock_code: DataFrame} 格式的因子数据
+            factor_names: 因子名称列表
+            stock_codes: 股票代码列表
+
+        Returns:
+            检测结果字典，包含每个因子的检测结果和汇总信息
+        """
+        all_bias_results = {}
+        codes = stock_codes or list(factor_data.keys())
+        has_multiple_stocks = len(factor_data) >= 2
+
+        for factor_name in factor_names:
+            try:
+                if has_multiple_stocks and len(codes) >= 3:
+                    # 多股票模式：使用横截面检测（更准确）
+                    all_factor_rows = []
+                    all_return_rows = []
+                    for stock_code in codes:
+                        df = factor_data.get(stock_code)
+                        if df is None or factor_name not in df.columns:
+                            continue
+                        if "future_return_1" not in df.columns:
+                            continue
+                        for date_idx, (date, row) in enumerate(df.iterrows()):
+                            fv = row.get(factor_name)
+                            ret = row.get("future_return_1")
+                            if pd.notna(fv) and pd.notna(ret) and not np.isinf(fv) and not np.isinf(ret):
+                                all_factor_rows.append({"date": date, "stock_code": stock_code, factor_name: float(fv), "return": float(ret)})
+
+                    if len(all_factor_rows) >= 50:
+                        bias_df = pd.DataFrame(all_factor_rows)
+                        detection_result = lookahead_bias_detector.detect_cross_sectional(
+                            factor_df=bias_df.rename(columns={factor_name: "factor_value"}),
+                            return_df=bias_df[["date", "stock_code", "return"]],
+                            factor_name="factor_value",
+                        )
+                    else:
+                        # 数据不足时回退到单股票检测
+                        first_stock = codes[0]
+                        df = factor_data.get(first_stock)
+                        if df is not None and factor_name in df.columns and "future_return_1" in df.columns:
+                            detection_result = lookahead_bias_detector.detect(
+                                factor_values=df[factor_name].dropna(),
+                                return_values=df["future_return_1"].dropna(),
+                                factor_name=factor_name,
+                            )
+                        else:
+                            detection_result = None
+                else:
+                    # 单股票模式：直接用序列检测
+                    first_stock = codes[0] if codes else list(factor_data.keys())[0]
+                    df = factor_data.get(first_stock)
+                    if df is not None and factor_name in df.columns and "future_return_1" in df.columns:
+                        detection_result = lookahead_bias_detector.detect(
+                            factor_values=df[factor_name].dropna(),
+                            return_values=df["future_return_1"].dropna(),
+                            factor_name=factor_name,
+                        )
+                    else:
+                        detection_result = None
+
+                if detection_result is not None:
+                    all_bias_results[factor_name] = {
+                        "has_bias": detection_result.has_bias,
+                        "risk_level": detection_result.risk_level.value,
+                        "risk_score": detection_result.risk_score,
+                        "summary": detection_result.summary,
+                        "recommendations": detection_result.recommendations,
+                        "n_checks": len(detection_result.checks),
+                        "n_failed": sum(1 for c in detection_result.checks if not c.passed),
+                    }
+                    # 记录高风险因子日志
+                    if detection_result.risk_level in (BiasRiskLevel.HIGH, BiasRiskLevel.CRITICAL):
+                        logger.warning(
+                            f"[未来函数检测] ⚠️ 因子 [{factor_name}] "
+                            f"风险等级={detection_result.risk_level.value}, "
+                            f"评分={detection_result.risk_score:.1f}"
+                        )
+                else:
+                    all_bias_results[factor_name] = {
+                        "has_bias": False,
+                        "risk_level": "unknown",
+                        "risk_score": 0,
+                        "summary": f"因子 [{factor_name}] 数据不足，无法检测",
+                        "recommendations": [],
+                        "n_checks": 0,
+                        "n_failed": 0,
+                    }
+
+            except Exception as e:
+                logger.error(f"[未来函数检测] 因子 [{factor_name}] 检测失败: {e}", exc_info=True)
+                all_bias_results[factor_name] = {
+                    "has_bias": False,
+                    "risk_level": "error",
+                    "risk_score": 0,
+                    "summary": f"检测异常: {str(e)}",
+                    "recommendations": [],
+                    "n_checks": 0,
+                    "n_failed": 0,
+                }
+
+        # 汇总统计
+        risk_levels = [r.get("risk_level", "unknown") for r in all_bias_results.values()]
+        summary = {
+            "per_factor": all_bias_results,
+            "overall_risk": max(risk_levels, key=lambda x: ["safe", "low", "medium", "high", "critical", "error", "unknown"].index(x)) if risk_levels else "safe",
+            "n_high_risk": sum(1 for r in all_bias_results.values() if r.get("risk_level") in ("high", "critical")),
+            "n_total": len(all_bias_results),
+        }
+
+        logger.info(
+            f"[未来函数检测] 全部完成: {summary['n_total']}个因子, "
+            f"高风险={summary['n_high_risk']}, 综合等级={summary['overall_risk']}"
+        )
+
+        return summary
+
     # ==================== P2-2: 加权IC (市值加权/流动性加权) ====================
 
     def calculate_weighted_ic(
@@ -977,6 +1114,7 @@ class AnalysisService:
         metadata = analysis_results["metadata"]
         ic_ir = analysis_results.get("ic_ir", {})
         shap_data = analysis_results.get("shap", {})
+        bias_data = analysis_results.get("lookahead_bias", {})
 
         report = f"""# 因子分析报告
 
@@ -1088,6 +1226,51 @@ class AnalysisService:
                             if isinstance(ac_data, dict):
                                 report += f"- {period_label}: 平均自相关={ac_data.get('mean_autocorrelation', 0):.4f}\n"
                         report += "\n"
+
+        # 未来函数检测报告
+        if bias_data and "per_factor" in bias_data:
+            per_factor = bias_data.get("per_factor", {})
+            overall_risk = bias_data.get("overall_risk", "safe")
+            n_high_risk = bias_data.get("n_high_risk", 0)
+
+            risk_emoji = {
+                "safe": "✅", "low": "⚠️", "medium": "🔶",
+                "high": "🔴", "critical": "💀", "error": "❓", "unknown": "➖",
+            }
+            report += "---\n\n## 未来函数（Look-ahead Bias）检测\n\n"
+            report += f"**综合风险等级**: {risk_emoji.get(overall_risk, '')} `{overall_risk.upper()}`"
+            if n_high_risk > 0:
+                report += f" （{n_high_risk} 个高风险因子）"
+            report += "\n\n"
+
+            if per_factor:
+                report += "| 因子名称 | 风险等级 | 评分 | 检测项通过/总数 | 摘要 |\n"
+                report += "|---------|---------|------|-----------------|------|\n"
+                for factor_name, bresult in per_factor.items():
+                    level = bresult.get("risk_level", "unknown")
+                    score = bresult.get("risk_score", 0)
+                    n_checks = bresult.get("n_checks", 0)
+                    n_failed = bresult.get("n_failed", 0)
+                    summary = bresult.get("summary", "")[:60]
+                    report += (
+                        f"| {factor_name} | "
+                        f"{risk_emoji.get(level, '')} {level} | "
+                        f"{score:.0f} | "
+                        f"{n_checks - n_failed}/{n_checks} | "
+                        f"{summary} |\n"
+                    )
+
+            # 显示改进建议
+            all_recommendations = set()
+            for bresult in per_factor.values():
+                for rec in bresult.get("recommendations", []):
+                    all_recommendations.add(rec)
+            if all_recommendations:
+                report += "\n**改进建议**:\n"
+                for rec in sorted(all_recommendations)[:5]:
+                    report += f"- {rec}\n"
+
+            report += "\n"
 
         report += "---\n\n*报告由 FactorFlow 自动生成*"
 

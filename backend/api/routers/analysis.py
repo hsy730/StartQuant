@@ -6,10 +6,7 @@ from pydantic import BaseModel
 from typing import List, Optional, Dict
 import pandas as pd
 import numpy as np
-import sys
 import logging
-import traceback
-from pathlib import Path
 
 
 def safe_numeric_value(value):
@@ -20,8 +17,6 @@ def safe_numeric_value(value):
         return None
     return float(value)
 
-
-sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
 from backend.services.analysis_service import analysis_service
 from backend.services.factor_stability_service import factor_stability_service
@@ -1305,3 +1300,180 @@ async def factor_importance_analysis(request: WeightedICRequest):
     except Exception as e:
         logger.error(f"因子重要性排名失败: {str(e)}\n{traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"因子重要性排名失败: {str(e)}")
+
+
+# ========== 未来函数检测API ==========
+
+class LookaheadBiasRequest(BaseModel):
+    """未来函数检测请求"""
+    factor_names: List[str]
+    stock_codes: List[str]
+    start_date: str
+    end_date: str
+    strict_mode: bool = False  # 是否使用严格模式（更敏感的阈值）
+
+
+@router.post("/lookahead-bias")
+async def detect_lookahead_bias(request: LookaheadBiasRequest):
+    """
+    未来函数（Look-ahead Bias）检测 ⭐核心安全功能
+
+    通过多维度统计特征自动识别因子计算中的未来信息泄漏。
+
+    检测维度：
+    - IC/IR 异常偏高（正常因子 IC 通常 < 0.08）
+    - 完美排名相关（Spearman > 0.3 高度可疑）
+    - 自相关异常（接近 1.0 意味着数据泄漏）
+    - 分层收益异常完美（单调性过强）
+    - 回测指标不真实（年化收益 > 500% 等）
+
+    返回：
+    - 每个因子的风险等级 (safe/low/medium/high/critical)
+    - 风险评分 (0-100)
+    - 各检测项详细结果
+    - 改进建议
+
+    对比表状态更新：❌ → ✅ 已实现
+    """
+    logger = logging.getLogger(__name__)
+
+    try:
+        from backend.services.data_service import data_service
+        from backend.services.factor_service import factor_service
+        from backend.services.lookahead_bias_detector import (
+            LookaheadBiasDetector,
+            lookahead_bias_detector,
+            strict_lookahead_bias_detector,
+        )
+
+        logger.info(
+            f"[未来函数检测] 开始检测: 因子={request.factor_names}, "
+            f"股票数={len(request.stock_codes)}, 严格模式={request.strict_mode}"
+        )
+
+        # 选择检测器
+        detector = strict_lookahead_bias_detector if request.strict_mode else lookahead_bias_detector
+
+        # 获取多因子数据
+        all_factor_data = {}
+        for factor_name in request.factor_names:
+            try:
+                factor_data = factor_service.calculate_factors_for_stocks(
+                    request.stock_codes,
+                    [factor_name],
+                    request.start_date,
+                    request.end_date,
+                )
+                if factor_data:
+                    all_factor_data[factor_name] = factor_data
+            except Exception as e:
+                logger.warning(f"因子 {factor_name} 获取失败: {e}")
+                continue
+
+        if not all_factor_data:
+            raise HTTPException(status_code=500, detail="未能获取任何有效的因子数据")
+
+        # 对每个因子执行检测
+        per_factor_results = {}
+        for factor_name in request.factor_names:
+            if factor_name not in all_factor_data:
+                per_factor_results[factor_name] = {
+                    "has_bias": False,
+                    "risk_level": "unknown",
+                    "risk_score": 0,
+                    "summary": f"因子 [{factor_name}] 数据获取失败",
+                    "checks": [],
+                    "recommendations": [],
+                }
+                continue
+
+            factor_data = all_factor_data[factor_name]
+
+            # 收集单股票或多股票的因子值和收益
+            all_factor_values = []
+            all_return_values = []
+
+            for stock_code, df in factor_data.items():
+                if factor_name in df.columns and "close" in df.columns:
+                    fv = df[factor_name]
+                    ret = df["close"].pct_change(1).shift(-1)
+                    combined = pd.DataFrame({"factor": fv, "return": ret}).dropna()
+                    if len(combined) >= 20:
+                        all_factor_values.extend(combined["factor"].tolist())
+                        all_return_values.extend(combined["return"].tolist())
+
+            if len(all_factor_values) < 30:
+                per_factor_results[factor_name] = {
+                    "has_bias": False,
+                    "risk_level": "unknown",
+                    "risk_score": 0,
+                    "summary": f"因子 [{factor_name}] 有效样本不足({len(all_factor_values)})",
+                    "checks": [],
+                    "recommendations": [],
+                }
+                continue
+
+            factor_series = pd.Series(all_factor_values)
+            return_series = pd.Series(all_return_values)
+
+            # 执行检测
+            result = detector.detect(
+                factor_values=factor_series,
+                return_values=return_series,
+                factor_name=factor_name,
+            )
+
+            per_factor_results[factor_name] = {
+                "has_bias": result.has_bias,
+                "risk_level": result.risk_level.value,
+                "risk_score": result.risk_score,
+                "summary": result.summary,
+                "checks": [
+                    {
+                        "name": c.check_name,
+                        "passed": c.passed,
+                        "value": c.value,
+                        "threshold": c.threshold,
+                        "severity": c.severity,
+                        "message": c.message,
+                    }
+                    for c in result.checks
+                ],
+                "recommendations": result.recommendations,
+                "metadata": result.metadata,
+            }
+
+        # 汇总统计
+        risk_levels = [r["risk_level"] for r in per_factor_results.values()]
+        level_order = ["safe", "low", "medium", "high", "critical", "error", "unknown"]
+        overall_risk = max(risk_levels, key=lambda x: level_order.index(x)) if risk_levels else "safe"
+        n_high_risk = sum(1 for r in per_factor_results.values() if r["risk_level"] in ("high", "critical"))
+
+        logger.info(
+            f"[未来函数检测] 完成: {len(per_factor_results)}个因子, "
+            f"综合风险={overall_risk}, 高风险={n_high_risk}"
+        )
+
+        return {
+            "success": True,
+            "data": {
+                "per_factor": per_factor_results,
+                "overall_risk": overall_risk,
+                "n_high_risk": n_high_risk,
+                "n_total": len(per_factor_results),
+                "strict_mode": request.strict_mode,
+            },
+            "metadata": {
+                "factors_analyzed": list(per_factor_results.keys()),
+                "n_stocks": len(request.stock_codes),
+                "time_range": f"{request.start_date} ~ {request.end_date}",
+                "detector_version": "1.0.0",
+                "implementation": "FactorHub原生实现（多维度统计检测）",
+            },
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"未来函数检测失败: {str(e)}\n{traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"未来函数检测失败: {str(e)}")

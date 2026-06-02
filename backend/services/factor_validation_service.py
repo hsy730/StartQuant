@@ -1,5 +1,5 @@
 """
-因子验证服务 - 验证因子质量
+因子验证服务 - 验证因子质量（含未来函数检测）
 """
 from typing import Dict, Optional, List
 import pandas as pd
@@ -8,6 +8,11 @@ from scipy import stats
 from scipy import stats as scipy_stats
 from sklearn.metrics import pairwise_distances
 from backend.services.alphalens_analysis_service import alphalens_analysis_service, ALPHALENS_AVAILABLE
+from backend.services.lookahead_bias_detector import (
+    LookaheadBiasDetector,
+    lookahead_bias_detector,
+    BiasRiskLevel,
+)
 
 
 class FactorValidationService:
@@ -51,6 +56,7 @@ class FactorValidationService:
             "turnover_validation": None,
             "stability_validation": None,
             "correlation_validation": None,
+            "lookahead_bias": None,
             "overall_passed": False,
             "score": 0.0,
         }
@@ -76,7 +82,13 @@ class FactorValidationService:
         else:
             results["correlation_validation"] = {"passed": True, "max_correlation": 0.0}
 
-        results["overall_passed"] = all([
+        # 6. 未来函数检测（Look-ahead Bias Detection）
+        results["lookahead_bias"] = self.detect_lookahead_bias(
+            factor_values, return_values
+        )
+
+        # overall_passed: 原有验证项全部通过 且 无高风险/严重未来函数
+        base_checks_passed = all([
             results["ic_validation"]["passed"],
             results["rank_ic_validation"]["passed"],
             results["ir_validation"]["passed"],
@@ -84,6 +96,12 @@ class FactorValidationService:
             results["stability_validation"]["passed"],
             results["correlation_validation"]["passed"],
         ])
+        bias_result = results["lookahead_bias"]
+        bias_safe = (
+            bias_result is None or
+            bias_result.get("risk_level") in (None, BiasRiskLevel.SAFE.value, BiasRiskLevel.LOW.value)
+        )
+        results["overall_passed"] = base_checks_passed and bias_safe
 
         results["score"] = self._calculate_score(results)
 
@@ -422,7 +440,77 @@ class FactorValidationService:
             turnover = turnover_result["turnover"]
             score += max(15 - turnover * 30, 0)
 
+        # 未来函数风险扣分
+        bias_result = validation_results.get("lookahead_bias")
+        if bias_result and isinstance(bias_result, dict):
+            risk_score = bias_result.get("risk_score", 0)
+            risk_level = bias_result.get("risk_level")
+            if risk_level in (BiasRiskLevel.HIGH.value, BiasRiskLevel.CRITICAL.value):
+                # 高风险/严重: 扣除所有分数
+                score = max(0, score * (1 - risk_score / 100))
+            elif risk_level == BiasRiskLevel.MEDIUM.value:
+                # 中等风险: 扣一半
+                score = max(0, score * 0.5)
+            elif risk_level == BiasRiskLevel.LOW.value:
+                # 低风险: 轻微扣分
+                score = max(0, score * 0.9)
+
         return round(score, 2)
+
+    def detect_lookahead_bias(
+        self,
+        factor_values: pd.Series,
+        return_values: pd.Series,
+        factor_name: str = "factor",
+        extra_context: Optional[Dict] = None,
+    ) -> Dict:
+        """
+        检测因子是否存在未来函数（Look-ahead Bias）
+
+        委托给 LookaheadBiasDetector 执行多维度统计检测，
+        并将结果转换为兼容的字典格式。
+
+        Args:
+            factor_values: 因子值序列
+            return_values: 收益率序列
+            factor_name: 因子名称
+            extra_context: 额外上下文（如回测指标、分层收益等）
+
+        Returns:
+            包含检测结果的字典，关键字段：
+            - has_bias: bool
+            - risk_level: str ("safe"/"low"/"medium"/"high"/"critical")
+            - risk_score: float (0-100)
+            - summary: str
+            - recommendations: list[str]
+            - checks: list[dict]  各检测项详情
+        """
+        detection_result = lookahead_bias_detector.detect(
+            factor_values=factor_values,
+            return_values=return_values,
+            factor_name=factor_name,
+            extra_context=extra_context,
+        )
+
+        return {
+            "has_bias": detection_result.has_bias,
+            "risk_level": detection_result.risk_level.value,
+            "risk_score": detection_result.risk_score,
+            "summary": detection_result.summary,
+            "recommendations": detection_result.recommendations,
+            "checks": [
+                {
+                    "name": c.check_name,
+                    "passed": c.passed,
+                    "value": c.value,
+                    "threshold": c.threshold,
+                    "severity": c.severity,
+                    "message": c.message,
+                }
+                for c in detection_result.checks
+            ],
+            "metadata": detection_result.metadata,
+        }
 
     def batch_validate(
         self,
