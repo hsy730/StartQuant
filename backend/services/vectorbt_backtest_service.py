@@ -119,10 +119,11 @@ class VectorBTBacktestService:
         percentile: int = 50,
         direction: str = "long",
         n_quantiles: int = 5,
-        shares_per_trade: int = 100,  # 添加每次交易手数参数，默认1手（100股）
+        shares_per_trade: int = 100,
+        use_tradable_mask: bool = True,
     ) -> Dict:
         """
-        单因子分层回测（使用vectorbt）
+        单因子分层回测（使用vectorbt，支持Mask-First设计）
 
         Args:
             df: 包含价格和因子数据的DataFrame，必须有 close 列和因子列
@@ -130,6 +131,8 @@ class VectorBTBacktestService:
             percentile: 分位数阈值（0-100），用于做多/做空判断
             direction: 交易方向，"long"做多或"short"做空
             n_quantiles: 分层数量，默认5层
+            shares_per_trade: 每次交易手数（股），默认100
+            use_tradable_mask: 是否使用Mask-First可交易性掩码（默认True）
 
         Returns:
             Dict: 包含各层收益、整体收益、净值曲线等数据的字典
@@ -141,20 +144,40 @@ class VectorBTBacktestService:
                 df = df.set_index("date")
             df.index = pd.to_datetime(df.index)
 
+        # Mask-First: 提取并应用可交易性掩码
+        tradable_mask = None
+        if use_tradable_mask and "tradable_mask" in df.columns:
+            tradable_mask = df["tradable_mask"]
+            logger.info(f"✅ VectorBT Backtest: 使用Mask-First设计，可交易比例 {tradable_mask.mean():.1%}")
+            if tradable_mask.sum() == 0:
+                raise ValueError("tradable_mask全为False！所有日期都不可交易")
+        elif use_tradable_mask and "tradable_mask" not in df.columns:
+            logger.warning("⚠️ VectorBT Backtest: 未找到tradable_mask列！")
+
         # 1. 计算收益率
         df["returns"] = df["close"].pct_change()
 
-        # 2. 计算因子分位数（滚动窗口252天）
-        factor_rank = df[factor_name].rolling(252, min_periods=1).rank(pct=True)
+        # 2. 计算因子分位数（滚动窗口252天）— 应用mask
+        factor_raw = df[factor_name]
+        if tradable_mask is not None:
+            factor_clean = factor_raw.where(tradable_mask)
+            factor_rank = factor_clean.rolling(252, min_periods=150).rank(pct=True)
+        else:
+            factor_rank = factor_raw.rolling(252, min_periods=1).rank(pct=True)
 
-        # 3. 生成分层信号
+        # 3. 生成分层信号 — 应用mask到入场/出场
         percentile_threshold = percentile / 100.0
         if direction == "long":
             entries = factor_rank >= percentile_threshold
-            exits = factor_rank < percentile_threshold  # 低于阈值时平仓
+            exits = factor_rank < percentile_threshold
         else:
             entries = factor_rank <= percentile_threshold
-            exits = factor_rank > percentile_threshold  # 高于阈值时平仓
+            exits = factor_rank > percentile_threshold
+
+        # 在不可交易日强制不持仓
+        if tradable_mask is not None:
+            entries = entries & tradable_mask.astype(bool)
+            exits = exits | (~tradable_mask.astype(bool))
 
         # 4. 计算各层收益
         quantile_returns = {}
@@ -334,6 +357,16 @@ class VectorBTBacktestService:
             "cvar_95": float(cvar_95),
             # 滑点信息
             "slippage_info": self.get_slippage_info(),
+            # Mask-First统计
+            "mask_statistics": {
+                "total_days": len(df),
+                "tradable_days": int(tradable_mask.sum()) if tradable_mask is not None else len(df),
+                "tradable_ratio": float(tradable_mask.mean()) if tradable_mask is not None else 1.0,
+                "limit_up_days": int(df["is_limit_up"].sum()) if "is_limit_up" in df.columns else 0,
+                "limit_down_days": int(df["is_limit_down"].sum()) if "is_limit_down" in df.columns else 0,
+                "suspended_days": int(df["is_suspended"].sum()) if "is_suspended" in df.columns else 0,
+                "mask_applied": tradable_mask is not None,
+            },
         }
 
     def multi_factor_backtest(

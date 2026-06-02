@@ -72,6 +72,7 @@ class BacktestService:
                 df=df, factor_name=factor_name,
                 percentile=percentile, direction=direction,
                 n_quantiles=n_quantiles,
+                use_tradable_mask=use_tradable_mask,
             )
             result["engine"] = "vectorbt"
             return result
