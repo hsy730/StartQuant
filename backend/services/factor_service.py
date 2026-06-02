@@ -171,23 +171,28 @@ class FactorCalculator:
             return np.minimum(series1, series2)
 
         def BARSLAST(condition):
-            """上一次满足条件到当前的周期数"""
+            """上一次满足条件到当前的周期数（向量化实现）"""
             if not isinstance(condition, pd.Series):
                 condition = pd.Series(condition)
 
-            result = pd.Series(0, index=condition.index)
-            last_true_idx = -1
+            n = len(condition)
+            if n == 0:
+                return pd.Series(dtype=float)
 
-            for i in range(len(condition)):
-                if condition.iloc[i]:
-                    last_true_idx = i
-                    result.iloc[i] = 0
-                elif last_true_idx >= 0:
-                    result.iloc[i] = i - last_true_idx
-                else:
-                    result.iloc[i] = len(condition)
+            cond_values = condition.values.astype(bool)
+            true_indices = np.where(cond_values)[0]
 
-            return result
+            if len(true_indices) == 0:
+                return pd.Series(float(n), index=condition.index)
+
+            positions = np.arange(n)
+            insert_points = np.searchsorted(true_indices, positions, side='right')
+
+            result = np.full(n, float(n), dtype=float)
+            has_prior = insert_points > 0
+            result[has_prior] = positions[has_prior] - true_indices[insert_points[has_prior] - 1]
+
+            return pd.Series(result, index=condition.index, dtype=float)
 
         def CONST(value, length=100):
             """常量序列"""

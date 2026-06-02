@@ -19,6 +19,8 @@ import logging
 from concurrent.futures import ThreadPoolExecutor
 import warnings
 
+from sklearn.linear_model import LinearRegression
+
 logger = logging.getLogger(__name__)
 
 
@@ -456,7 +458,6 @@ class FactorPreprocessingPipeline:
                     log_mc = np.log(group.loc[valid_mask, market_cap_column].replace(0, np.nan))
                     log_mc = log_mc.fillna(log_mc.mean())
                     
-                    from sklearn.linear_model import LinearRegression
                     X = log_mc.values.reshape(-1, 1)
                     y = factor_vals[valid_mask].values
                     
@@ -468,20 +469,8 @@ class FactorPreprocessingPipeline:
 
             # 行业中性化（回归残差法——JoinQuant/BigQuant标准）
             if self.config.enable_industry_neutralization and industry_column in group.columns:
-                valid_mask = factor_vals.notna() & group[industry_column].notna()
-                if valid_mask.sum() >= self.config.min_samples:
-                    industries = group.loc[valid_mask, industry_column].astype(str)
-                    unique_inds = sorted(industries.unique())
-                    if len(unique_inds) >= 2:
-                        industry_dummies = pd.get_dummies(industries, drop_first=True).astype(float)
-                        X = industry_dummies.values
-                        y = factor_vals[valid_mask].values
-                        
-                        from sklearn.linear_model import LinearRegression
-                        model = LinearRegression()
-                        model.fit(X, y)
-                        residuals = y - model.predict(X)
-                        factor_vals.loc[valid_mask] = residuals
+                industry_series = group[industry_column]
+                factor_vals = self._neutralize_industry(factor_vals, industry_series)
 
             # 标准化
             if self.config.standardize_method == StandardizeMethod.ZSCORE:
@@ -526,7 +515,6 @@ class FactorPreprocessingPipeline:
         log_mc = np.log(market_cap[valid_mask])
         y = factor_values[valid_mask]
 
-        from sklearn.linear_model import LinearRegression
         model = LinearRegression()
         model.fit(log_mc.values.reshape(-1, 1), y.values)
 
@@ -542,29 +530,44 @@ class FactorPreprocessingPipeline:
         date_index: Optional[pd.DatetimeIndex] = None,
     ) -> pd.Series:
         """
-        高性能行业中性化
-        
-        在行业内进行标准化
+        行业中性化 - 使用行业哑变量回归残差法（JoinQuant/BigQuant标准）
+
+        通过线性回归将因子值对行业哑变量回归，取残差作为中性化后的因子值。
+        该方法消除了行业间的系统性差异，同时保留了行业内的相对排序。
+
+        Args:
+            factor_values: 因子值序列
+            industry: 行业分类序列（与factor_values对齐）
+            date_index: 日期索引（可选）
+
+        Returns:
+            行业中性化后的因子值序列
         """
         if industry.isna().all():
             return factor_values
 
+        valid_mask = factor_values.notna() & industry.notna()
+        if valid_mask.sum() < self.config.min_samples:
+            logger.warning("有效样本不足，跳过行业中性化")
+            return factor_values
+
+        industries = industry[valid_mask].astype(str)
+        unique_inds = sorted(industries.unique())
+        if len(unique_inds) < 2:
+            logger.warning("行业分类不足2个，跳过行业中性化")
+            return factor_values
+
         result = factor_values.copy()
+        y = factor_values[valid_mask].values
 
-        for ind_name, group in industry.groupby(industry):
-            idx = group.index
-            if len(idx) < 3:
-                continue
+        industry_dummies = pd.get_dummies(industries, drop_first=True).astype(float)
+        X = industry_dummies.values
 
-            ind_factor = factor_values[idx]
-            ind_mean = ind_factor.mean()
-            ind_std = ind_factor.std()
+        model = LinearRegression()
+        model.fit(X, y)
+        residuals = y - model.predict(X)
 
-            if ind_std > 0:
-                result[idx] = (ind_factor - ind_mean) / ind_std
-            else:
-                result[idx] = ind_factor - ind_mean
-
+        result.loc[valid_mask] = residuals
         return result
 
     def _standardize(

@@ -116,8 +116,8 @@ async def optimize_weights(request: OptimizeWeightsRequest):
         if not factor_values:
             raise HTTPException(status_code=400, detail="没有有效的因子数据")
 
-        # 计算收益率序列（用于权重优化）
-        returns = stock_data['close'].pct_change().shift(-1)  # 未来收益率
+        # 计算收益率序列（使用历史收益率，避免未来函数）
+        returns = stock_data['close'].pct_change().shift(1)  # 前一期收益率（基于历史）
 
         # 根据方法计算权重
         n_factors = len(request.factors)
@@ -310,8 +310,8 @@ async def optimize_weights(request: OptimizeWeightsRequest):
 
         weighted_factor = weighted_factor.dropna()
 
-        # 计算未来收益率（用于IC计算）
-        returns = stock_data['close'].pct_change().shift(-1)
+        # 计算历史收益率（用于IC计算，避免未来函数）
+        returns = stock_data['close'].pct_change().shift(1)  # 前一期收益率
 
         # 对齐数据 - 使用共同的索引
         common_index = weighted_factor.index.intersection(returns.index)
@@ -537,8 +537,8 @@ async def compare_weight_methods(request: CompareMethodsRequest):
         if not factor_data:
             raise HTTPException(status_code=400, detail="没有有效的因子数据")
 
-        # 计算未来收益率（用于IC计算）
-        returns = stock_data['close'].pct_change().shift(-1)
+        # 计算历史收益率（用于IC计算，避免未来函数）
+        returns = stock_data['close'].pct_change().shift(1)
 
         # 对每种权重方法进行测试
         results = {}

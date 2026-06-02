@@ -59,7 +59,7 @@ class DataService:
         # 注意：顺序很重要！更具体的模式应该放在前面
         self._board_config = {
             MarketBoard.STAR: {
-                "code_pattern": r"^68[89]\d{3}$|^68\d{4}$",  # 科创板 (688xxx-689999)
+                "code_pattern": r"^68\d{4}$",  # 科创板 (688000-699999)
                 "price_limit": 0.20,      # ±20%
                 "description": "科创板市场",
             },

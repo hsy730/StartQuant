@@ -1,5 +1,15 @@
 """
 因子中性化服务 - 市值中性化和行业中性化
+
+所有中性化方法统一使用线性回归残差法（JoinQuant/BigQuant标准）：
+- 市值中性化：因子值 ~ log(市值) 回归取残差
+- 行业中性化：因子值 ~ 行业哑变量 回归取残差
+- 联合中性化：因子值 ~ 行业哑变量 + log(市值) 回归取残差
+
+回归残差法的优势：
+1. 消除系统性影响的同时保留因子信息
+2. 与JoinQuant/BigQuant等业界平台一致
+3. 数学上更严谨（控制了所有行业的共同影响）
 """
 import logging
 
@@ -16,8 +26,22 @@ logger = logging.getLogger(__name__)
 class FactorNeutralizationService:
     """因子中性化服务类"""
 
+    MIN_SAMPLES: int = 10
+
     def __init__(self):
         pass
+
+    def _validate_columns(self, df: pd.DataFrame, *columns: str) -> None:
+        """校验DataFrame中是否包含指定列"""
+        for col in columns:
+            if col not in df.columns:
+                raise ValueError(f"数据框中缺少列: {col}")
+
+    def _build_result_series(self, df: pd.DataFrame, factor_name: str, valid_index: pd.Index, residuals: np.ndarray) -> pd.Series:
+        """构建结果Series，保持原索引，缺失值位置填充NaN"""
+        result = pd.Series(index=df.index, dtype=float)
+        result.loc[valid_index] = residuals
+        return result
 
     def neutralize_market_cap(
         self,
@@ -28,6 +52,8 @@ class FactorNeutralizationService:
         """
         市值中性化 - 使用线性回归去除市值影响
 
+        方法：因子值 ~ log(市值) 线性回归，取残差
+
         Args:
             df: 包含因子值和市值的数据框
             factor_name: 因子列名
@@ -36,37 +62,23 @@ class FactorNeutralizationService:
         Returns:
             中性化后的因子值（回归残差）
         """
-        if market_cap_column not in df.columns:
-            raise ValueError(f"数据框中缺少市值列: {market_cap_column}")
+        self._validate_columns(df, factor_name, market_cap_column)
 
-        if factor_name not in df.columns:
-            raise ValueError(f"数据框中缺少因子列: {factor_name}")
-
-        # 移除缺失值
         valid_data = df[[factor_name, market_cap_column]].dropna()
-
-        if len(valid_data) < 10:
+        if len(valid_data) < self.MIN_SAMPLES:
             raise ValueError("有效数据不足，无法进行中性化")
 
-        # 对市值取对数
         log_market_cap = np.log(valid_data[market_cap_column].replace(0, np.nan))
         log_market_cap = log_market_cap.fillna(log_market_cap.mean())
 
-        # 线性回归
         model = LinearRegression()
         X = log_market_cap.values.reshape(-1, 1)
         y = valid_data[factor_name].values
 
         model.fit(X, y)
+        residuals = y - model.predict(X)
 
-        # 计算残差（中性化后的因子值）
-        residual = y - model.predict(X)
-
-        # 创建返回的Series，保持原索引
-        result = pd.Series(index=df.index, dtype=float)
-        result.loc[valid_data.index] = residual
-
-        return result
+        return self._build_result_series(df, factor_name, valid_data.index, residuals)
 
     def neutralize_industry(
         self,
@@ -77,6 +89,9 @@ class FactorNeutralizationService:
         """
         行业中性化 - 使用行业哑变量回归残差法（JoinQuant/BigQuant标准）
 
+        方法：因子值 ~ 行业哑变量 线性回归，取残差
+        消除行业间的系统性差异，同时保留行业内的相对排序。
+
         Args:
             df: 包含因子值和行业分类的数据框
             factor_name: 因子列名
@@ -85,39 +100,28 @@ class FactorNeutralizationService:
         Returns:
             行业中性化后的因子值（回归残差）
         """
-        if industry_column not in df.columns:
-            raise ValueError(f"数据框中缺少行业列: {industry_column}")
-
-        if factor_name not in df.columns:
-            raise ValueError(f"数据框中缺少因子列: {factor_name}")
+        self._validate_columns(df, factor_name, industry_column)
 
         valid_data = df[[factor_name, industry_column]].dropna()
-        if len(valid_data) < 10:
+        if len(valid_data) < self.MIN_SAMPLES:
             raise ValueError("有效数据不足，无法进行行业中性化")
 
         industries = valid_data[industry_column].astype(str)
         unique_industries = sorted(industries.unique())
-        n_industries = len(unique_industries)
 
-        if n_industries < 2:
+        if len(unique_industries) < 2:
             logger.warning("行业分类不足2个，跳过行业中性化")
             return df[factor_name]
 
-        industry_dummies = pd.get_dummies(industries, drop_first=True)
-        industry_dummies = industry_dummies.astype(float)
-
+        industry_dummies = pd.get_dummies(industries, drop_first=True).astype(float)
         X = industry_dummies.values
         y = valid_data[factor_name].values
 
         model = LinearRegression()
         model.fit(X, y)
-
         residuals = y - model.predict(X)
 
-        result = pd.Series(index=df.index, dtype=float)
-        result.loc[valid_data.index] = residuals
-
-        return result
+        return self._build_result_series(df, factor_name, valid_data.index, residuals)
 
     def neutralize_both(
         self,
@@ -128,6 +132,9 @@ class FactorNeutralizationService:
     ) -> pd.Series:
         """
         行业+市值联合中性化（JoinQuant/BigQuant标准：一次回归同时剥离）
+
+        方法：因子值 ~ 行业哑变量 + log(市值) 线性回归，取残差
+        同时控制市值和行业两个维度的系统性影响。
 
         Args:
             df: 数据框
@@ -144,6 +151,8 @@ class FactorNeutralizationService:
         if not has_mc and not has_industry:
             return df[factor_name]
 
+        self._validate_columns(df, factor_name)
+
         cols = [factor_name]
         if has_mc:
             cols.append(market_cap_column)
@@ -151,7 +160,7 @@ class FactorNeutralizationService:
             cols.append(industry_column)
 
         valid_data = df[cols].dropna()
-        if len(valid_data) < 10:
+        if len(valid_data) < self.MIN_SAMPLES:
             raise ValueError("有效数据不足，无法进行联合中性化")
 
         y = valid_data[factor_name].values
@@ -176,13 +185,9 @@ class FactorNeutralizationService:
 
         model = LinearRegression()
         model.fit(X, y)
-
         residuals = y - model.predict(X)
 
-        result = pd.Series(index=df.index, dtype=float)
-        result.loc[valid_data.index] = residuals
-
-        return result
+        return self._build_result_series(df, factor_name, valid_data.index, residuals)
 
     def get_industry_classification(self, stock_codes: List[str]) -> Dict[str, str]:
         try:

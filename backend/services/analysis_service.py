@@ -128,11 +128,41 @@ class AnalysisService:
         return result
 
     def _generate_cache_key(
-        self, stock_codes: List[str], factor_names: List[str], start_date: str, end_date: str
+        self, stock_codes: List[str], factor_names: List[str], start_date: str, end_date: str,
+        factor_version_hash: Optional[str] = None,
     ) -> str:
-        """生成缓存键"""
-        key_str = f"{','.join(sorted(stock_codes))}_{','.join(sorted(factor_names))}_{start_date}_{end_date}"
+        """生成缓存键（包含因子版本哈希，因子更新时自动失效）"""
+        parts = [
+            ",".join(sorted(stock_codes)),
+            ",".join(sorted(factor_names)),
+            start_date,
+            end_date,
+        ]
+        if factor_version_hash:
+            parts.append(factor_version_hash)
+        key_str = "_".join(parts)
         return hashlib.md5(key_str.encode()).hexdigest()[:32]
+
+    def _compute_factor_version_hash(self, factor_names: List[str]) -> str:
+        """计算因子版本哈希（基于因子定义的code字段）"""
+        try:
+            from backend.repositories.factor_repository import FactorRepository
+            from backend.core.database import get_db_session
+
+            db = get_db_session()
+            repo = FactorRepository(db)
+            codes = []
+            for name in factor_names:
+                factor = repo.get_by_name(name)
+                if factor and hasattr(factor, 'code') and factor.code:
+                    codes.append(f"{name}:{factor.code}")
+            db.close()
+
+            if codes:
+                return hashlib.md5("|".join(sorted(codes)).encode()).hexdigest()[:16]
+        except Exception as e:
+            logger.debug(f"计算因子版本哈希失败: {e}")
+        return ""
 
     def analyze(
         self,
@@ -157,7 +187,10 @@ class AnalysisService:
         Returns:
             包含所有分析结果的字典
         """
-        cache_key = self._generate_cache_key(stock_codes, factor_names, start_date, end_date)
+        # 获取因子版本哈希（因子定义变更时缓存自动失效）
+        factor_version_hash = self._compute_factor_version_hash(factor_names)
+
+        cache_key = self._generate_cache_key(stock_codes, factor_names, start_date, end_date, factor_version_hash)
 
         factor_data = factor_service.calculate_factors_for_stocks(
             stock_codes, factor_names, start_date, end_date, rolling_window
@@ -780,9 +813,10 @@ class AnalysisService:
 
     @staticmethod
     def _compute_weighted_ic_mean(ic_s: pd.Series, factor_values_dict: dict, weight_map: dict, weight_type: str) -> float:
-        """计算加权IC均值"""
+        """计算加权IC均值（按截面对齐权重）"""
         if not weight_map or weight_type == "equal":
             return float(ic_s.mean())
+
         date_weights = {}
         for date in ic_s.index:
             w_sum = 0.0
@@ -790,12 +824,20 @@ class AnalysisService:
             for stock_code, w in weight_map.items():
                 fv = factor_values_dict.get(stock_code)
                 if fv is not None and date in fv.index:
-                    w_sum += w
-                    count += 1
+                    if isinstance(w, pd.Series):
+                        if date in w.index:
+                            w_sum += abs(w.loc[date])
+                            count += 1
+                    elif isinstance(w, (int, float)):
+                        w_sum += abs(w)
+                        count += 1
             date_weights[date] = w_sum if count > 0 else 1.0
 
         weights_series = pd.Series(date_weights)
-        weights_normalized = weights_series / weights_series.sum()
+        total_weight = weights_series.sum()
+        if total_weight == 0:
+            return float(ic_s.mean())
+        weights_normalized = weights_series / total_weight
 
         aligned_weights = weights_normalized.reindex(ic_s.index, fill_value=1.0 / len(ic_s))
 
@@ -868,9 +910,9 @@ class AnalysisService:
             logger.error("[SHAP] No valid data for SHAP analysis")
             return {"error": "No valid data for SHAP analysis"}
 
-        # 合并所有数据
-        X_combined = pd.concat(X_list, ignore_index=True)
-        y_combined = pd.concat(y_list, ignore_index=True)
+        # 合并所有数据（保留时间索引，避免未来信息泄漏）
+        X_combined = pd.concat(X_list)
+        y_combined = pd.concat(y_list)
 
         logger.debug(f"[SHAP] X_combined shape: {X_combined.shape}")
         logger.debug(f"[SHAP] X_combined columns: {X_combined.columns.tolist()}")
@@ -889,10 +931,13 @@ class AnalysisService:
             random_state=42,
         )
 
-        # 分割训练集和测试集
-        split_idx = int(len(X_scaled) * 0.8)
-        X_train, X_test = X_scaled[:split_idx], X_scaled[split_idx:]
-        y_train, y_test = y_combined[:split_idx], y_combined[split_idx:]
+        # 按时间顺序分割训练集和测试集（避免未来信息泄漏）
+        n_samples = len(X_scaled)
+        split_idx = int(n_samples * 0.8)
+        X_train = X_scaled.iloc[:split_idx]
+        X_test = X_scaled.iloc[split_idx:]
+        y_train = y_combined.iloc[:split_idx]
+        y_test = y_combined.iloc[split_idx:]
 
         logger.debug(f"[SHAP] Training with {len(X_train)} samples, testing with {len(X_test)} samples")
 
