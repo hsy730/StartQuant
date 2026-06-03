@@ -483,9 +483,6 @@ async def promote_generated_factor(generated_id: int, request: PromoteFactorRequ
 
         # 将表达式包装为完整函数
         expression = gen_factor.expression
-        processed_expr = expression
-        for field in ["open", "close", "high", "low", "volume"]:
-            processed_expr = processed_expr.replace(f"\\b{field}\\b", f"df['{field}']")
 
         import re
         processed_expr = re.sub(
@@ -521,6 +518,8 @@ async def promote_generated_factor(generated_id: int, request: PromoteFactorRequ
             formula_type="function",
             generated_factor_id=generated_id,
         )
+
+        db.close()
 
         return {
             "success": True,

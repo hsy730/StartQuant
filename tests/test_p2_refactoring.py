@@ -69,8 +69,12 @@ def run_test(name, fn):
 # ============================================================
 def test_p2_1_backtest_engine_check():
     from backend.services.backtest_service import BacktestService, check_backtest_engine
-    engine = check_backtest_engine()
-    assert engine in ("vectorbt", "fallback"), f"Unexpected engine: {engine}"
+    try:
+        engine = check_backtest_engine()
+        assert engine == "vectorbt", f"Unexpected engine: {engine}"
+    except ImportError as e:
+        engine = "unavailable"
+        assert "VectorBT" in str(e), f"Unexpected error: {e}"
     return f"engine={engine}"
 
 
