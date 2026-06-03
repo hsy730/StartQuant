@@ -71,27 +71,31 @@ class BacktestService:
         direction: str = "long",
         n_quantiles: int = 5,
         use_tradable_mask: bool = True,
+        freq: str = "D",
+        use_chunking: str = "auto",
     ) -> Dict:
         result = self._get_vbt().single_factor_backtest(
             df=df, factor_name=factor_name,
             percentile=percentile, direction=direction,
             n_quantiles=n_quantiles,
             use_tradable_mask=use_tradable_mask,
+            freq=freq,
+            use_chunking=use_chunking,
         )
         result["engine"] = "vectorbt"
         return result
 
     # ==================== 横截面回测 (委托VectorBT) ====================
 
-    def cross_sectional_backtest(self, df: pd.DataFrame, factor_name: str, top_percentile: float = 0.2, direction: str = "long") -> Dict:
-        result = self._get_vbt().cross_sectional_backtest(df=df, factor_name=factor_name, top_percentile=top_percentile, direction=direction)
+    def cross_sectional_backtest(self, df: pd.DataFrame, factor_name: str, top_percentile: float = 0.2, direction: str = "long", freq: str = "D") -> Dict:
+        result = self._get_vbt().cross_sectional_backtest(df=df, factor_name=factor_name, top_percentile=top_percentile, direction=direction, freq=freq)
         result["engine"] = "vectorbt"
         return result
 
     # ==================== 多因子回测 (委托VectorBT) ====================
 
-    def multi_factor_backtest(self, df: pd.DataFrame, factor_names: List[str], weights: Optional[List[float]] = None, method: str = "equal_weight", percentile: int = 50, direction: str = "long") -> Dict:
-        result = self._get_vbt().multi_factor_backtest(df=df, factor_names=factor_names, weights=weights, method=method, percentile=percentile, direction=direction)
+    def multi_factor_backtest(self, df: pd.DataFrame, factor_names: List[str], weights: Optional[List[float]] = None, method: str = "equal_weight", percentile: int = 50, direction: str = "long", freq: str = "D", use_chunking: str = "auto") -> Dict:
+        result = self._get_vbt().multi_factor_backtest(df=df, factor_names=factor_names, weights=weights, method=method, percentile=percentile, direction=direction, freq=freq, use_chunking=use_chunking)
         result["engine"] = "vectorbt"
         return result
 
@@ -200,4 +204,7 @@ def check_backtest_engine() -> str:
     """检查当前使用的回测引擎"""
     if VECTORBT_AVAILABLE:
         return "vectorbt"
-    return "fallback"
+    raise ImportError(
+        "VectorBT不可用，请安装: pip install vectorbt。"
+        "自建回测引擎已移除（存在已知Bug），VectorBT是唯一支持的回测引擎。"
+    )

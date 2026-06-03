@@ -4,9 +4,10 @@
 """
 import pandas as pd
 import numpy as np
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 from datetime import datetime
 import logging
+import gc
 
 try:
     import vectorbt as vbt
@@ -17,6 +18,51 @@ except ImportError:
 from backend.services.smart_slippage_detector import smart_slippage_detector, SlippageRecommendation
 
 logger = logging.getLogger(__name__)
+
+
+# 频率配置映射表
+_FREQ_CONFIG = {
+    "D": {
+        "vbt_freq": "D",
+        "annual_bars": 252,
+        "rolling_window": 252,
+        "rolling_min_periods": 150,
+        "description": "日频",
+    },
+    "5min": {
+        "vbt_freq": "5T",
+        "annual_bars": 252 * 48,       # 每交易日48根5分钟K线(4h/5min)
+        "rolling_window": 252 * 48,
+        "rolling_min_periods": 150 * 48,
+        "description": "5分钟",
+    },
+    "15min": {
+        "vbt_freq": "15T",
+        "annual_bars": 252 * 16,
+        "rolling_window": 252 * 16,
+        "rolling_min_periods": 150 * 16,
+        "description": "15分钟",
+    },
+    "30min": {
+        "vbt_freq": "30T",
+        "annual_bars": 252 * 8,
+        "rolling_window": 252 * 8,
+        "rolling_min_periods": 150 * 8,
+        "description": "30分钟",
+    },
+    "60min": {
+        "vbt_freq": "1H",
+        "annual_bars": 252 * 4,
+        "rolling_window": 252 * 4,
+        "rolling_min_periods": 150 * 4,
+        "description": "60分钟",
+    },
+}
+
+
+def _get_freq_config(freq: str) -> Dict:
+    """获取频率配置，不支持的频率则回退到日频"""
+    return _FREQ_CONFIG.get(freq if freq else "", _FREQ_CONFIG["D"])
 
 
 class VectorBTBacktestService:
@@ -112,6 +158,447 @@ class VectorBTBacktestService:
                 "slippage": self.slippage,
             }
 
+    # ==================== 内存优化 & 分块计算 ====================
+
+    @staticmethod
+    def _to_memory_efficient(df: pd.DataFrame) -> pd.DataFrame:
+        """下转型数据类型以降低内存占用（float64→float32, int64→int32）"""
+        df = df.copy()
+        for col in df.columns:
+            col_type = df[col].dtype
+            if col_type == np.float64:
+                df[col] = df[col].astype(np.float32)
+            elif col_type == np.int64:
+                df[col] = df[col].astype(np.int32)
+        return df
+
+    @staticmethod
+    def _auto_chunk_config(freq: str, total_bars: int) -> Tuple[int, int]:
+        """
+        根据频率和数据量自动确定分块大小和重叠大小
+
+        Returns:
+            (chunk_size, overlap_size)
+        """
+        fc = _get_freq_config(freq)
+        # 每个 chunk 的目标内存占用 ~200MB（对应约 5000 bar 的完整数据）
+        bars_per_chunk = {
+            "D": 500,
+            "60min": 1000,
+            "30min": 2000,
+            "15min": 4000,
+            "5min": 5000,
+        }
+        chunk_size = bars_per_chunk.get(freq.lower(), 5000)
+        # 重叠区 = 滚动窗口，保证每个 chunk 的 rolling 计算有足够历史
+        overlap_size = fc["rolling_window"]
+        return chunk_size, overlap_size
+
+    @staticmethod
+    def _split_chunks(
+        df: pd.DataFrame,
+        chunk_size: int,
+        overlap_size: int,
+    ) -> List[Tuple[pd.DataFrame, int, int]]:
+        """
+        将 DataFrame 切分为重叠的分块
+
+        Returns:
+            [(chunk_df, chunk_start_idx, chunk_end_idx), ...]
+        """
+        n = len(df)
+        chunks = []
+        start = 0
+        while start < n:
+            end = min(start + chunk_size + overlap_size, n)
+            chunk_df = df.iloc[start:end]
+            chunks.append((chunk_df, start, end))
+            start += chunk_size
+        return chunks
+
+    def _run_vbt_core(
+        self,
+        df: pd.DataFrame,
+        factor_name: str,
+        percentile: int,
+        direction: str,
+        n_quantiles: int,
+        shares_per_trade: int,
+        use_tradable_mask: bool,
+        fc: Dict,
+    ) -> Dict:
+        """
+        共享的 VectorBT 核心回测逻辑：因子排名 → 信号生成 → 回测执行
+
+        _run_single_chunk 和 single_factor_backtest 的公共实现，
+        避免两处维护相同逻辑导致漂移。
+
+        Args:
+            df: 已确保 DatetimeIndex 的 DataFrame（会被原地修改）
+            factor_name, percentile, direction, n_quantiles, shares_per_trade, use_tradable_mask, fc: 同上
+
+        Returns:
+            Dict 包含:
+                df (DataFrame): 添加了 returns 列后的数据
+                entries (Series): 入场信号
+                exits (Series): 出场信号
+                tradable_mask (Series|None): 可交易掩码
+                quantile_returns (dict): 各层收益 {Q1: Series, ...}
+                pf (vbt.Portfolio): VectorBT Portfolio 对象
+                equity (Series): 净值曲线
+                returns (Series): 收益率序列
+        """
+        # Mask-First
+        tradable_mask = None
+        if use_tradable_mask and "tradable_mask" in df.columns:
+            tradable_mask = df["tradable_mask"]
+
+        # 计算收益率
+        df["returns"] = df["close"].pct_change()
+
+        # 因子分位数排名
+        factor_raw = df[factor_name]
+        if tradable_mask is not None:
+            factor_clean = factor_raw.where(tradable_mask)
+            factor_rank = factor_clean.rolling(fc["rolling_window"], min_periods=fc["rolling_min_periods"]).rank(pct=True)
+        else:
+            factor_rank = factor_raw.rolling(fc["rolling_window"], min_periods=1).rank(pct=True)
+
+        # 信号生成
+        percentile_threshold = percentile / 100.0
+        if direction == "long":
+            entries = factor_rank >= percentile_threshold
+            exits = factor_rank < percentile_threshold
+        else:
+            entries = factor_rank <= percentile_threshold
+            exits = factor_rank > percentile_threshold
+
+        if tradable_mask is not None:
+            entries = entries & tradable_mask.astype(bool)
+            exits = exits | (~tradable_mask.astype(bool))
+
+        # 分层收益
+        quantile_returns = {}
+        for q in range(n_quantiles):
+            q_min = q / n_quantiles
+            q_max = (q + 1) / n_quantiles
+            layer_mask = (factor_rank >= q_min) & (factor_rank < q_max)
+            layer_returns = df.loc[layer_mask, "returns"]
+            quantile_returns[f"Q{q + 1}"] = layer_returns
+
+        # VectorBT 回测
+        pf = vbt.Portfolio.from_signals(
+            close=df["close"],
+            entries=entries,
+            exits=exits,
+            init_cash=self.initial_capital,
+            freq=fc["vbt_freq"],
+            cash_sharing=False,
+            fees=self.commission_rate,
+            slippage=self.slippage,
+            size=shares_per_trade,
+        )
+
+        equity = pf.value()
+        returns = pf.returns()
+
+        return {
+            "df": df,
+            "entries": entries,
+            "exits": exits,
+            "tradable_mask": tradable_mask,
+            "quantile_returns": quantile_returns,
+            "pf": pf,
+            "equity": equity,
+            "returns": returns,
+        }
+
+    def _run_single_chunk(
+        self,
+        df_chunk: pd.DataFrame,
+        factor_name: str,
+        percentile: int,
+        direction: str,
+        n_quantiles: int,
+        shares_per_trade: int,
+        use_tradable_mask: bool,
+        fc: Dict,
+        chunk_start: int,
+        chunk_end: int,
+    ) -> Optional[Dict]:
+        """
+        对单个分块执行回测（委托给 _run_vbt_core，返回简化结果）
+
+        Returns:
+            Dict with equity_curve, returns, trades, quantile_returns (all only for the reliable region)
+        """
+        if not isinstance(df_chunk.index, pd.DatetimeIndex):
+            df_chunk = df_chunk.copy()
+            if "date" in df_chunk.columns:
+                df_chunk = df_chunk.set_index("date")
+            df_chunk.index = pd.to_datetime(df_chunk.index)
+
+        # Mask-First 快速检查
+        if use_tradable_mask and "tradable_mask" in df_chunk.columns:
+            if df_chunk["tradable_mask"].sum() == 0:
+                return None
+
+        # 委托给共享核心逻辑
+        core = self._run_vbt_core(
+            df=df_chunk,
+            factor_name=factor_name,
+            percentile=percentile,
+            direction=direction,
+            n_quantiles=n_quantiles,
+            shares_per_trade=shares_per_trade,
+            use_tradable_mask=use_tradable_mask,
+            fc=fc,
+        )
+
+        return {
+            "equity_curve": core["equity"],
+            "returns": core["returns"],
+            "quantile_returns": core["quantile_returns"],
+            "pf": core["pf"],
+            "chunk_start": chunk_start,
+            "chunk_end": chunk_end,
+        }
+
+    @staticmethod
+    def _stitch_equity_curves(
+        chunk_results: List[Dict],
+        overlap_size: int,
+    ) -> pd.Series:
+        """
+        拼接各分块的净值曲线
+
+        每个 chunk 的前 overlap_size 个 bar 是 warmup 区（rolling 不可靠），丢弃。
+        首个 chunk 从 overlap 后开始；后续 chunk 的净值按前一个 chunk 最终净值缩放。
+        """
+        stitched_parts = []
+        prev_final_value = 1.0
+
+        for i, cr in enumerate(chunk_results):
+            equity = cr["equity_curve"].copy()
+            # 丢弃 warmup 区（第一个 chunk 也丢弃 warmup，保证 rolling 稳定）
+            if len(equity) > overlap_size:
+                equity = equity.iloc[overlap_size:]
+            elif i == 0:
+                # 数据太少，不丢弃
+                pass
+            else:
+                # 重叠区比数据还长，跳过
+                continue
+
+            if len(equity) == 0:
+                continue
+
+            # 归一化到当前 chunk 的初始净值
+            equity_normalized = equity / equity.iloc[0]
+            # 按前一个 chunk 的最终净值缩放
+            equity_scaled = equity_normalized * prev_final_value
+            stitched_parts.append(equity_scaled)
+            prev_final_value = equity_scaled.iloc[-1] if len(equity_scaled) > 0 else prev_final_value
+
+        if not stitched_parts:
+            return pd.Series(dtype=float)
+
+        result = pd.concat(stitched_parts)
+        # 去重：同名时间戳只保留第一个
+        result = result[~result.index.duplicated(keep="first")]
+        return result
+
+    def chunked_single_factor_backtest(
+        self,
+        df: pd.DataFrame,
+        factor_name: str,
+        percentile: int = 50,
+        direction: str = "long",
+        n_quantiles: int = 5,
+        shares_per_trade: int = 100,
+        use_tradable_mask: bool = True,
+        freq: str = "D",
+        chunk_size: Optional[int] = None,
+        overlap_size: Optional[int] = None,
+    ) -> Dict:
+        """
+        分块回测：将大数据集切分为重叠块，逐块计算后拼接结果，大幅降低内存峰值。
+
+        Args:
+            df: 完整数据
+            factor_name: 因子名称
+            percentile: 分位数阈值
+            direction: 交易方向
+            n_quantiles: 分层数量
+            shares_per_trade: 每次交易手数
+            use_tradable_mask: 是否使用可交易性掩码
+            freq: 数据频率
+            chunk_size: 每块 bar 数（None=自动）
+            overlap_size: 重叠 bar 数（None=自动=滚动窗口大小）
+
+        Returns:
+            Dict: 与 single_factor_backtest 相同格式的结果
+        """
+        fc = _get_freq_config(freq)
+        auto_chunk, auto_overlap = self._auto_chunk_config(freq, len(df))
+
+        if chunk_size is None:
+            chunk_size = auto_chunk
+        if overlap_size is None:
+            overlap_size = auto_overlap
+
+        logger.info(
+            f"🧩 分块回测: {len(df)} bars → {chunk_size} bar/chunk, "
+            f"overlap={overlap_size} bars, 预计 {(len(df) + chunk_size - 1) // chunk_size} 块"
+        )
+
+        # 内存优化：下转型
+        df = self._to_memory_efficient(df)
+
+        # 切分
+        chunks = self._split_chunks(df, chunk_size, overlap_size)
+
+        # 逐块计算
+        chunk_results = []
+        for i, (chunk_df, chunk_start, chunk_end) in enumerate(chunks):
+            logger.info(f"  分块 {i + 1}/{len(chunks)}: bars [{chunk_start}:{chunk_end}] ({len(chunk_df)} rows)")
+            try:
+                cr = self._run_single_chunk(
+                    df_chunk=chunk_df,
+                    factor_name=factor_name,
+                    percentile=percentile,
+                    direction=direction,
+                    n_quantiles=n_quantiles,
+                    shares_per_trade=shares_per_trade,
+                    use_tradable_mask=use_tradable_mask,
+                    fc=fc,
+                    chunk_start=chunk_start,
+                    chunk_end=chunk_end,
+                )
+                if cr is not None:
+                    chunk_results.append(cr)
+            except Exception as e:
+                logger.warning(f"  分块 {i + 1} 回测失败: {e}")
+            finally:
+                del chunk_df
+                gc.collect()
+
+        if not chunk_results:
+            raise ValueError("所有分块回测均失败，无有效结果")
+
+        # 拼接净值曲线
+        equity_curve = self._stitch_equity_curves(chunk_results, overlap_size)
+        if len(equity_curve) == 0:
+            raise ValueError("净值曲线拼接结果为空")
+
+        # 从拼接净值计算收益率
+        returns = equity_curve.pct_change().dropna()
+
+        # 拼接分层收益
+        quantile_returns = {}
+        for q in range(n_quantiles):
+            q_parts = []
+            for cr in chunk_results:
+                q_key = f"Q{q + 1}"
+                if q_key in cr["quantile_returns"]:
+                    q_series = cr["quantile_returns"][q_key]
+                    if len(q_series) > overlap_size:
+                        q_series = q_series.iloc[overlap_size:]
+                    q_parts.append(q_series)
+            if q_parts:
+                quantile_returns[q_key] = pd.concat(q_parts)
+
+        # 拼接交易记录
+        trades_dfs = []
+        for cr in chunk_results:
+            try:
+                pf = cr["pf"]
+                if hasattr(pf, "trades") and hasattr(pf.trades, "records_readable"):
+                    trades_readable = pf.trades.records_readable
+                    if trades_readable is not None and len(trades_readable) > 0:
+                        # 过滤掉 warmup 区的交易
+                        if "Entry Timestamp" in trades_readable.columns:
+                            warmup_cutoff = df.index[cr["chunk_start"] + overlap_size] if cr["chunk_start"] + overlap_size < len(df.index) else None
+                            if warmup_cutoff is not None:
+                                trades_readable = trades_readable[trades_readable["Entry Timestamp"] >= warmup_cutoff]
+                        trades_dfs.append(trades_readable)
+            except Exception:
+                pass
+
+        trades_df = None
+        if trades_dfs:
+            trades_df = pd.concat(trades_dfs, ignore_index=True)
+            # 去重
+            if "Entry Timestamp" in trades_df.columns and "Exit Timestamp" in trades_df.columns:
+                trades_df = trades_df.drop_duplicates(subset=["Entry Timestamp", "Exit Timestamp"])
+
+        # 指标计算
+        n_bars = len(returns)
+        total_return = float((1 + returns).prod() - 1) if n_bars > 0 else 0.0
+        annual_return = float((1 + total_return) ** (fc["annual_bars"] / n_bars) - 1) if n_bars > 0 else 0.0
+        volatility = float(returns.std() * np.sqrt(fc["annual_bars"])) if n_bars > 0 else 0.0
+        sharpe_ratio = float(annual_return / volatility) if volatility > 0 else 0.0
+
+        # 最大回撤
+        peak = equity_curve.cummax()
+        drawdown = (peak - equity_curve) / peak
+        max_drawdown = float(drawdown.max()) if len(drawdown) > 0 else 0.0
+        calmar_ratio = float(annual_return / max_drawdown) if max_drawdown > 0.0001 else 0.0
+
+        win_rate = float((returns > 0).mean()) if n_bars > 0 else 0.0
+
+        # Sortino
+        downside = returns[returns < 0]
+        if len(downside) > 0:
+            downside_std = float(downside.std() * np.sqrt(fc["annual_bars"]))
+            sortino_ratio = float(annual_return / downside_std) if downside_std > 0 else 0.0
+        else:
+            sortino_ratio = 0.0
+
+        var_95 = float(returns.quantile(0.05)) if n_bars > 0 else 0.0
+        cvar_95 = float(returns[returns <= var_95].mean()) if n_bars > 0 and var_95 is not None else 0.0
+
+        trades_count = int(len(trades_df)) if trades_df is not None else 0
+
+        logger.info(
+            f"✅ 分块回测完成: {len(chunk_results)} 块 → "
+            f"净值曲线 {len(equity_curve)} bars, 年化收益 {annual_return:.2%}"
+        )
+
+        return {
+            "quantile_returns": quantile_returns,
+            "portfolio_returns": returns,
+            "equity_curve": equity_curve,
+            "trades_count": trades_count,
+            "trades": trades_df,
+            "total_return": total_return,
+            "annual_return": annual_return,
+            "sharpe_ratio": sharpe_ratio,
+            "sortino_ratio": sortino_ratio,
+            "max_drawdown": max_drawdown,
+            "calmar_ratio": calmar_ratio,
+            "win_rate": win_rate,
+            "volatility": volatility,
+            "var_95": var_95,
+            "cvar_95": cvar_95,
+            "slippage_info": self.get_slippage_info(),
+            "mask_statistics": {
+                "total_days": len(df),
+                "tradable_days": len(df),
+                "tradable_ratio": 1.0,
+                "limit_up_days": 0,
+                "limit_down_days": 0,
+                "suspended_days": 0,
+                "mask_applied": False,
+            },
+            "chunking_info": {
+                "chunked": True,
+                "num_chunks": len(chunk_results),
+                "chunk_size": chunk_size,
+                "overlap_size": overlap_size,
+            },
+        }
+
     def single_factor_backtest(
         self,
         df: pd.DataFrame,
@@ -121,6 +608,8 @@ class VectorBTBacktestService:
         n_quantiles: int = 5,
         shares_per_trade: int = 100,
         use_tradable_mask: bool = True,
+        freq: str = "D",
+        use_chunking: str = "auto",
     ) -> Dict:
         """
         单因子分层回测（使用vectorbt，支持Mask-First设计）
@@ -133,10 +622,28 @@ class VectorBTBacktestService:
             n_quantiles: 分层数量，默认5层
             shares_per_trade: 每次交易手数（股），默认100
             use_tradable_mask: 是否使用Mask-First可交易性掩码（默认True）
+            freq: 数据频率，支持 "D"(日频)/"5min"/"15min"/"30min"/"60min"
+            use_chunking: 分块模式，"auto"(自动)/"force"(强制)/"off"(禁用)
 
         Returns:
             Dict: 包含各层收益、整体收益、净值曲线等数据的字典
         """
+        # 自动检测：大数据集自动启用分块
+        if use_chunking in ("auto", "force"):
+            chunk_size, _ = self._auto_chunk_config(freq, len(df))
+            if use_chunking == "force" or len(df) > chunk_size * 1.5:
+                logger.info(f"📊 数据量 {len(df)} bars > {int(chunk_size * 1.5)} 阈值，自动启用分块回测")
+                return self.chunked_single_factor_backtest(
+                    df=df, factor_name=factor_name,
+                    percentile=percentile, direction=direction,
+                    n_quantiles=n_quantiles, shares_per_trade=shares_per_trade,
+                    use_tradable_mask=use_tradable_mask, freq=freq,
+                )
+
+        # 获取频率配置
+        fc = _get_freq_config(freq)
+        logger.info(f"回测频率: {fc['description']} (vbt_freq={fc['vbt_freq']}, 年化bar数={fc['annual_bars']})")
+
         # 确保索引是 DatetimeIndex
         if not isinstance(df.index, pd.DatetimeIndex):
             df = df.copy()
@@ -154,58 +661,23 @@ class VectorBTBacktestService:
         elif use_tradable_mask and "tradable_mask" not in df.columns:
             logger.warning("⚠️ VectorBT Backtest: 未找到tradable_mask列！")
 
-        # 1. 计算收益率
-        df["returns"] = df["close"].pct_change()
-
-        # 2. 计算因子分位数（滚动窗口252天）— 应用mask
-        factor_raw = df[factor_name]
-        if tradable_mask is not None:
-            factor_clean = factor_raw.where(tradable_mask)
-            factor_rank = factor_clean.rolling(252, min_periods=150).rank(pct=True)
-        else:
-            factor_rank = factor_raw.rolling(252, min_periods=1).rank(pct=True)
-
-        # 3. 生成分层信号 — 应用mask到入场/出场
-        percentile_threshold = percentile / 100.0
-        if direction == "long":
-            entries = factor_rank >= percentile_threshold
-            exits = factor_rank < percentile_threshold
-        else:
-            entries = factor_rank <= percentile_threshold
-            exits = factor_rank > percentile_threshold
-
-        # 在不可交易日强制不持仓
-        if tradable_mask is not None:
-            entries = entries & tradable_mask.astype(bool)
-            exits = exits | (~tradable_mask.astype(bool))
-
-        # 4. 计算各层收益
-        quantile_returns = {}
-        for q in range(n_quantiles):
-            q_min = q / n_quantiles
-            q_max = (q + 1) / n_quantiles
-            layer_mask = (factor_rank >= q_min) & (factor_rank < q_max)
-            layer_returns = df.loc[layer_mask, "returns"]
-            quantile_returns[f"Q{q + 1}"] = layer_returns
-
-        # 5. 创建回测结果（使用vectorbt的信号回测）
-        # 创建Portfolio对象，设置手续费和滑点
-        # 使用固定手数交易（每次交易shares_per_trade股）
-        pf = vbt.Portfolio.from_signals(
-            close=df["close"],
-            entries=entries,
-            exits=exits,  # 添加退出信号
-            init_cash=self.initial_capital,
-            freq="D",  # 日频
-            cash_sharing=False,  # 不共享现金
-            fees=self.commission_rate,  # 手续费率
-            slippage=self.slippage,  # 滑点率
-            size=shares_per_trade,  # 每次交易的数量（股）
+        # 委托给共享核心逻辑（因子排名 → 信号 → VBT回测）
+        core = self._run_vbt_core(
+            df=df,
+            factor_name=factor_name,
+            percentile=percentile,
+            direction=direction,
+            n_quantiles=n_quantiles,
+            shares_per_trade=shares_per_trade,
+            use_tradable_mask=use_tradable_mask,
+            fc=fc,
         )
 
-        # 获取净值、收益和性能指标
-        equity = pf.value()
-        returns = pf.returns()
+        pf = core["pf"]
+        equity = core["equity"]
+        returns = core["returns"]
+        quantile_returns = core["quantile_returns"]
+        tradable_mask = core["tradable_mask"]
         returns_clean = returns.dropna()
 
         # 使用 VectorBT 的 stats() 方法获取所有指标
@@ -218,10 +690,10 @@ class VectorBTBacktestService:
         # 年化收益率：如果VectorBT返回0或NaN，则手动计算
         annual_return = stats.get('Annual Return [%]', 0) / 100.0
         if annual_return == 0 or np.isnan(annual_return):
-            # 手动计算年化收益率 = (1 + 总收益率)^(252/交易天数) - 1
+            # 手动计算年化收益率 = (1 + 总收益率)^(年化bar数/交易bar数) - 1
             n_days = len(returns_clean)
             if n_days > 0:
-                annual_return = (1 + total_return) ** (252 / n_days) - 1
+                annual_return = (1 + total_return) ** (fc["annual_bars"] / n_days) - 1
             else:
                 annual_return = 0.0
 
@@ -379,6 +851,8 @@ class VectorBTBacktestService:
         direction: str = "long",
         n_quantiles: int = 5,
         shares_per_trade: int = 100,
+        freq: str = "D",
+        use_chunking: str = "auto",
     ) -> Dict:
         """
         多因子组合回测（使用vectorbt）
@@ -391,6 +865,8 @@ class VectorBTBacktestService:
             percentile: 分位数阈值（0-100）
             direction: 交易方向，"long"做多或"short"做空
             n_quantiles: 分层数量
+            freq: 数据频率，支持 "D"/"5min"/"15min"/"30min"/"60min"
+            use_chunking: 分块模式，"auto"/"force"/"off"
 
         Returns:
             Dict: 回测结果
@@ -468,6 +944,8 @@ class VectorBTBacktestService:
             direction=direction,
             n_quantiles=n_quantiles,
             shares_per_trade=shares_per_trade,
+            freq=freq,
+            use_chunking=use_chunking,
         )
 
     def cross_sectional_backtest(
@@ -476,6 +954,7 @@ class VectorBTBacktestService:
         factor_name: str,
         top_percentile: float = 0.2,
         direction: str = "long",
+        freq: str = "D",
     ) -> Dict:
         """
         股票池横截面回测（使用vectorbt）
@@ -485,10 +964,14 @@ class VectorBTBacktestService:
             factor_name: 因子名称
             top_percentile: 选择股票的百分比（0.2表示前20%）
             direction: "long"做多或"short"做空
+            freq: 数据频率，支持 "D"/"5min"/"15min"/"30min"/"60min"
 
         Returns:
             Dict: 回测结果
         """
+        # 获取频率配置
+        fc = _get_freq_config(freq)
+        logger.info(f"横截面回测频率: {fc['description']} (vbt_freq={fc['vbt_freq']}, 年化bar数={fc['annual_bars']})")
         # 确保索引正确
         if "date" not in df.columns:
             df = df.reset_index()
@@ -520,26 +1003,55 @@ class VectorBTBacktestService:
 
             selected_stocks[date] = selected
 
-        # 3. 创建信号矩阵
-        # 只有被选中的股票在该日期持有
-        signals = pd.DataFrame(0, index=returns_df.index, columns=returns_df.columns)
+        # 3. 创建变化驱动信号矩阵（只在持仓实际变化时才生成交易信号）
+        dates_list = list(selected_stocks.keys())
+        n_dates = len(dates_list)
 
-        for date, selected in selected_stocks.items():
-            if selected:  # 确保有股票被选中
-                signals.loc[date, selected] = 1
+        entries = pd.DataFrame(False, index=price_df.index, columns=price_df.columns, dtype=bool)
+        exits = pd.DataFrame(False, index=price_df.index, columns=price_df.columns, dtype=bool)
+
+        for i, date in enumerate(dates_list):
+            current_set = set(selected_stocks[date])
+
+            if i == 0:
+                # 首个交易日：所有入选股票为入场信号（建仓）
+                if current_set:
+                    entries.loc[date, list(current_set)] = True
+            else:
+                prev_set = set(selected_stocks[dates_list[i - 1]])
+
+                # 新增入选 → 入场
+                new_stocks = current_set - prev_set
+                if new_stocks:
+                    entries.loc[date, list(new_stocks)] = True
+
+                # 被剔除 → 出场
+                removed_stocks = prev_set - current_set
+                if removed_stocks:
+                    exits.loc[date, list(removed_stocks)] = True
+
+        # 最后一个交易日：平掉所有剩余持仓（避免持仓未结算影响指标）
+        if n_dates > 0:
+            final_held = set(selected_stocks[dates_list[-1]])
+            if final_held:
+                exits.loc[dates_list[-1], list(final_held)] = True
+
+        logger.info(
+            f"横截面信号: {n_dates}个交易日, "
+            f"入场{entries.sum().sum()}次, 出场{exits.sum().sum()}次 "
+            f"(旧逻辑每日全换手={n_dates * len(price_df.columns)}次)"
+        )
 
         # 4. 使用vectorbt进行回测
-        # 注意：vectorbt的entries表示持仓开始，exits表示持仓结束
-        # 这里我们简化处理：每日调仓，所以entries=signals，exits=signals.shift(-1)
         pf = vbt.Portfolio.from_signals(
             close=price_df,
-            entries=signals,
-            exits=signals.shift(-1).fillna(0),
+            entries=entries,
+            exits=exits,
             init_cash=self.initial_capital,
-            freq="D",
+            freq=fc["vbt_freq"],
             cash_sharing=False,
-            fees=self.commission_rate,  # 手续费率
-            slippage=self.slippage,  # 滑点率
+            fees=self.commission_rate,
+            slippage=self.slippage,
         )
 
         # 5. 获取结果
@@ -557,10 +1069,10 @@ class VectorBTBacktestService:
         # 年化收益率：如果VectorBT返回0或NaN，则手动计算
         annual_return = stats.get('Annual Return [%]', 0) / 100.0
         if annual_return == 0 or np.isnan(annual_return):
-            # 手动计算年化收益率 = (1 + 总收益率)^(252/交易天数) - 1
+            # 手动计算年化收益率 = (1 + 总收益率)^(年化bar数/交易bar数) - 1
             n_days = len(returns_clean)
             if n_days > 0:
-                annual_return = (1 + total_return) ** (252 / n_days) - 1
+                annual_return = (1 + total_return) ** (fc["annual_bars"] / n_days) - 1
             else:
                 annual_return = 0.0
 

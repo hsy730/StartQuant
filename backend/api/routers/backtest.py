@@ -35,6 +35,9 @@ class SingleBacktestRequest(BaseModel):
     n_quantiles: int = 5
     weight_method: str = "equal_weight"  # 多因子时的权重方法
     shares_per_trade: int = 100  # 每次交易手数，默认1手（100股）
+    freq: str = "D"  # 数据频率：D(日频)/5min/15min/30min/60min
+    period: Optional[str] = None  # 分钟级周期：1/5/15/30/60（freq非D时生效）
+    use_chunking: str = "auto"  # 分块模式："auto"(自动)/"force"(强制)/"off"(禁用)
 
 
 class ComparisonRequest(BaseModel):
@@ -96,11 +99,21 @@ async def run_single_backtest(request: SingleBacktestRequest):
         # 获取数据并计算所有因子
         all_factor_data = {}
         for stock_code in request.stock_codes:
-            stock_data = data_service.get_stock_data(
-                stock_code,
-                request.start_date,
-                request.end_date
-            )
+            # 根据频率选择日线或分钟线数据源
+            if request.freq.upper() != "D":
+                minute_period = (request.period or request.freq).lower().replace("min", "").replace("t", "")
+                stock_data = data_service.get_stock_minute_data(
+                    stock_code,
+                    request.start_date,
+                    request.end_date,
+                    period=minute_period if minute_period.isdigit() else "5",
+                )
+            else:
+                stock_data = data_service.get_stock_data(
+                    stock_code,
+                    request.start_date,
+                    request.end_date
+                )
 
             if stock_data is not None and len(stock_data) > 0:
                 # 计算所有选中的因子
@@ -154,6 +167,8 @@ async def run_single_backtest(request: SingleBacktestRequest):
                     direction=request.direction,
                     n_quantiles=request.n_quantiles,
                     shares_per_trade=request.shares_per_trade,
+                    freq=request.freq,
+                    use_chunking=request.use_chunking,
                 )
             else:
                 # 横截面回测
@@ -172,6 +187,7 @@ async def run_single_backtest(request: SingleBacktestRequest):
                     factor_name=primary_factor_name,
                     top_percentile=top_percentile,
                     direction=request.direction,
+                    freq=request.freq,
                 )
         else:
             # 多因子回测
@@ -183,6 +199,8 @@ async def run_single_backtest(request: SingleBacktestRequest):
                 percentile=request.percentile,
                 direction=request.direction,
                 shares_per_trade=request.shares_per_trade,
+                freq=request.freq,
+                use_chunking=request.use_chunking,
             )
 
         # 提取指标

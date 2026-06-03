@@ -154,13 +154,35 @@ const FactorMining: React.FC = () => {
       use_extended_primitives: true,
       max_tree_depth: 17,
       use_nsga2: true,
-      algorithm: "dual",
+      algorithm: "genetic",
       pysr_niterations: 40,
       pysr_populations: 30,
       pysr_maxsize: 30,
       pysr_maxdepth: 5,
       pysr_parsimony: 0.0032,
       pysr_procs: 8,
+      // GFlowNet默认参数
+      gflownet_n_trajectories: 200,
+      gflownet_n_iterations: 50,
+      gflownet_hidden_dim: 128,
+      gflownet_learning_rate: 1e-3,
+      gflownet_max_expression_depth: 5,
+      gflownet_temperature: 1.0,
+      gflownet_reward_scale: 10.0,
+      gflownet_buffer_size: 1000,
+      // 深度隐式因子默认参数
+      deep_d_model: 64,
+      deep_n_heads: 4,
+      deep_n_layers: 3,
+      deep_d_ff: 256,
+      deep_n_latent_factors: 5,
+      deep_dropout: 0.1,
+      deep_seq_length: 20,
+      deep_learning_rate: 1e-4,
+      deep_n_epochs: 50,
+      deep_batch_size: 32,
+      deep_weight_decay: 1e-5,
+      deep_early_stopping_patience: 5,
     });
 
     return () => {
@@ -244,20 +266,42 @@ const FactorMining: React.FC = () => {
       elite_size: values.elite_size,
       fitness_objective: values.fitness_objective,
       ic_threshold: values.ic_threshold,
-      // Phase 2-7: quality-boosting parameters
       parsimony_coeff: values.parsimony_coeff ?? 0.001,
       diversity_penalty_coeff: values.diversity_penalty_coeff ?? 0.1,
       cv_folds: values.cv_folds ?? 0,
       use_extended_primitives: values.use_extended_primitives ?? true,
       max_tree_depth: values.max_tree_depth ?? 17,
       use_nsga2: values.use_nsga2 ?? true,
-      algorithm: values.algorithm ?? "dual",
+      algorithm: values.algorithm ?? "genetic",
+      // PySR参数
       pysr_niterations: values.pysr_niterations ?? 40,
       pysr_populations: values.pysr_populations ?? 30,
       pysr_maxsize: values.pysr_maxsize ?? 30,
       pysr_maxdepth: values.pysr_maxdepth ?? 5,
       pysr_parsimony: values.pysr_parsimony ?? 0.0032,
       pysr_procs: values.pysr_procs ?? 8,
+      // GFlowNet参数
+      gflownet_n_trajectories: values.gflownet_n_trajectories ?? 200,
+      gflownet_n_iterations: values.gflownet_n_iterations ?? 50,
+      gflownet_hidden_dim: values.gflownet_hidden_dim ?? 128,
+      gflownet_learning_rate: values.gflownet_learning_rate ?? 1e-3,
+      gflownet_max_expression_depth: values.gflownet_max_expression_depth ?? 5,
+      gflownet_temperature: values.gflownet_temperature ?? 1.0,
+      gflownet_reward_scale: values.gflownet_reward_scale ?? 10.0,
+      gflownet_buffer_size: values.gflownet_buffer_size ?? 1000,
+      // 深度隐式因子参数
+      deep_d_model: values.deep_d_model ?? 64,
+      deep_n_heads: values.deep_n_heads ?? 4,
+      deep_n_layers: values.deep_n_layers ?? 3,
+      deep_d_ff: values.deep_d_ff ?? 256,
+      deep_n_latent_factors: values.deep_n_latent_factors ?? 5,
+      deep_dropout: values.deep_dropout ?? 0.1,
+      deep_seq_length: values.deep_seq_length ?? 20,
+      deep_learning_rate: values.deep_learning_rate ?? 1e-4,
+      deep_n_epochs: values.deep_n_epochs ?? 50,
+      deep_batch_size: values.deep_batch_size ?? 32,
+      deep_weight_decay: values.deep_weight_decay ?? 1e-5,
+      deep_early_stopping_patience: values.deep_early_stopping_patience ?? 5,
     };
 
     try {
@@ -1181,26 +1225,31 @@ const FactorMining: React.FC = () => {
                 <Form.Item
                   label="挖掘算法"
                   name="algorithm"
-                  tooltip="选择因子挖掘算法：双算法并行同时运行遗传规划和PySR，取更优结果"
+                  tooltip="选择一种进化算法进行因子挖掘"
                 >
                   <Select>
-                    <Option value="dual">双算法并行（推荐）</Option>
-                    <Option value="genetic">仅遗传规划 (DEAP)</Option>
-                    <Option value="pysr">仅符号回归 (PySR)</Option>
+                    <Option value="genetic">遗传规划 (DEAP)</Option>
+                    <Option value="pysr">符号回归 (PySR)</Option>
+                    <Option value="tree_prescreen">树模型预筛选</Option>
+                    <Option value="gflownet">GFlowNet增强GP</Option>
+                    <Option value="deep_implicit">深度隐式因子(Transformer)</Option>
                   </Select>
                 </Form.Item>
 
                 <Form.Item noStyle shouldUpdate>
                   {() => {
-                    const algo = form.getFieldValue("algorithm") || "dual";
-                    const showGP = algo === "genetic" || algo === "dual";
-                    const showPySR = algo === "pysr" || algo === "dual";
+                    const algo = form.getFieldValue("algorithm") || "genetic";
+                    // 各算法对应的参数面板
+                    const showGP = algo === "genetic" || algo === "tree_prescreen" || algo === "gflownet";
+                    const showPySR = algo === "pysr" || algo === "tree_prescreen";
+                    const showGFlowNet = algo === "gflownet";
+                    const showDeepImplicit = algo === "deep_implicit";
                     return (
                       <>
                         {showGP && (
                           <div style={{ marginBottom: 16, padding: "12px 16px", background: "rgba(59,130,246,0.05)", borderRadius: 8, border: "1px solid rgba(59,130,246,0.15)" }}>
                             <div style={{ fontWeight: 600, marginBottom: 8, color: "#3b82f6", fontSize: 13 }}>
-                              🧬 遗传规划参数 (DEAP)
+                              遗传规划参数 (DEAP)
                             </div>
                             <Row gutter={16}>
                               <Col span={12}>
@@ -1267,7 +1316,7 @@ const FactorMining: React.FC = () => {
                         {showPySR && (
                           <div style={{ marginBottom: 16, padding: "12px 16px", background: "rgba(168,85,247,0.05)", borderRadius: 8, border: "1px solid rgba(168,85,247,0.15)" }}>
                             <div style={{ fontWeight: 600, marginBottom: 8, color: "#a855f7", fontSize: 13 }}>
-                              🔬 符号回归参数 (PySR)
+                              符号回归参数 (PySR)
                             </div>
                             <Row gutter={16}>
                               <Col span={12}>
@@ -1353,6 +1402,162 @@ const FactorMining: React.FC = () => {
                                     max={32}
                                     style={{ width: "100%" }}
                                   />
+                                </Form.Item>
+                              </Col>
+                            </Row>
+                          </div>
+                        )}
+
+                        {showGFlowNet && (
+                          <div style={{ marginBottom: 16, padding: "12px 16px", background: "rgba(245,158,11,0.05)", borderRadius: 8, border: "1px solid rgba(245,158,11,0.15)" }}>
+                            <div style={{ fontWeight: 600, marginBottom: 8, color: "#f59e0b", fontSize: 13 }}>
+                              GFlowNet参数
+                            </div>
+                            <Row gutter={16}>
+                              <Col span={12}>
+                                <Form.Item
+                                  label="轨迹数量"
+                                  name="gflownet_n_trajectories"
+                                  tooltip="每轮采样的轨迹数"
+                                >
+                                  <InputNumber min={50} max={500} style={{ width: "100%" }} />
+                                </Form.Item>
+                              </Col>
+                              <Col span={12}>
+                                <Form.Item
+                                  label="迭代次数"
+                                  name="gflownet_n_iterations"
+                                  tooltip="GFlowNet训练迭代轮数"
+                                >
+                                  <InputNumber min={10} max={200} style={{ width: "100%" }} />
+                                </Form.Item>
+                              </Col>
+                            </Row>
+                            <Row gutter={16}>
+                              <Col span={12}>
+                                <Form.Item
+                                  label="隐藏层维度"
+                                  name="gflownet_hidden_dim"
+                                  tooltip="神经网络隐藏层大小"
+                                >
+                                  <InputNumber min={32} max={512} step={32} style={{ width: "100%" }} />
+                                </Form.Item>
+                              </Col>
+                              <Col span={12}>
+                                <Form.Item
+                                  label="学习率"
+                                  name="gflownet_learning_rate"
+                                  tooltip="GFlowNet学习率"
+                                >
+                                  <InputNumber min={1e-5} max={1e-1} step={1e-4} style={{ width: "100%" }} />
+                                </Form.Item>
+                              </Col>
+                            </Row>
+                            <Row gutter={16}>
+                              <Col span={12}>
+                                <Form.Item
+                                  label="最大表达式深度"
+                                  name="gflownet_max_expression_depth"
+                                  tooltip="生成表达式的最大嵌套深度"
+                                >
+                                  <InputNumber min={3} max={10} style={{ width: "100%" }} />
+                                </Form.Item>
+                              </Col>
+                              <Col span={12}>
+                                <Form.Item
+                                  label="温度参数"
+                                  name="gflownet_temperature"
+                                  tooltip="采样温度，越高越随机"
+                                >
+                                  <InputNumber min={0.1} max={5.0} step={0.1} style={{ width: "100%" }} />
+                                </Form.Item>
+                              </Col>
+                            </Row>
+                          </div>
+                        )}
+
+                        {showDeepImplicit && (
+                          <div style={{ marginBottom: 16, padding: "12px 16px", background: "rgba(236,72,153,0.05)", borderRadius: 8, border: "1px solid rgba(236,72,153,0.15)" }}>
+                            <div style={{ fontWeight: 600, marginBottom: 8, color: "#ec4899", fontSize: 13 }}>
+                              深度隐式因子参数 (Transformer)
+                            </div>
+                            <Row gutter={16}>
+                              <Col span={12}>
+                                <Form.Item
+                                  label="模型维度"
+                                  name="deep_d_model"
+                                  tooltip="Transformer嵌入维度"
+                                >
+                                  <InputNumber min={32} max={256} step={32} style={{ width: "100%" }} />
+                                </Form.Item>
+                              </Col>
+                              <Col span={12}>
+                                <Form.Item
+                                  label="注意力头数"
+                                  name="deep_n_heads"
+                                  tooltip="多头注意力的头数"
+                                >
+                                  <InputNumber min={2} max={16} step={2} style={{ width: "100%" }} />
+                                </Form.Item>
+                              </Col>
+                            </Row>
+                            <Row gutter={16}>
+                              <Col span={12}>
+                                <Form.Item
+                                  label="层数"
+                                  name="deep_n_layers"
+                                  tooltip="Transformer编码器层数"
+                                >
+                                  <InputNumber min={1} max={8} style={{ width: "100%" }} />
+                                </Form.Item>
+                              </Col>
+                              <Col span={12}>
+                                <Form.Item
+                                  label="隐式因子数"
+                                  name="deep_n_latent_factors"
+                                  tooltip="学习的隐式因子数量"
+                                >
+                                  <InputNumber min={1} max={20} style={{ width: "100%" }} />
+                                </Form.Item>
+                              </Col>
+                            </Row>
+                            <Row gutter={16}>
+                              <Col span={12}>
+                                <Form.Item
+                                  label="训练轮次"
+                                  name="deep_n_epochs"
+                                  tooltip="模型训练轮数"
+                                >
+                                  <InputNumber min={10} max={200} style={{ width: "100%" }} />
+                                </Form.Item>
+                              </Col>
+                              <Col span={12}>
+                                <Form.Item
+                                  label="批大小"
+                                  name="deep_batch_size"
+                                  tooltip="训练批次大小"
+                                >
+                                  <InputNumber min={8} max={128} step={8} style={{ width: "100%" }} />
+                                </Form.Item>
+                              </Col>
+                            </Row>
+                            <Row gutter={16}>
+                              <Col span={12}>
+                                <Form.Item
+                                  label="Dropout"
+                                  name="deep_dropout"
+                                  tooltip="Dropout正则化比率"
+                                >
+                                  <InputNumber min={0} max={0.5} step={0.05} style={{ width: "100%" }} />
+                                </Form.Item>
+                              </Col>
+                              <Col span={12}>
+                                <Form.Item
+                                  label="学习率"
+                                  name="deep_learning_rate"
+                                  tooltip="优化器学习率"
+                                >
+                                  <InputNumber min={1e-6} max={1e-2} step={1e-5} style={{ width: "100%" }} />
                                 </Form.Item>
                               </Col>
                             </Row>

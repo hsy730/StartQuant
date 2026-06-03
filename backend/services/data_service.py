@@ -180,6 +180,57 @@ class DataService:
         except Exception as e:
             raise ValueError(f"获取股票 {stock_code} 数据失败: {e}")
 
+    def get_stock_minute_data(
+        self,
+        stock_code: str,
+        start_date: str,
+        end_date: str,
+        period: str = "5",
+        use_cache: bool = True,
+    ) -> pd.DataFrame:
+        """
+        股票分钟级历史数据（基于东方财富）
+
+        Args:
+            stock_code: 股票代码，如 "000001" 或 "000001.SZ"
+            start_date: 开始日期，格式 "YYYY-MM-DD"
+            end_date: 结束日期，格式 "YYYY-MM-DD"
+            period: 分钟周期，支持 "1"/"5"/"15"/"30"/"60"
+            use_cache: 是否使用缓存
+
+        Returns:
+            包含分钟级OHLCV数据的DataFrame
+        """
+        stock_code = self._normalize_stock_code(stock_code)
+
+        if use_cache and settings.AKSHARE_CACHE_ENABLED:
+            cache_key = f"{self._get_cache_key(stock_code, start_date, end_date)}_min_{period}"
+            cached_data = self._load_from_cache(cache_key)
+            if cached_data is not None:
+                return cached_data
+
+        try:
+            pure_code = stock_code.replace(".SH", "").replace(".SZ", "")
+            df = ak.stock_zh_a_hist_min_em(
+                symbol=pure_code,
+                period=period,
+                start_date=start_date,
+                end_date=end_date,
+                adjust="qfq",
+            )
+
+            # 标准化列名
+            df = self._standardize_columns(df)
+
+            # 保存缓存（分钟级数据较短TTL）
+            if use_cache and settings.AKSHARE_CACHE_ENABLED:
+                cache_key = f"{self._get_cache_key(stock_code, start_date, end_date)}_min_{period}"
+                self._save_to_cache(df, cache_key, ttl=2 * 60 * 60)  # 2小时TTL
+
+            return df
+        except Exception as e:
+            raise ValueError(f"获取股票 {stock_code} 分钟级数据失败: {e}")
+
     def _normalize_stock_code(self, code: str) -> str:
         """标准化股票代码格式"""
         code = code.strip().upper()
