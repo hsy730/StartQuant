@@ -367,9 +367,14 @@ class FactorPreprocessingPipeline:
         if method == WinsorizeMethod.MAD:
             median = series.median()
             mad = 1.4826 * np.median(np.abs(series - median))
-            
+
             if mad == 0:
-                mad = series.std() * 0.6745
+                # MAD=0时（如数据过于集中），用标准差作为σ_hat的估计
+                # 注意：mad变量在此处代表σ_hat（1.4826*MAD ≈ σ），
+                # 因此fallback应直接使用std()而非std()*0.6745
+                mad = series.std()
+                if mad == 0 or np.isnan(mad):
+                    return series, {"clipped_count": 0}
             
             lower_bound = median - self.config.winsorize_n_sigma * mad
             upper_bound = median + self.config.winsorize_n_sigma * mad
@@ -449,11 +454,21 @@ class FactorPreprocessingPipeline:
                 median = factor_vals.median()
                 mad = 1.4826 * np.median(np.abs(factor_vals - median))
                 if mad == 0:
-                    mad = factor_vals.std() * 0.6745
-                factor_vals = factor_vals.clip(
-                    lower=median - self.config.winsorize_n_sigma * mad,
-                    upper=median + self.config.winsorize_n_sigma * mad,
-                )
+                    # 同_winsorize方法：MAD=0时用std作为σ_hat估计
+                    mad = factor_vals.std()
+                    if mad == 0 or np.isnan(mad):
+                        # 数据完全一致，无需去极值
+                        pass
+                    else:
+                        factor_vals = factor_vals.clip(
+                            lower=median - self.config.winsorize_n_sigma * mad,
+                            upper=median + self.config.winsorize_n_sigma * mad,
+                        )
+                else:
+                    factor_vals = factor_vals.clip(
+                        lower=median - self.config.winsorize_n_sigma * mad,
+                        upper=median + self.config.winsorize_n_sigma * mad,
+                    )
             elif self.config.winsorize_method == WinsorizeMethod.PERCENTILE:
                 lower = factor_vals.quantile(self.config.winsorize_limits[0])
                 upper = factor_vals.quantile(self.config.winsorize_limits[1])

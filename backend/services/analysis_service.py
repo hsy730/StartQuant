@@ -370,22 +370,25 @@ class AnalysisService:
         Returns:
             IC/IR统计结果
         """
-        for stock_code in factor_data.keys():
-            df = factor_data[stock_code]
-            df["future_return_1"] = df["close"].pct_change(1).shift(-1)
-            df["future_return_5"] = df["close"].pct_change(5).shift(-5)
-            for col in df.columns:
-                df[col] = df[col].replace([np.inf, -np.inf], np.nan)
+        # 注意：不直接修改输入factor_data，避免副作用
+        factor_data_copy = {}
+        for stock_code, df in factor_data.items():
+            df_copy = df.copy()
+            df_copy["future_return_1"] = df_copy["close"].pct_change(1).shift(-1)
+            df_copy["future_return_5"] = df_copy["close"].pct_change(5).shift(-5)
+            for col in df_copy.columns:
+                df_copy[col] = df_copy[col].replace([np.inf, -np.inf], np.nan)
+            factor_data_copy[stock_code] = df_copy
 
-        if len(factor_data) == 1:
-            result = self._calculate_single_stock_ic(factor_data, factor_names)
+        if len(factor_data_copy) == 1:
+            result = self._calculate_single_stock_ic(factor_data_copy, factor_names)
             result["warning"] = "时序IC仅评估择时能力，不能回答选股问题。建议使用多只股票进行横截面IC分析。"
             return result
 
         if ALPHALENS_AVAILABLE:
-            return self._calculate_multi_stock_ic_alphalens(factor_data, factor_names, stock_codes)
+            return self._calculate_multi_stock_ic_alphalens(factor_data_copy, factor_names, stock_codes)
         else:
-            return self._calculate_multi_stock_ic_fallback(factor_data, factor_names)
+            return self._calculate_multi_stock_ic_fallback(factor_data_copy, factor_names)
 
     def _calculate_single_stock_ic(
         self, factor_data: Dict[str, pd.DataFrame], factor_names: List[str],
@@ -669,7 +672,10 @@ class AnalysisService:
             min_periods = max(1, window // 4)
             rolling_mean = ic_s.rolling(window=window, min_periods=min_periods).mean()
             rolling_std = ic_s.rolling(window=window, min_periods=min_periods).std()
-            rolling_ir[factor_name] = rolling_mean / rolling_std
+            # 避免除零：std为0时IR设为0
+            safe_std = rolling_std.replace(0, np.nan)
+            ir = rolling_mean / safe_std
+            rolling_ir[factor_name] = ir.fillna(0)
         return rolling_ir
 
     def _detect_lookahead_bias_for_all_factors(

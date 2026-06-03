@@ -121,7 +121,9 @@ class FactorCalculator:
             """金叉：x上穿y"""
             if isinstance(x, pd.Series) and isinstance(y, pd.Series):
                 return (x > y) & (x.shift(1) <= y.shift(1))
-            return pd.Series(x > y) & pd.Series(x).shift(1) <= pd.Series(y).shift(1)
+            x_s = pd.Series(x) if not isinstance(x, pd.Series) else x
+            y_s = pd.Series(y) if not isinstance(y, pd.Series) else y
+            return (x_s > y_s) & (x_s.shift(1) <= y_s.shift(1))
 
         def LONGCROSS(x, y, n=5):
             """n日内金叉"""
@@ -194,8 +196,10 @@ class FactorCalculator:
 
             return pd.Series(result, index=condition.index, dtype=float)
 
-        def CONST(value, length=100):
-            """常量序列"""
+        def CONST(value, length=None):
+            """常量序列 - 若未指定length，返回标量值（由调用方决定长度）"""
+            if length is None:
+                return value
             return pd.Series([value] * length)
 
         def TSRANK(series, n=10):
