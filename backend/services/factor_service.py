@@ -1043,11 +1043,42 @@ class FactorService:
 
     def create_factor(
         self, name: str, code: str, description: str = "",
-        category: str = "自定义", formula_type: str = "expression"
+        category: str = "自定义", formula_type: str = "expression",
+        generated_factor_id: int = None, skip_validation: bool = False
     ) -> Dict:
-        """创建用户自定义因子"""
+        """创建用户自定义因子
+
+        Args:
+            name: 因子名称
+            code: 因子代码
+            description: 描述
+            category: 分类
+            formula_type: 公式类型
+            generated_factor_id: 关联的 generated_factors 表记录ID（挖掘因子必传）
+            skip_validation: 是否跳过验证门控（仅预置因子/手动创建时使用）
+        """
         db = get_db_session()
         repo = FactorRepository(db)
+
+        # 验证门控：挖掘因子必须通过验证才能入库
+        if not skip_validation and generated_factor_id is not None:
+            from backend.repositories.generated_factor_repository import GeneratedFactorRepository
+            gen_repo = GeneratedFactorRepository(db)
+            gen_factor = gen_repo.get_by_id(generated_factor_id)
+            if gen_factor is None:
+                db.close()
+                raise ValueError(f"生成的因子记录 ID={generated_factor_id} 不存在，无法保存")
+            if not gen_factor.is_valid:
+                db.close()
+                raise ValueError(
+                    f"因子未通过验证（验证得分: {gen_factor.validation_score:.1f}），"
+                    f"不能保存到因子库。请先通过因子验证。"
+                )
+            # 标记为已保存
+            gen_repo.mark_saved(generated_factor_id, name)
+        elif not skip_validation and generated_factor_id is None and category in ("遗传挖掘", "因子挖掘"):
+            # 挖掘类因子但没有关联 generated_factor_id，给出警告但不阻止（兼容旧流程）
+            logger.warning(f"挖掘因子 '{name}' 未关联 generated_factor_id，跳过验证门控")
 
         # 检查名称是否已存在
         existing_factor = repo.get_by_name(name, include_inactive=True)

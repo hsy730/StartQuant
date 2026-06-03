@@ -101,6 +101,8 @@ export const api = {
     stock_codes: string[]
     start_date: string
     end_date: string
+    freq?: string
+    period?: string
   }) {
     return request.post('/analysis/ic', data)
   },
@@ -168,6 +170,8 @@ export const api = {
     stock_codes: string[]
     start_date: string
     end_date: string
+    freq?: string
+    period?: string
   }) {
     return request.post('/analysis/exposure', data)
   },
@@ -178,6 +182,8 @@ export const api = {
     stock_codes: string[]
     start_date: string
     end_date: string
+    freq?: string
+    period?: string
   }) {
     return request.post('/analysis/effectiveness', data)
   },
@@ -188,6 +194,8 @@ export const api = {
     stock_codes: string[]
     start_date: string
     end_date: string
+    freq?: string
+    period?: string
   }) {
     return request.post('/analysis/attribution', data)
   },
@@ -198,6 +206,8 @@ export const api = {
     stock_codes: string[]
     start_date: string
     end_date: string
+    freq?: string
+    period?: string
   }) {
     return request.post('/analysis/monitoring', data)
   },
@@ -227,6 +237,8 @@ export const api = {
     max_tree_depth?: number
     // NSGA-II
     use_nsga2?: boolean
+    freq?: string
+    period?: string
   }) {
     return request.post('/mining/genetic', data, { timeout: 300000 }) // 5分钟超时
   },

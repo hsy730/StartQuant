@@ -61,6 +61,8 @@ interface BacktestConfig {
   n_quantiles: number
   weight_method?: string
   shares_per_trade: number
+  freq?: string
+  period?: string
 }
 
 interface StrategyTemplate {
@@ -205,7 +207,9 @@ const Backtesting: React.FC = () => {
       direction: values.direction,
       n_quantiles: 5,
       weight_method: values.weight_method || 'equal_weight',
-      shares_per_trade: (values.shares_per_trade || 1) * 100  // 手数转股数（1手=100股）
+      shares_per_trade: (values.shares_per_trade || 1) * 100,  // 手数转股数（1手=100股）
+      freq: values.freq || 'D',
+      period: values.freq && values.freq !== 'D' ? values.freq.replace('min', '') : undefined,
     }
 
     try {
@@ -532,7 +536,8 @@ const Backtesting: React.FC = () => {
                             slippage: 0,
                             percentile: 50,
                             direction: 'long',
-                            shares_per_trade: 1
+                            shares_per_trade: 1,
+                            freq: 'D'
                           }}
                         >
                           {/* 数据配置 */}
@@ -573,6 +578,16 @@ const Backtesting: React.FC = () => {
 
                           <Form.Item label="日期范围" name="dateRange" rules={[{ required: true }]}>
                             <RangePicker style={{ width: '100%' }} />
+                          </Form.Item>
+
+                          <Form.Item label="数据频率" name="freq" tooltip="数据采样频率。日线(D)适合中长周期策略；5/15/30/60分钟适合日内高频策略。分钟级回测数据量大，耗时显著增加">
+                            <Select>
+                              <Option value="D">日线</Option>
+                              <Option value="5min">5分钟</Option>
+                              <Option value="15min">15分钟</Option>
+                              <Option value="30min">30分钟</Option>
+                              <Option value="60min">60分钟</Option>
+                            </Select>
                           </Form.Item>
 
                           <Divider style={{ fontSize: '13px', fontWeight: 600, color: '#0f172a' }}>
@@ -697,7 +712,7 @@ const Backtesting: React.FC = () => {
                             回测参数
                           </Divider>
 
-                          <Form.Item label="初始资金" name="initial_capital">
+                          <Form.Item label="初始资金" name="initial_capital" tooltip="回测的初始资金量。影响绝对收益金额，但不影响收益率和夏普比率等相对指标。默认100万">
                             <InputNumber
                               style={{ width: '100%' }}
                               formatter={(value) => `${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
@@ -709,17 +724,17 @@ const Backtesting: React.FC = () => {
 
                           <Row gutter={16}>
                             <Col span={8}>
-                              <Form.Item label="费率(%)" name="commission_rate">
+                              <Form.Item label="费率(%)" name="commission_rate" tooltip="交易佣金费率(占成交金额的比例)。A股常见万三(0.03%)，含印花税约千一。过高费率会显著侵蚀高频策略收益">
                                 <InputNumber min={0} max={1} step={0.01} style={{ width: '100%' }} />
                               </Form.Item>
                             </Col>
                             <Col span={8}>
-                              <Form.Item label="滑点(%)" name="slippage">
+                              <Form.Item label="滑点(%)" name="slippage" tooltip="模拟实际成交价与理论价的偏差(占价格的比例)。0=无滑点，0.01-0.05%=轻度(推荐)，0.1%+=重度(流动性差的股票)。也可使用智能滑点自动适配">
                                 <InputNumber min={0} max={1} step={0.01} style={{ width: '100%' }} />
                               </Form.Item>
                             </Col>
                             <Col span={8}>
-                              <Form.Item label="每次手数" name="shares_per_trade">
+                              <Form.Item label="每次手数" name="shares_per_trade" tooltip="每次交易的股数(1手=100股)。影响资金利用率和冲击成本，小资金建议1-5手">
                                 <InputNumber
                                   min={1}
                                   max={100}
@@ -731,11 +746,11 @@ const Backtesting: React.FC = () => {
                             </Col>
                           </Row>
 
-                          <Form.Item label="分位数" name="percentile">
+                          <Form.Item label="分位数" name="percentile" tooltip="因子分位数阈值。用于划分多空组：50=中位数分两组，20/80=取极端组。分位数越极端信号越纯但样本越少">
                             <Slider marks={{ 10: '10%', 50: '50%', 90: '90%' }} />
                           </Form.Item>
 
-                          <Form.Item label="交易方向" name="direction">
+                          <Form.Item label="交易方向" name="direction" tooltip="策略交易方向。做多=买入因子值高的股票，做空=卖出因子值低的股票(需融券支持)">
                             <Radio.Group>
                               <Radio value="long">做多</Radio>
                               <Radio value="short">做空</Radio>

@@ -37,6 +37,8 @@ class CalculateRequest(BaseModel):
     stock_codes: List[str]
     start_date: str
     end_date: str
+    freq: str = "D"
+    period: Optional[str] = None
 
 
 class ICAnalysisRequest(BaseModel):
@@ -45,6 +47,8 @@ class ICAnalysisRequest(BaseModel):
     stock_codes: List[str]
     start_date: str
     end_date: str
+    freq: str = "D"
+    period: Optional[str] = None
 
 
 class StabilityRequest(BaseModel):
@@ -53,6 +57,8 @@ class StabilityRequest(BaseModel):
     stock_codes: List[str]
     start_date: str
     end_date: str
+    freq: str = "D"
+    period: Optional[str] = None
 
 
 class MultiPeriodRequest(BaseModel):
@@ -61,6 +67,8 @@ class MultiPeriodRequest(BaseModel):
     stock_codes: List[str]
     start_date: str
     end_date: str
+    freq: str = "D"
+    period: Optional[str] = None
 
 
 # ========== API端点 ==========
@@ -93,11 +101,20 @@ async def calculate_factor(request: CalculateRequest):
         for stock_code in request.stock_codes:
             try:
                 logger.info(f"获取股票数据: {stock_code}, 时间范围: {request.start_date} - {request.end_date}")
-                data = data_service.get_stock_data(
-                    stock_code,
-                    request.start_date,
-                    request.end_date
-                )
+                if request.freq.upper() != "D":
+                    minute_period = (request.period or request.freq).lower().replace("min", "").replace("t", "")
+                    data = data_service.get_stock_minute_data(
+                        stock_code,
+                        request.start_date,
+                        request.end_date,
+                        period=minute_period if minute_period.isdigit() else "5",
+                    )
+                else:
+                    data = data_service.get_stock_data(
+                        stock_code,
+                        request.start_date,
+                        request.end_date
+                    )
 
                 if data is None or len(data) == 0:
                     logger.warning(f"股票 {stock_code} 未获取到数据")
@@ -318,11 +335,20 @@ async def decay_analysis(request: ICAnalysisRequest):
         for period in decay_periods:
             all_ics = []
             for stock_code in request.stock_codes:
-                data = data_service.get_stock_data(
-                    stock_code,
-                    request.start_date,
-                    request.end_date
-                )
+                if request.freq.upper() != "D":
+                    minute_period = (request.period or request.freq).lower().replace("min", "").replace("t", "")
+                    data = data_service.get_stock_minute_data(
+                        stock_code,
+                        request.start_date,
+                        request.end_date,
+                        period=minute_period if minute_period.isdigit() else "5",
+                    )
+                else:
+                    data = data_service.get_stock_data(
+                        stock_code,
+                        request.start_date,
+                        request.end_date
+                    )
                 if data is not None and len(data) > 0:
                     # 计算因子
                     factor_series = factor_service.calculator.calculate(data, factor.code)

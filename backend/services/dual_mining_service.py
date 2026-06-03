@@ -1,17 +1,15 @@
 """
-统一因子挖掘服务（原双算法并行服务扩展）
+统一因子挖掘服务
 
-支持六种算法模式:
-  - "genetic": 仅DEAP遗传规划（向后兼容）
-  - "pysr": 仅PySR符号回归
-  - "dual": 两者并行执行，合并最优结果
+支持五种算法模式:
+  - "genetic": DEAP遗传规划
+  - "pysr": PySR符号回归
   - "tree_prescreen": 树模型预筛选 → 符号回归管道
   - "gflownet": GFlowNet增强遗传规划（实验性）
   - "deep_implicit": 深度隐式因子模型（Transformer，前沿赛道）
 """
 import logging
 from typing import List, Dict, Optional
-from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
 import pandas as pd
 import numpy as np
@@ -62,8 +60,9 @@ except ImportError:
 class DualMiningService:
     """统一因子挖掘服务
 
-    支持六种算法模式，统一接口调度：
-    - genetic / pysr / dual: 原有三种模式
+    支持五种算法模式，统一接口调度：
+    - genetic: DEAP遗传规划
+    - pysr: PySR符号回归
     - tree_prescreen: 树模型预筛选 → 符号回归管道
     - gflownet: GFlowNet增强遗传规划
     - deep_implicit: 深度隐式因子模型
@@ -71,7 +70,7 @@ class DualMiningService:
 
     # 支持的算法模式
     SUPPORTED_ALGORITHMS = {
-        "genetic", "pysr", "dual",
+        "genetic", "pysr",
         "tree_prescreen", "gflownet", "deep_implicit",
     }
 
@@ -82,7 +81,7 @@ class DualMiningService:
         return_column: str = "return",
         factor_calculator=None,
         max_eval_stocks: int = 50,
-        algorithm: str = "dual",
+        algorithm: str = "genetic",
         # ---- DEAP GP parameters ----
         population_size: int = 50,
         n_generations: int = 20,
@@ -115,7 +114,7 @@ class DualMiningService:
         importance_threshold: float = 0.01,
         tree_n_estimators: int = 100,
         tree_max_depth: int = 5,
-        downstream_algorithm: str = "dual",
+        downstream_algorithm: str = "genetic",
         # ---- GFlowNet parameters ----
         gflownet_n_trajectories: int = 200,
         gflownet_n_iterations: int = 50,
@@ -297,151 +296,12 @@ class DualMiningService:
         result["source"] = "pysr"
         return result
 
-    def _merge_results(self, gp_result: Dict, pysr_result: Dict) -> Dict:
-        """Merge and rank results from both algorithms.
-
-        Deduplication is based on expression string similarity (Jaccard
-        > 0.8).  Factors are sorted by validation score (or fitness as
-        fallback), and the top factors from both algorithms are kept.
-        """
-        all_factors = []
-
-        if gp_result.get("success"):
-            for f in gp_result.get("best_factors", []):
-                f_copy = dict(f)
-                f_copy["source"] = "genetic"
-                all_factors.append(f_copy)
-
-        if pysr_result.get("success"):
-            for f in pysr_result.get("best_factors", []):
-                f_copy = dict(f)
-                f_copy["source"] = "pysr"
-                all_factors.append(f_copy)
-
-        if not all_factors:
-            return {
-                "success": True,
-                "best_factors": [],
-                "gp_result": gp_result,
-                "pysr_result": pysr_result,
-                "source": "dual",
-            }
-
-        all_factors = self._deduplicate_factors(all_factors)
-
-        def _sort_key(f):
-            v = f.get("validation", {})
-            if v and isinstance(v, dict):
-                return v.get("score", f.get("fitness", 0))
-            return f.get("fitness", 0)
-
-        all_factors.sort(key=_sort_key, reverse=True)
-        for i, fi in enumerate(all_factors):
-            fi["rank"] = i + 1
-
-        gp_count = sum(1 for f in all_factors if f.get("source") == "genetic")
-        pysr_count = sum(1 for f in all_factors if f.get("source") == "pysr")
-
-        logger.info(
-            f"Dual mining merged {len(all_factors)} factors: "
-            f"{gp_count} from GP, {pysr_count} from PySR"
-        )
-
-        fitness_history = self._merge_fitness_history(gp_result, pysr_result)
-
-        return {
-            "success": True,
-            "best_factors": all_factors,
-            "gp_result": gp_result,
-            "pysr_result": pysr_result,
-            "fitness_history": fitness_history,
-            "source": "dual",
-        }
-
-    def _deduplicate_factors(self, factors: List[Dict]) -> List[Dict]:
-        """Remove near-duplicate factors based on expression similarity."""
-        if len(factors) <= 1:
-            return factors
-
-        def _token_set(expr: str) -> set:
-            return set(expr.replace("(", " ( ").replace(")", " ) ").replace(",", " , ").split())
-
-        def _jaccard(a: str, b: str) -> float:
-            sa = _token_set(a)
-            sb = _token_set(b)
-            if not sa or not sb:
-                return 0.0
-            return len(sa & sb) / len(sa | sb)
-
-        kept = []
-        for f in factors:
-            expr = f.get("expression", "")
-            is_dup = False
-            for k in kept:
-                k_expr = k.get("expression", "")
-                if _jaccard(expr, k_expr) > 0.8:
-                    is_dup = True
-                    break
-            if not is_dup:
-                kept.append(f)
-
-        removed = len(factors) - len(kept)
-        if removed > 0:
-            logger.info(f"Deduplicated: removed {removed} near-duplicate factors")
-
-        return kept
-
-    def _merge_fitness_history(self, gp_result: Dict, pysr_result: Dict) -> Dict:
-        """Merge fitness histories from both algorithms for frontend charting."""
-        gp_history = gp_result.get("fitness_history", {"best": [], "average": []})
-        pysr_history = pysr_result.get("fitness_history", {"best": [], "average": []})
-
-        if isinstance(gp_history, dict) and "best" in gp_history:
-            gp_best = gp_history.get("best", [])
-            gp_avg = gp_history.get("average", [])
-        else:
-            gp_best = []
-            gp_avg = []
-
-        if isinstance(pysr_history, dict) and "best" in pysr_history:
-            pysr_best = pysr_history.get("best", [])
-            pysr_avg = pysr_history.get("average", [])
-        else:
-            pysr_best = []
-            pysr_avg = []
-
-        max_len = max(len(gp_best), len(pysr_best))
-
-        merged_best = []
-        merged_avg = []
-        for i in range(max_len):
-            vals = []
-            avg_vals = []
-            if i < len(gp_best):
-                vals.append(gp_best[i])
-                avg_vals.append(gp_avg[i] if i < len(gp_avg) else 0)
-            if i < len(pysr_best):
-                vals.append(pysr_best[i])
-                avg_vals.append(pysr_avg[i] if i < len(pysr_avg) else 0)
-            merged_best.append(max(vals) if vals else 0)
-            merged_avg.append(sum(avg_vals) / len(avg_vals) if avg_vals else 0)
-
-        return {
-            "best": merged_best,
-            "average": merged_avg,
-            "gp_best": gp_best,
-            "gp_average": gp_avg,
-            "pysr_best": pysr_best,
-            "pysr_average": pysr_avg,
-        }
-
     def mine_factors(self) -> Dict:
         """Execute factor mining using the configured algorithm mode.
 
         Modes:
         - ``"genetic"``: DEAP GP only
         - ``"pysr"``: PySR only
-        - ``"dual"``: both in parallel, merge best results
         - ``"tree_prescreen"``: tree model pre-screening → symbolic regression
         - ``"gflownet"``: GFlowNet-enhanced genetic programming
         - ``"deep_implicit"``: Transformer-based deep implicit factors
@@ -450,8 +310,6 @@ class DualMiningService:
             return self._run_genetic()
         elif self.algorithm == "pysr":
             return self._run_pysr()
-        elif self.algorithm == "dual":
-            return self._run_dual()
         elif self.algorithm == "tree_prescreen":
             return self._run_tree_prescreen()
         elif self.algorithm == "gflownet":
@@ -473,9 +331,38 @@ class DualMiningService:
 
         logger.info("启动树模型预筛选符号回归管道...")
 
-        # 传递GP/PySR参数给下游
-        downstream_gp_params = self._gp_params.copy()
-        downstream_pysr_params = self._pysr_params.copy()
+        # 构造TreePrescreenMiningService所需的参数（使用公开API参数名）
+        merged_kwargs = dict(self._gp_params)
+        # PySR参数需要pysr_前缀（_pysr_params存的是内部名，需映射回公开名）
+        _pysr_name_map = {
+            "niterations": "pysr_niterations",
+            "populations": "pysr_populations",
+            "binary_operators": "pysr_binary_operators",
+            "unary_operators": "pysr_unary_operators",
+            "maxsize": "pysr_maxsize",
+            "maxdepth": "pysr_maxdepth",
+            "constraints": "pysr_constraints",
+            "nested_constraints": "pysr_nested_constraints",
+            "parsimony": "pysr_parsimony",
+            "procs": "pysr_procs",
+            "population_size": "pysr_population_size",
+        }
+        for internal_name, public_name in _pysr_name_map.items():
+            if internal_name in self._pysr_params:
+                merged_kwargs[public_name] = self._pysr_params[internal_name]
+        # 树模型参数名映射（DualMiningService内部名 -> TreePrescreenMiningService公开名）
+        _tree_name_map = {
+            "tree_model_type": "tree_model",
+            "tree_n_estimators": "n_estimators",
+            "tree_max_depth": "max_depth",
+        }
+        for internal_name, public_name in _tree_name_map.items():
+            if internal_name in self._tree_prescreen_params:
+                merged_kwargs[public_name] = self._tree_prescreen_params[internal_name]
+        # 直接透传的树参数
+        for key in ("top_k", "importance_threshold", "downstream_algorithm"):
+            if key in self._tree_prescreen_params:
+                merged_kwargs[key] = self._tree_prescreen_params[key]
 
         self._tree_prescreen_service = create_tree_prescreen_mining_service(
             base_factors=self.base_factor_codes,
@@ -483,17 +370,18 @@ class DualMiningService:
             return_column=self.return_column,
             factor_calculator=self.factor_calculator,
             max_eval_stocks=self.max_eval_stocks,
-            gp_params=downstream_gp_params,
-            pysr_params=downstream_pysr_params,
-            **self._tree_prescreen_params,
+            **merged_kwargs,
         )
 
         if self.progress_callback:
             def tp_progress(iteration, total_iter, best_fitness, avg_fitness, **kwargs):
-                self.progress_callback(
-                    iteration, total_iter, best_fitness, avg_fitness,
-                    algorithm="tree_prescreen"
-                )
+                # tree_prescreen 的 _report_progress 可能传字符串 phase 名（如 "feature_importance"），
+                # 而 mining.py 的 _update_progress 期望数字，此处过滤非数值调用
+                if isinstance(iteration, (int, float)):
+                    self.progress_callback(
+                        iteration, total_iter, best_fitness, avg_fitness,
+                        algorithm="tree_prescreen"
+                    )
             self._tree_prescreen_service.set_progress_callback(tp_progress)
 
         result = self._tree_prescreen_service.mine_factors()
@@ -543,13 +431,21 @@ class DualMiningService:
 
         logger.info("启动深度隐式因子模型 (Transformer)...")
 
+        # 只传递 DeepFactorMiningService 接受的参数
+        _deep_allowed = {
+            "d_model", "n_heads", "n_layers", "d_ff", "n_latent_factors",
+            "dropout", "seq_length", "learning_rate", "n_epochs",
+            "batch_size", "weight_decay", "early_stopping_patience", "sparsity_coeff",
+        }
+        filtered_deep = {k: v for k, v in self._deep_factor_params.items() if k in _deep_allowed}
+
         self._deep_factor_service = create_deep_factor_mining_service(
             base_factors=self.base_factor_codes,
             data=self.data,
             return_column=self.return_column,
             factor_calculator=self.factor_calculator,
             max_eval_stocks=self.max_eval_stocks,
-            **self._deep_factor_params,
+            **filtered_deep,
         )
 
         if self.progress_callback:
@@ -564,49 +460,6 @@ class DualMiningService:
         result["source"] = "deep_implicit"
         return result
 
-    def _run_dual(self) -> Dict:
-        """Run both algorithms in parallel and merge results."""
-        logger.info("启动双算法并行挖掘 (DEAP GP + PySR)...")
-
-        gp_result = {"success": False, "best_factors": []}
-        pysr_result = {"success": False, "best_factors": []}
-
-        gp_available = DEAP_AVAILABLE
-        pysr_available = PYSR_AVAILABLE
-
-        if not gp_available and not pysr_available:
-            return {
-                "success": False,
-                "message": "DEAP和PySR均不可用，请至少安装一个",
-                "best_factors": [],
-            }
-
-        with ThreadPoolExecutor(max_workers=2) as executor:
-            futures = {}
-
-            if gp_available:
-                futures[executor.submit(self._run_genetic)] = "genetic"
-            if pysr_available:
-                futures[executor.submit(self._run_pysr)] = "pysr"
-
-            for future in as_completed(futures):
-                algo = futures[future]
-                try:
-                    result = future.result()
-                    if algo == "genetic":
-                        gp_result = result
-                        logger.info(f"GP mining completed: {len(gp_result.get('best_factors', []))} factors")
-                    else:
-                        pysr_result = result
-                        logger.info(f"PySR mining completed: {len(pysr_result.get('best_factors', []))} factors")
-                except Exception as e:
-                    logger.error(f"{algo} mining failed with exception: {e}", exc_info=True)
-                    if algo == "genetic":
-                        gp_result = {"success": False, "message": str(e), "best_factors": []}
-                    else:
-                        pysr_result = {"success": False, "message": str(e), "best_factors": []}
-
-        return self._merge_results(gp_result, pysr_result)
 
 
 def create_dual_mining_service(
@@ -620,8 +473,8 @@ def create_dual_mining_service(
     Accepted keyword arguments include all algorithm parameters,
     plus:
 
-    * ``algorithm`` – "genetic" / "pysr" / "dual" / "tree_prescreen" /
-      "gflownet" / "deep_implicit" (default "dual")
+    * ``algorithm`` – "genetic" / "pysr" / "tree_prescreen" /
+      "gflownet" / "deep_implicit" (default "genetic")
     """
     return DualMiningService(
         base_factors=base_factors,

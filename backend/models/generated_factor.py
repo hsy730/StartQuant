@@ -39,7 +39,7 @@ class GeneratedFactorModel(Base):
 
     # 其他元数据
     complexity: Mapped[str] = mapped_column(String(20), nullable=True)
-    metadata: Mapped[str] = mapped_column(Text, nullable=True)
+    extra_info: Mapped[str] = mapped_column(Text, nullable=True)
 
     # 创建时间
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)

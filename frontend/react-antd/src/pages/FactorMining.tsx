@@ -56,6 +56,9 @@ interface MinedFactor {
   ir: number;
   fitness: number;
   source?: string;
+  overall_passed?: boolean;  // 是否通过验证
+  validation_score?: number;  // 验证得分
+  generated_factor_id?: number | null;  // generated_factors 表记录ID
 }
 
 interface MiningStatus {
@@ -140,6 +143,7 @@ const FactorMining: React.FC = () => {
     const startDate = dayjs().subtract(1, "year");
     form.setFieldsValue({
       dateRange: [startDate, endDate],
+      freq: 'D',
       population_size: 50,
       n_generations: 10,
       mutation_rate: 0.2,
@@ -302,6 +306,8 @@ const FactorMining: React.FC = () => {
       deep_batch_size: values.deep_batch_size ?? 32,
       deep_weight_decay: values.deep_weight_decay ?? 1e-5,
       deep_early_stopping_patience: values.deep_early_stopping_patience ?? 5,
+      freq: values.freq || 'D',
+      period: values.freq && values.freq !== 'D' ? values.freq.replace('min', '') : undefined,
     };
 
     try {
@@ -683,6 +689,14 @@ const FactorMining: React.FC = () => {
     index: number,
     retryCount: number = 0,
   ) => {
+    // 验证门控：未通过验证的因子不允许保存
+    if (factor.overall_passed === false) {
+      message.warning(
+        `因子 "${factor.name}" 未通过验证（得分: ${factor.validation_score?.toFixed(1)}），不能保存到因子库。请先通过因子验证。`
+      );
+      return;
+    }
+
     // 生成因子名称：Mined_Factor_序号_年月日时分秒_股票代码
     const today = new Date();
     const dateStr = [
@@ -738,12 +752,13 @@ const FactorMining: React.FC = () => {
       };
 
       const sourceLabel2 = factor.source === "pysr" ? "PySR符号回归" : factor.source === "genetic" ? "遗传规划" : "因子挖掘";
-      const factorData = {
+      const factorData: any = {
         name: factorName,
         code: generateFactorFunction(factor.expression),
         category: "遗传挖掘",
         description: `通过${sourceLabel2}挖掘的因子 | 表达式: ${factor.expression} | IC: ${factor.ic?.toFixed(4)} | IR: ${factor.ir?.toFixed(4)} | 适应度: ${factor.fitness?.toFixed(4)}`,
         formula_type: "function",
+        generated_factor_id: factor.generated_factor_id || null,
       };
 
       console.log("Saving factor:", factorData);
@@ -771,6 +786,12 @@ const FactorMining: React.FC = () => {
         error.message ||
         "未知错误";
 
+      // 如果是验证门控拒绝，直接提示
+      if (errorMsg.includes("未通过验证")) {
+        message.error("保存因子失败: " + errorMsg);
+        return;
+      }
+
       // 如果是"已存在"错误且重试次数少于5次，使用新名称重试
       if (errorMsg.includes("已存在") && retryCount < 5) {
         console.log(
@@ -790,6 +811,11 @@ const FactorMining: React.FC = () => {
     dateStr: string,
     stockCode: string,
   ): Promise<{ success: boolean; name?: string; renamed?: boolean }> => {
+    // 验证门控
+    if (factor.overall_passed === false) {
+      return { success: false };
+    }
+
     const baseFactorName = `Mined_Factor_${index + 1}_${dateStr}_${stockCode}`;
 
     for (let retry = 0; retry <= 5; retry++) {
@@ -823,12 +849,13 @@ const FactorMining: React.FC = () => {
         return pd.Series(0, index=df.index)
 `;
 
-        const factorData = {
+        const factorData: any = {
           name: factorName,
           code: factorCode,
           category: "遗传挖掘",
           description: `通过${srcLbl}挖掘的因子 | 表达式: ${factor.expression} | IC: ${factor.ic?.toFixed(4)} | IR: ${factor.ir?.toFixed(4)} | 适应度: ${factor.fitness?.toFixed(4)}`,
           formula_type: "function",
+          generated_factor_id: factor.generated_factor_id || null,
         };
 
         const response = (await api.createFactor(factorData)) as any;
@@ -846,6 +873,11 @@ const FactorMining: React.FC = () => {
           error.response?.data?.message ||
           error.message ||
           "未知错误";
+
+        // 验证门控拒绝，不再重试
+        if (errorMsg.includes("未通过验证")) {
+          return { success: false };
+        }
 
         // 如果是"已存在"错误且还可以重试，继续循环
         if (errorMsg.includes("已存在") && retry < 5) {
@@ -873,6 +905,21 @@ const FactorMining: React.FC = () => {
       return;
     }
 
+    // 筛选出通过验证的因子
+    const validFactors = miningResult.factors.filter(
+      (f) => f.overall_passed !== false
+    );
+    const skippedCount = miningResult.factors.length - validFactors.length;
+
+    if (validFactors.length === 0) {
+      message.warning("所有因子均未通过验证，无法保存到因子库");
+      return;
+    }
+
+    if (skippedCount > 0) {
+      message.info(`已跳过 ${skippedCount} 个未通过验证的因子`);
+    }
+
     // 生成日期字符串（包含时分秒）
     const today = new Date();
     const dateStr = [
@@ -890,11 +937,12 @@ const FactorMining: React.FC = () => {
     let successCount = 0;
     let failCount = 0;
 
-    for (let i = 0; i < miningResult.factors.length; i++) {
-      const factor = miningResult.factors[i];
+    for (let i = 0; i < validFactors.length; i++) {
+      const factor = validFactors[i];
+      const originalIndex = miningResult.factors.indexOf(factor);
 
       // 直接生成唯一的因子名称（包含序号、日期时间、股票代码）
-      const factorName = `Mined_Factor_${i + 1}_${dateStr}_${stockCode}`;
+      const factorName = `Mined_Factor_${originalIndex + 1}_${dateStr}_${stockCode}`;
 
       try {
         // 生成完整的因子函数代码
@@ -923,12 +971,13 @@ const FactorMining: React.FC = () => {
         return pd.Series(0, index=df.index)
 `;
 
-        const factorData = {
+        const factorData: any = {
           name: factorName,
           code: factorCode,
           category: "遗传挖掘",
           description: `通过${srcLbl3}挖掘的因子 | 表达式: ${factor.expression} | IC: ${factor.ic?.toFixed(4)} | IR: ${factor.ir?.toFixed(4)} | 适应度: ${factor.fitness?.toFixed(4)}`,
           formula_type: "function",
+          generated_factor_id: factor.generated_factor_id || null,
         };
 
         const response = (await api.createFactor(factorData)) as any;
@@ -1075,6 +1124,16 @@ const FactorMining: React.FC = () => {
                   rules={[{ required: true, message: "请选择日期范围" }]}
                 >
                   <RangePicker style={{ width: "100%" }} />
+                </Form.Item>
+
+                <Form.Item label="数据频率" name="freq" tooltip="数据采样频率。日线适合中长周期因子，分钟级适合日内高频因子。注意：分钟级数据量远大于日线，挖掘耗时显著增加">
+                  <Select>
+                    <Option value="D">日线</Option>
+                    <Option value="5min">5分钟</Option>
+                    <Option value="15min">15分钟</Option>
+                    <Option value="30min">30分钟</Option>
+                    <Option value="60min">60分钟</Option>
+                  </Select>
                 </Form.Item>
 
                 {/* 基础因子选择 */}
@@ -1225,7 +1284,7 @@ const FactorMining: React.FC = () => {
                 <Form.Item
                   label="挖掘算法"
                   name="algorithm"
-                  tooltip="选择一种进化算法进行因子挖掘"
+                  tooltip="选择因子挖掘的核心算法。遗传规划(GP)通过进化搜索公式，可解释性强；PySR基于物理启发搜索简洁方程；树模型预筛选先用LightGBM筛选重要特征再回归，适合高维场景；GFlowNet用策略网络构建公式，探索更高效；深度隐式因子用Transformer学习时变隐因子，不追求可解释性"
                 >
                   <Select>
                     <Option value="genetic">遗传规划 (DEAP)</Option>
@@ -1256,7 +1315,7 @@ const FactorMining: React.FC = () => {
                                 <Form.Item
                                   label="种群大小"
                                   name="population_size"
-                                  tooltip="每一代的个体数量"
+                                  tooltip="每代进化中的候选公式数量。越大搜索越充分但越慢，推荐50-100。小种群(30)易早熟，大种群(150+)耗时长"
                                 >
                                   <InputNumber
                                     min={10}
@@ -1269,7 +1328,7 @@ const FactorMining: React.FC = () => {
                                 <Form.Item
                                   label="迭代次数"
                                   name="n_generations"
-                                  tooltip="进化代数"
+                                  tooltip="进化迭代的总轮数。越多越可能找到优质因子，但收益递减。快速验证可用10-20代，正式挖掘建议30-50代"
                                 >
                                   <InputNumber
                                     min={1}
@@ -1282,7 +1341,7 @@ const FactorMining: React.FC = () => {
 
                             <Row gutter={16}>
                               <Col span={12}>
-                                <Form.Item label="变异率" name="mutation_rate">
+                                <Form.Item label="变异率" name="mutation_rate" tooltip="子代公式随机变异的概率。变异产生新算子/操作数，是探索新公式的主要手段。推荐0.2-0.4，过高导致搜索随机化，过低则探索不足">
                                   <InputNumber
                                     min={0}
                                     max={1}
@@ -1292,7 +1351,7 @@ const FactorMining: React.FC = () => {
                                 </Form.Item>
                               </Col>
                               <Col span={12}>
-                                <Form.Item label="交叉率" name="crossover_rate">
+                                <Form.Item label="交叉率" name="crossover_rate" tooltip="两个父代公式交换子树生成子代的概率。交叉继承优秀子结构，推荐0.5-0.8。与变异率互补：交叉利用已有知识，变异探索新方向">
                                   <InputNumber
                                     min={0}
                                     max={1}
@@ -1306,7 +1365,7 @@ const FactorMining: React.FC = () => {
                             <Form.Item
                               label="精英保留数量"
                               name="elite_size"
-                              tooltip="每代保留的最优个体数"
+                              tooltip="每代直接进入下一代的顶级公式数量。防止进化过程中丢失最优解，推荐3-5。过大(>10)会降低种群多样性"
                             >
                               <InputNumber min={0} max={20} style={{ width: "100%" }} />
                             </Form.Item>
@@ -1323,7 +1382,7 @@ const FactorMining: React.FC = () => {
                                 <Form.Item
                                   label="迭代次数"
                                   name="pysr_niterations"
-                                  tooltip="PySR搜索迭代次数"
+                                  tooltip="PySR符号回归的搜索轮数。每轮在当前最优方程基础上尝试简化或组合，越多越可能发现简洁高IC方程。快速验证用20-40，正式挖掘用60-100"
                                 >
                                   <InputNumber
                                     min={10}
@@ -1336,7 +1395,7 @@ const FactorMining: React.FC = () => {
                                 <Form.Item
                                   label="种群数"
                                   name="pysr_populations"
-                                  tooltip="并行种群数量"
+                                  tooltip="PySR同时进化的独立种群数。不同种群独立搜索，最终合并结果。越多搜索越全面但越慢，推荐15-40"
                                 >
                                   <InputNumber
                                     min={5}
@@ -1352,7 +1411,7 @@ const FactorMining: React.FC = () => {
                                 <Form.Item
                                   label="最大表达式大小"
                                   name="pysr_maxsize"
-                                  tooltip="表达式最大节点数"
+                                  tooltip="生成公式的最大运算节点数。控制公式复杂度上限，节点越多公式越灵活但越容易过拟合。推荐20-35，超过40通常无额外收益"
                                 >
                                   <InputNumber
                                     min={5}
@@ -1365,7 +1424,7 @@ const FactorMining: React.FC = () => {
                                 <Form.Item
                                   label="最大表达式深度"
                                   name="pysr_maxdepth"
-                                  tooltip="表达式最大嵌套深度"
+                                  tooltip="公式嵌套层数上限。如 sin(log(x)) 深度为2。深度越大公式表达能力越强但越难解释。推荐3-6，超过7易过拟合"
                                 >
                                   <InputNumber
                                     min={2}
@@ -1381,7 +1440,7 @@ const FactorMining: React.FC = () => {
                                 <Form.Item
                                   label="简约系数"
                                   name="pysr_parsimony"
-                                  tooltip="惩罚复杂表达式，值越大越偏好简洁方程"
+                                  tooltip="简约性惩罚系数。值越大越偏好简洁公式，防止过拟合。0=不惩罚，0.001-0.005=轻度惩罚(推荐)，0.01+=强惩罚(只保留极简公式)"
                                 >
                                   <InputNumber
                                     min={0}
@@ -1395,7 +1454,7 @@ const FactorMining: React.FC = () => {
                                 <Form.Item
                                   label="并行进程数"
                                   name="pysr_procs"
-                                  tooltip="Julia后端并行进程数"
+                                  tooltip="PySR底层Julia引擎的并行进程数。设为CPU核心数可最大化速度，但会占用更多内存。推荐4-8，内存不足时降低"
                                 >
                                   <InputNumber
                                     min={1}
@@ -1418,7 +1477,7 @@ const FactorMining: React.FC = () => {
                                 <Form.Item
                                   label="轨迹数量"
                                   name="gflownet_n_trajectories"
-                                  tooltip="每轮采样的轨迹数"
+                                  tooltip="每轮训练中采样构建的公式轨迹数。越多训练越稳定但越慢，推荐100-300。低于50训练不稳定，高于500收益递减"
                                 >
                                   <InputNumber min={50} max={500} style={{ width: "100%" }} />
                                 </Form.Item>
@@ -1427,7 +1486,7 @@ const FactorMining: React.FC = () => {
                                 <Form.Item
                                   label="迭代次数"
                                   name="gflownet_n_iterations"
-                                  tooltip="GFlowNet训练迭代轮数"
+                                  tooltip="策略网络训练的总轮数。越多网络越能学到高质量公式的构建模式，推荐30-80。过少(10)策略不成熟，过多(200)可能过拟合"
                                 >
                                   <InputNumber min={10} max={200} style={{ width: "100%" }} />
                                 </Form.Item>
@@ -1438,7 +1497,7 @@ const FactorMining: React.FC = () => {
                                 <Form.Item
                                   label="隐藏层维度"
                                   name="gflownet_hidden_dim"
-                                  tooltip="神经网络隐藏层大小"
+                                  tooltip="策略网络的隐藏层维度。决定网络对公式空间的建模能力，推荐64-256。小维度(32)表达能力弱，大维度(512)训练慢且易过拟合"
                                 >
                                   <InputNumber min={32} max={512} step={32} style={{ width: "100%" }} />
                                 </Form.Item>
@@ -1447,7 +1506,7 @@ const FactorMining: React.FC = () => {
                                 <Form.Item
                                   label="学习率"
                                   name="gflownet_learning_rate"
-                                  tooltip="GFlowNet学习率"
+                                  tooltip="策略网络参数更新步长。过大(>0.01)训练不稳定，过小(<0.0001)收敛极慢。推荐0.001-0.005"
                                 >
                                   <InputNumber min={1e-5} max={1e-1} step={1e-4} style={{ width: "100%" }} />
                                 </Form.Item>
@@ -1458,7 +1517,7 @@ const FactorMining: React.FC = () => {
                                 <Form.Item
                                   label="最大表达式深度"
                                   name="gflownet_max_expression_depth"
-                                  tooltip="生成表达式的最大嵌套深度"
+                                  tooltip="GFlowNet生成公式的最大嵌套层数。与GP的max_tree_depth类似，控制公式复杂度。推荐3-6，过深易过拟合"
                                 >
                                   <InputNumber min={3} max={10} style={{ width: "100%" }} />
                                 </Form.Item>
@@ -1467,7 +1526,7 @@ const FactorMining: React.FC = () => {
                                 <Form.Item
                                   label="温度参数"
                                   name="gflownet_temperature"
-                                  tooltip="采样温度，越高越随机"
+                                  tooltip="采样时的温度参数。低温度(0.1-0.5)倾向选择高概率动作，结果稳定但探索少；高温度(2.0-5.0)增加随机性，探索更多样但效率低。推荐0.5-1.5"
                                 >
                                   <InputNumber min={0.1} max={5.0} step={0.1} style={{ width: "100%" }} />
                                 </Form.Item>
@@ -1486,7 +1545,7 @@ const FactorMining: React.FC = () => {
                                 <Form.Item
                                   label="模型维度"
                                   name="deep_d_model"
-                                  tooltip="Transformer嵌入维度"
+                                  tooltip="Transformer模型的特征嵌入维度。决定模型对时序模式的建模能力，推荐32-128。小维度欠拟合，大维度训练慢且需更多数据"
                                 >
                                   <InputNumber min={32} max={256} step={32} style={{ width: "100%" }} />
                                 </Form.Item>
@@ -1495,7 +1554,7 @@ const FactorMining: React.FC = () => {
                                 <Form.Item
                                   label="注意力头数"
                                   name="deep_n_heads"
-                                  tooltip="多头注意力的头数"
+                                  tooltip="多头自注意力的头数。每个头关注不同的时序模式，头数越多捕获的模式越丰富。推荐2-8，需能整除嵌入维度"
                                 >
                                   <InputNumber min={2} max={16} step={2} style={{ width: "100%" }} />
                                 </Form.Item>
@@ -1506,7 +1565,7 @@ const FactorMining: React.FC = () => {
                                 <Form.Item
                                   label="层数"
                                   name="deep_n_layers"
-                                  tooltip="Transformer编码器层数"
+                                  tooltip="Transformer编码器堆叠层数。层数越深模型越能捕获复杂时序依赖，但也越容易过拟合。推荐2-4层，数据量大时可增至6"
                                 >
                                   <InputNumber min={1} max={8} style={{ width: "100%" }} />
                                 </Form.Item>
@@ -1515,7 +1574,7 @@ const FactorMining: React.FC = () => {
                                 <Form.Item
                                   label="隐式因子数"
                                   name="deep_n_latent_factors"
-                                  tooltip="学习的隐式因子数量"
+                                  tooltip="模型输出的隐式因子个数。每个因子是一个独立的时变信号源，推荐3-10。过多因子会稀释信号且难解释"
                                 >
                                   <InputNumber min={1} max={20} style={{ width: "100%" }} />
                                 </Form.Item>
@@ -1526,7 +1585,7 @@ const FactorMining: React.FC = () => {
                                 <Form.Item
                                   label="训练轮次"
                                   name="deep_n_epochs"
-                                  tooltip="模型训练轮数"
+                                  tooltip="模型训练的epoch数。越多拟合越充分但可能过拟合，配合Early Stopping自动停止。推荐30-100，数据量大时可增加"
                                 >
                                   <InputNumber min={10} max={200} style={{ width: "100%" }} />
                                 </Form.Item>
@@ -1535,7 +1594,7 @@ const FactorMining: React.FC = () => {
                                 <Form.Item
                                   label="批大小"
                                   name="deep_batch_size"
-                                  tooltip="训练批次大小"
+                                  tooltip="每次梯度更新的样本数。小batch(16-32)正则化效果好但训练慢，大batch(64-128)训练快但可能泛化差。推荐32-64"
                                 >
                                   <InputNumber min={8} max={128} step={8} style={{ width: "100%" }} />
                                 </Form.Item>
@@ -1546,7 +1605,7 @@ const FactorMining: React.FC = () => {
                                 <Form.Item
                                   label="Dropout"
                                   name="deep_dropout"
-                                  tooltip="Dropout正则化比率"
+                                  tooltip="训练时随机丢弃神经元的比例。防止过拟合，0=不丢弃，0.1-0.3=轻度正则化(推荐)，0.5=强正则化(数据少时用)"
                                 >
                                   <InputNumber min={0} max={0.5} step={0.05} style={{ width: "100%" }} />
                                 </Form.Item>
@@ -1555,7 +1614,7 @@ const FactorMining: React.FC = () => {
                                 <Form.Item
                                   label="学习率"
                                   name="deep_learning_rate"
-                                  tooltip="优化器学习率"
+                                  tooltip="Adam优化器的学习率。控制参数更新步长，过大训练震荡，过小收敛慢。推荐1e-4到5e-4，通常不需要调整"
                                 >
                                   <InputNumber min={1e-6} max={1e-2} step={1e-5} style={{ width: "100%" }} />
                                 </Form.Item>
@@ -1576,7 +1635,7 @@ const FactorMining: React.FC = () => {
                   适应度函数
                 </Divider>
 
-                <Form.Item label="优化目标" name="fitness_objective">
+                <Form.Item label="优化目标" name="fitness_objective" tooltip="适应度函数决定进化方向。IC均值=优化因子与收益的秩相关；IR比率=IC均值/IC标准差，偏好稳定因子；夏普比率=直接优化回测表现；综合得分=IC+IR+换手率的加权">
                   <Select>
                     <Option value="ic_mean">IC均值</Option>
                     <Option value="ir_ratio">IR比率</Option>
@@ -1637,7 +1696,7 @@ const FactorMining: React.FC = () => {
                     <Form.Item
                       label="简约系数"
                       name="parsimony_coeff"
-                      tooltip="惩罚因子复杂度，值越大越偏好简洁表达式（0=关闭）"
+                      tooltip="简约性压力系数。对复杂公式施加适应度惩罚，防止表达式膨胀(过拟合)。0=关闭，0.0005-0.002=轻度(推荐)，0.005+=强压力(只保留极简公式)。与NSGA-II互斥时建议二选一"
                     >
                       <InputNumber
                         min={0}
@@ -1651,7 +1710,7 @@ const FactorMining: React.FC = () => {
                     <Form.Item
                       label="多样性惩罚"
                       name="diversity_penalty_coeff"
-                      tooltip="惩罚与已有因子相似的个体，值越大越鼓励多样性（0=关闭）"
+                      tooltip="多样性保护系数。基于Jaccard相似度惩罚与种群中已有公式雷同的个体，鼓励探索不同方向。0=关闭，0.05-0.2=推荐范围，0.5+=强压力(可能牺牲质量换多样性)"
                     >
                       <InputNumber
                         min={0}
@@ -1668,7 +1727,7 @@ const FactorMining: React.FC = () => {
                     <Form.Item
                       label="交叉验证折数"
                       name="cv_folds"
-                      tooltip="时间序列交叉验证折数，用于过拟合控制（0=关闭）"
+                      tooltip="时间序列CV折数。将数据按时间顺序分段，在训练集上进化、验证集上筛选，有效控制过拟合。0=关闭(快但易过拟合)，3-5折=推荐(稍慢但更可靠)。开启后适应度取验证集表现"
                     >
                       <Select>
                         <Option value={0}>关闭</Option>
@@ -1682,7 +1741,7 @@ const FactorMining: React.FC = () => {
                     <Form.Item
                       label="最大树深度"
                       name="max_tree_depth"
-                      tooltip="GP表达式树的最大深度，限制因子复杂度"
+                      tooltip="表达式树的最大深度。深度越大公式越复杂(如嵌套函数调用)，17=DEAP默认(允许复杂公式)，10以下=限制为简单公式。过深易过拟合，过浅表达力不足"
                     >
                       <InputNumber
                         min={3}
@@ -1699,7 +1758,7 @@ const FactorMining: React.FC = () => {
                     <Form.Item
                       label="扩展基元集"
                       name="use_extended_primitives"
-                      tooltip="启用时序窗口操作（~25个基元），关闭则仅使用9个基础基元"
+                      tooltip="扩展基元集开关。开启后增加时序窗口算子(如TS_MEAN、TS_STD、TS_RANK等约25个)，可挖掘动量/反转类因子；关闭仅保留基础算术运算(9个)，公式更简洁但表达力受限。强烈建议开启"
                       valuePropName="checked"
                     >
                       <Select>
@@ -1712,7 +1771,7 @@ const FactorMining: React.FC = () => {
                     <Form.Item
                       label="NSGA-II多目标"
                       name="use_nsga2"
-                      tooltip="同时优化IC和复杂度的多目标算法"
+                      tooltip="NSGA-II多目标进化。同时优化IC均值(越高越好)和表达式复杂度(越低越好)，产出Pareto前沿上的非支配解。开启后不再需要手动设简约系数。推荐开启，适合不确定简约系数时使用"
                       valuePropName="checked"
                     >
                       <Select>
@@ -1960,6 +2019,15 @@ const FactorMining: React.FC = () => {
                                   {factor.ir?.toFixed(4)}
                                 </span>
                               </div>
+                              <div className="stat-row">
+                                <span className="stat-label">验证:</span>
+                                <span
+                                  className={`stat-value ${factor.overall_passed ? "positive" : "negative"}`}
+                                >
+                                  {factor.overall_passed ? "通过" : "未通过"}
+                                  {factor.validation_score != null ? ` (${factor.validation_score.toFixed(1)})` : ""}
+                                </span>
+                              </div>
                             </div>
                           </div>
                           <div className="factor-actions">
@@ -1968,8 +2036,9 @@ const FactorMining: React.FC = () => {
                               size="small"
                               icon={<SaveOutlined />}
                               onClick={() => saveFactor(factor, index)}
+                              disabled={factor.overall_passed === false}
                             >
-                              保存到因子库
+                              {factor.overall_passed === false ? "未通过验证" : "保存到因子库"}
                             </Button>
                           </div>
                         </Card>

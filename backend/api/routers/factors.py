@@ -19,6 +19,8 @@ class FactorCreate(BaseModel):
     category: str
     description: str = ""
     formula_type: str = "expression"  # expression 或 function
+    generated_factor_id: Optional[int] = None  # 关联的 generated_factors 表记录ID
+    skip_validation: bool = False  # 是否跳过验证门控
 
 
 class FactorUpdate(BaseModel):
@@ -114,7 +116,11 @@ async def get_factor(factor_id: int):
 
 @router.post("/")
 async def create_factor(request: FactorCreate):
-    """创建新因子"""
+    """创建新因子
+
+    挖掘因子需传 generated_factor_id，系统会检查验证状态。
+    未通过验证的因子不能保存到因子库。
+    """
     try:
         # 创建因子
         factor = factor_service.create_factor(
@@ -122,7 +128,9 @@ async def create_factor(request: FactorCreate):
             code=request.code,
             category=request.category,
             description=request.description,
-            formula_type=request.formula_type
+            formula_type=request.formula_type,
+            generated_factor_id=request.generated_factor_id,
+            skip_validation=request.skip_validation,
         )
 
         return {
@@ -130,6 +138,9 @@ async def create_factor(request: FactorCreate):
             "data": factor,
             "message": "因子创建成功"
         }
+    except ValueError as e:
+        # 验证门控拒绝，返回400而非500
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -357,6 +368,201 @@ async def copy_factor(factor_id: int):
             "success": True,
             "data": new_factor,
             "message": f"因子已复制为 {new_name}"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ========== 生成因子（generated_factors）管理端点 ==========
+
+@router.get("/generated/")
+async def get_generated_factors(
+    is_valid: Optional[bool] = None,
+    is_saved: Optional[bool] = None,
+):
+    """获取生成的因子列表（暂存池）
+
+    挖掘出的因子先暂存在 generated_factors 表中，
+    验证通过后才能保存到正式因子库。
+    """
+    try:
+        from backend.core.database import get_db_session
+        from backend.repositories.generated_factor_repository import GeneratedFactorRepository
+
+        db = get_db_session()
+        repo = GeneratedFactorRepository(db)
+
+        if is_valid is not None and is_valid:
+            factors = repo.get_all_valid()
+        elif is_saved is not None and not is_saved:
+            factors = repo.get_all_unsaved()
+        else:
+            factors = repo.get_all()
+
+        result = [GeneratedFactorRepository.to_dict(f) for f in factors]
+        db.close()
+
+        return {
+            "success": True,
+            "data": result,
+            "total": len(result),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/generated/{generated_id}")
+async def get_generated_factor(generated_id: int):
+    """获取单个生成因子的详情"""
+    try:
+        from backend.core.database import get_db_session
+        from backend.repositories.generated_factor_repository import GeneratedFactorRepository
+
+        db = get_db_session()
+        repo = GeneratedFactorRepository(db)
+        factor = repo.get_by_id(generated_id)
+
+        if not factor:
+            db.close()
+            raise HTTPException(status_code=404, detail="生成因子不存在")
+
+        result = GeneratedFactorRepository.to_dict(factor)
+        db.close()
+
+        return {
+            "success": True,
+            "data": result,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class PromoteFactorRequest(BaseModel):
+    """将验证通过的生成因子提升到因子库"""
+    name: str
+    category: str = "遗传挖掘"
+    description: str = ""
+
+
+@router.post("/generated/{generated_id}/promote")
+async def promote_generated_factor(generated_id: int, request: PromoteFactorRequest):
+    """将验证通过的生成因子提升到正式因子库
+
+    只有 is_valid=True 的因子才能提升。
+    提升后会在 factors 表中创建一条记录，并标记 generated_factors 中的 is_saved=True。
+    """
+    try:
+        from backend.core.database import get_db_session
+        from backend.repositories.generated_factor_repository import GeneratedFactorRepository
+
+        db = get_db_session()
+        repo = GeneratedFactorRepository(db)
+        gen_factor = repo.get_by_id(generated_id)
+
+        if not gen_factor:
+            db.close()
+            raise HTTPException(status_code=404, detail="生成因子不存在")
+
+        if not gen_factor.is_valid:
+            db.close()
+            raise HTTPException(
+                status_code=400,
+                detail=f"因子未通过验证（验证得分: {gen_factor.validation_score:.1f}），不能提升到因子库"
+            )
+
+        if gen_factor.is_saved:
+            db.close()
+            raise HTTPException(
+                status_code=400,
+                detail=f"因子已保存为 '{gen_factor.factor_name}'，请勿重复操作"
+            )
+
+        # 将表达式包装为完整函数
+        expression = gen_factor.expression
+        processed_expr = expression
+        for field in ["open", "close", "high", "low", "volume"]:
+            processed_expr = processed_expr.replace(f"\\b{field}\\b", f"df['{field}']")
+
+        import re
+        processed_expr = re.sub(
+            r'\b(open|close|high|low|volume)\b',
+            lambda m: f"df['{m.group(1)}']",
+            expression
+        )
+
+        code = f"""def calculate_factor(df):
+    \"\"\"
+    {gen_factor.generation_method}挖掘因子
+    表达式: {expression}
+    IC: {gen_factor.ic_value}
+    IR: {gen_factor.ir_value}
+    验证得分: {gen_factor.validation_score}
+    \"\"\"
+    import pandas as pd
+    import numpy as np
+
+    try:
+        result = {processed_expr}
+        return result
+    except Exception as e:
+        return pd.Series(0, index=df.index)
+"""
+
+        # 创建正式因子
+        factor = factor_service.create_factor(
+            name=request.name,
+            code=code,
+            category=request.category,
+            description=request.description or f"表达式: {expression} | IC: {gen_factor.ic_value} | IR: {gen_factor.ir_value}",
+            formula_type="function",
+            generated_factor_id=generated_id,
+        )
+
+        return {
+            "success": True,
+            "data": factor,
+            "message": f"因子已提升到因子库: {request.name}",
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/generated/{generated_id}")
+async def delete_generated_factor(generated_id: int):
+    """删除生成因子（从暂存池移除）"""
+    try:
+        from backend.core.database import get_db_session
+        from backend.repositories.generated_factor_repository import GeneratedFactorRepository
+
+        db = get_db_session()
+        repo = GeneratedFactorRepository(db)
+        factor = repo.get_by_id(generated_id)
+
+        if not factor:
+            db.close()
+            raise HTTPException(status_code=404, detail="生成因子不存在")
+
+        if factor.is_saved:
+            db.close()
+            raise HTTPException(
+                status_code=400,
+                detail="该因子已保存到因子库，请从因子库中删除"
+            )
+
+        repo.delete(generated_id)
+        db.close()
+
+        return {
+            "success": True,
+            "message": "生成因子已删除",
         }
     except HTTPException:
         raise

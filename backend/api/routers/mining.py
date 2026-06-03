@@ -1,10 +1,9 @@
 """
 因子挖掘API路由
 
-支持六种算法模式:
-  - genetic: DEAP遗传规划（向后兼容）
+支持五种算法模式:
+  - genetic: DEAP遗传规划
   - pysr: PySR符号回归
-  - dual: 两者并行执行，合并最优结果
   - tree_prescreen: 树模型预筛选 → 符号回归管道
   - gflownet: GFlowNet增强遗传规划（实验性）
   - deep_implicit: 深度隐式因子模型（Transformer，前沿赛道）
@@ -60,7 +59,7 @@ class GeneticMiningRequest(BaseModel):
     max_tree_depth: int = 17
     use_nsga2: bool = True
     # ---- Algorithm selection ----
-    algorithm: str = "dual"
+    algorithm: str = "genetic"
     # ---- PySR parameters ----
     pysr_niterations: int = 40
     pysr_populations: int = 30
@@ -79,7 +78,7 @@ class GeneticMiningRequest(BaseModel):
     importance_threshold: float = 0.01
     tree_n_estimators: int = 100
     tree_max_depth: int = 5
-    downstream_algorithm: str = "dual"
+    downstream_algorithm: str = "genetic"
     # ---- GFlowNet parameters ----
     gflownet_n_trajectories: int = 200
     gflownet_n_iterations: int = 50
@@ -102,6 +101,9 @@ class GeneticMiningRequest(BaseModel):
     deep_batch_size: int = 32
     deep_weight_decay: float = 1e-5
     deep_early_stopping_patience: int = 5
+    # ---- Frequency ----
+    freq: str = "D"
+    period: Optional[str] = None
 
 
 # ========== 任务存储（内存） ==========
@@ -112,7 +114,7 @@ mining_tasks = {}
 
 @router.post("/genetic")
 async def start_genetic_mining(request: GeneticMiningRequest, background_tasks: BackgroundTasks):
-    """启动因子挖掘（支持遗传算法/PySR/双算法并行）"""
+    """启动因子挖掘（支持遗传算法/PySR/树预筛选/GFlowNet/深度隐式因子）"""
     try:
         import uuid
         task_id = str(uuid.uuid4())
@@ -134,7 +136,6 @@ async def start_genetic_mining(request: GeneticMiningRequest, background_tasks: 
         algo_label = {
             "genetic": "遗传规划",
             "pysr": "PySR符号回归",
-            "dual": "双算法并行",
             "tree_prescreen": "树模型预筛选",
             "gflownet": "GFlowNet增强GP",
             "deep_implicit": "深度隐式因子",
@@ -177,11 +178,20 @@ async def _run_mining(task_id: str, request: GeneticMiningRequest):
 
         mining_tasks[task_id]["status"] = "running"
 
-        data = data_service.get_stock_data(
-            stock_codes[0],
-            request.start_date,
-            request.end_date
-        )
+        if request.freq.upper() != "D":
+            minute_period = (request.period or request.freq).lower().replace("min", "").replace("t", "")
+            data = data_service.get_stock_minute_data(
+                stock_codes[0],
+                request.start_date,
+                request.end_date,
+                period=minute_period if minute_period.isdigit() else "5",
+            )
+        else:
+            data = data_service.get_stock_data(
+                stock_codes[0],
+                request.start_date,
+                request.end_date
+            )
 
         if data is None or len(data) == 0:
             raise Exception("未获取到有效数据")
@@ -238,7 +248,8 @@ async def _run_mining(task_id: str, request: GeneticMiningRequest):
                     factor_service, stock_codes, logger
                 )
             else:
-                result = await _run_dual_mining(
+                logger.warning(f"Unknown algorithm '{algorithm}', falling back to genetic")
+                result = await _run_genetic_only(
                     task_id, request, data, base_factor_codes,
                     factor_service, stock_codes, logger
                 )
@@ -433,61 +444,6 @@ async def _run_unified_mining(
     return result
 
 
-async def _run_dual_mining(
-    task_id, request, data, base_factor_codes, factor_service, stock_codes, logger
-) -> dict:
-    """Run both DEAP GP and PySR in parallel, merge best results."""
-    from backend.services.dual_mining_service import create_dual_mining_service
-
-    logger.info("Using dual algorithm mining (DEAP GP + PySR)")
-
-    mining_service = create_dual_mining_service(
-        base_factors=base_factor_codes,
-        data=data,
-        return_column="return",
-        factor_calculator=factor_service.calculator,
-        algorithm="dual",
-        population_size=request.population_size,
-        n_generations=request.n_generations,
-        cx_prob=request.cx_prob,
-        mut_prob=request.mut_prob,
-        elite_size=request.elite_size,
-        fitness_objective=request.fitness_objective,
-        parsimony_coeff=request.parsimony_coeff,
-        diversity_penalty_coeff=request.diversity_penalty_coeff,
-        cv_folds=request.cv_folds,
-        use_extended_primitives=request.use_extended_primitives,
-        max_tree_depth=request.max_tree_depth,
-        use_nsga2=request.use_nsga2,
-        pysr_niterations=request.pysr_niterations,
-        pysr_populations=request.pysr_populations,
-        pysr_binary_operators=request.pysr_binary_operators,
-        pysr_unary_operators=request.pysr_unary_operators,
-        pysr_maxsize=request.pysr_maxsize,
-        pysr_maxdepth=request.pysr_maxdepth,
-        pysr_constraints=request.pysr_constraints,
-        pysr_nested_constraints=request.pysr_nested_constraints,
-        pysr_parsimony=request.pysr_parsimony,
-        pysr_procs=request.pysr_procs,
-        pysr_population_size=request.pysr_population_size,
-    )
-
-    if len(stock_codes) >= 2:
-        logger.info(f"Setting stock pool with {len(stock_codes)} stocks for dual mining")
-        mining_service.set_stock_pool(stock_codes, request.start_date, request.end_date)
-
-    def progress_callback(gen, total_gen, best_fitness, avg_fitness, algorithm="genetic"):
-        _update_progress(task_id, gen, total_gen, best_fitness, avg_fitness, algorithm, logger)
-
-    mining_service.set_progress_callback(progress_callback)
-    result = mining_service.mine_factors()
-
-    if result.get("fitness_history"):
-        mining_tasks[task_id]["fitness_history"] = result["fitness_history"]
-
-    return result
-
-
 def _update_progress(task_id, gen, total_gen, best_fitness, avg_fitness, algorithm, logger):
     """Update mining task progress in the shared task store."""
     progress = int(gen / max(total_gen, 1) * 100)
@@ -510,27 +466,105 @@ def _update_progress(task_id, gen, total_gen, best_fitness, avg_fitness, algorit
 
 
 def _finalize_task(task_id: str, result: dict, request: GeneticMiningRequest, logger):
-    """Convert mining result to frontend format and store in task."""
+    """Convert mining result to frontend format and store in task.
+
+    挖掘完成后，将因子暂存到 generated_factors 表，标记验证状态。
+    只有 is_valid=True 的因子才允许保存到因子库。
+    """
+    from backend.core.database import get_db_session
+    from backend.models.generated_factor import GeneratedFactorModel
+    from backend.repositories.generated_factor_repository import GeneratedFactorRepository
+
     best_factors = result.get("best_factors", [])
 
     discovered_factors = []
-    for i, factor_info in enumerate(best_factors):
-        validation = factor_info.get("validation", {})
-        ic = validation.get("ic_validation", {}).get("ic", 0.0)
-        ir = validation.get("ir_validation", {}).get("ir", 0.0)
-        fitness = factor_info.get("fitness", 0.0)
-        complexity = factor_info.get("complexity", 0.0)
-        source = factor_info.get("source", result.get("source", "unknown"))
+    db = get_db_session()
+    repo = GeneratedFactorRepository(db)
 
-        discovered_factors.append({
-            "name": f"Mined_Factor_{i+1}",
-            "expression": factor_info["expression"],
-            "ic": _safe_float(ic),
-            "ir": _safe_float(ir),
-            "fitness": _safe_float(fitness),
-            "complexity": _safe_float(complexity),
-            "source": source,
-        })
+    try:
+        for i, factor_info in enumerate(best_factors):
+            validation = factor_info.get("validation", {})
+            ic = validation.get("ic_validation", {}).get("ic", 0.0)
+            ir = validation.get("ir_validation", {}).get("ir", 0.0)
+            fitness = factor_info.get("fitness", 0.0)
+            complexity = factor_info.get("complexity", 0.0)
+            source = factor_info.get("source", result.get("source", "unknown"))
+            overall_passed = validation.get("overall_passed", False)
+            validation_score = validation.get("score", 0.0)
+            turnover = validation.get("turnover_validation", {}).get("turnover", None)
+            stability = validation.get("stability_validation", {}).get("stability_score", None)
+
+            # 暂存到 generated_factors 表
+            expression = factor_info["expression"]
+            existing = repo.get_by_expression(expression)
+            if existing:
+                # 表达式已存在，更新验证结果
+                existing.ic_value = _safe_float(ic)
+                existing.ir_value = _safe_float(ir)
+                existing.turnover_value = _safe_float(turnover) if turnover else None
+                existing.stability_score = _safe_float(stability) if stability else None
+                existing.validation_score = _safe_float(validation_score)
+                existing.is_valid = overall_passed
+                existing.generation_method = source
+                existing.complexity = str(complexity)
+                db.commit()
+                db.refresh(existing)
+                generated_id = existing.id
+            else:
+                gen_factor = GeneratedFactorModel(
+                    expression=expression,
+                    generation_method=source,
+                    ic_value=_safe_float(ic),
+                    ir_value=_safe_float(ir),
+                    turnover_value=_safe_float(turnover) if turnover else None,
+                    stability_score=_safe_float(stability) if stability else None,
+                    validation_score=_safe_float(validation_score),
+                    is_valid=overall_passed,
+                    is_saved=False,
+                    complexity=str(complexity),
+                )
+                created = repo.create(gen_factor)
+                generated_id = created.id
+
+            discovered_factors.append({
+                "name": f"Mined_Factor_{i+1}",
+                "expression": expression,
+                "ic": _safe_float(ic),
+                "ir": _safe_float(ir),
+                "fitness": _safe_float(fitness),
+                "complexity": _safe_float(complexity),
+                "source": source,
+                "overall_passed": overall_passed,
+                "validation_score": _safe_float(validation_score),
+                "generated_factor_id": generated_id,
+            })
+    except Exception as e:
+        logger.warning(f"保存挖掘结果到 generated_factors 表失败: {e}")
+        # 降级：即使暂存失败，仍然返回结果给前端（兼容旧逻辑）
+        for i, factor_info in enumerate(best_factors):
+            validation = factor_info.get("validation", {})
+            ic = validation.get("ic_validation", {}).get("ic", 0.0)
+            ir = validation.get("ir_validation", {}).get("ir", 0.0)
+            fitness = factor_info.get("fitness", 0.0)
+            complexity = factor_info.get("complexity", 0.0)
+            source = factor_info.get("source", result.get("source", "unknown"))
+            overall_passed = validation.get("overall_passed", False)
+            validation_score = validation.get("score", 0.0)
+
+            discovered_factors.append({
+                "name": f"Mined_Factor_{i+1}",
+                "expression": factor_info["expression"],
+                "ic": _safe_float(ic),
+                "ir": _safe_float(ir),
+                "fitness": _safe_float(fitness),
+                "complexity": _safe_float(complexity),
+                "source": source,
+                "overall_passed": overall_passed,
+                "validation_score": _safe_float(validation_score),
+                "generated_factor_id": None,
+            })
+    finally:
+        db.close()
 
     logbook = result.get("logbook")
     if logbook is not None:
@@ -551,21 +585,6 @@ def _finalize_task(task_id: str, result: dict, request: GeneticMiningRequest, lo
         "fitness_history": fitness_history,
         "algorithm": request.algorithm,
     }
-
-    gp_result = result.get("gp_result")
-    pysr_result = result.get("pysr_result")
-    if gp_result:
-        gp_factors = gp_result.get("best_factors", [])
-        result_data["gp_factor_count"] = len(gp_factors)
-        result_data["gp_best_fitness"] = _safe_float(
-            gp_factors[0].get("fitness", 0) if gp_factors else 0
-        )
-    if pysr_result:
-        pysr_factors = pysr_result.get("best_factors", [])
-        result_data["pysr_factor_count"] = len(pysr_factors)
-        result_data["pysr_best_fitness"] = _safe_float(
-            pysr_factors[0].get("fitness", 0) if pysr_factors else 0
-        )
 
     # 新算法特有结果
     if result.get("feature_importance"):

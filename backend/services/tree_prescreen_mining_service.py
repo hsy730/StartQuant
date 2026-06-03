@@ -52,9 +52,8 @@ class TreePrescreenMiningService:
       Phase 2: 下游符号回归（进度 30-100%）
 
     支持的下游算法：
-      - "genetic": DEAP 遗传规划
+      - "genetic": DEAP 遗传规划（默认）
       - "pysr": PySR 符号回归
-      - "dual": 两者并行（默认）
     """
 
     def __init__(
@@ -73,7 +72,7 @@ class TreePrescreenMiningService:
         top_k: int = 0,                   # 0 = 自动
         importance_threshold: float = 0.01,
         # ---- 下游符号回归参数 ----
-        downstream_algorithm: str = "dual",
+        downstream_algorithm: str = "genetic",
         # DEAP GP 参数
         population_size: int = 50,
         n_generations: int = 20,
@@ -578,77 +577,6 @@ class TreePrescreenMiningService:
         result["source"] = "tree_prescreen/pysr"
         return result
 
-    def _run_downstream_dual(self, selected_factor_codes: List[str]) -> Dict:
-        """运行双算法并行下游"""
-        from backend.services.dual_mining_service import DualMiningService
-        from backend.services.genetic_factor_mining_service import DEAP_AVAILABLE
-        from backend.services.pysr_factor_mining_service import PYSR_AVAILABLE
-
-        if not DEAP_AVAILABLE and not PYSR_AVAILABLE:
-            return {
-                "success": False,
-                "message": "DEAP 和 PySR 均不可用",
-                "best_factors": [],
-            }
-
-        logger.info(
-            f"启动下游双算法并行挖掘 (DEAP GP + PySR), "
-            f"使用 {len(selected_factor_codes)} 个预筛选特征..."
-        )
-
-        service = DualMiningService(
-            base_factors=selected_factor_codes,
-            data=self.data,
-            return_column=self.return_column,
-            factor_calculator=self.factor_calculator,
-            max_eval_stocks=self.max_eval_stocks,
-            algorithm="dual",
-            **self._gp_params,
-            pysr_niterations=self._pysr_params["niterations"],
-            pysr_populations=self._pysr_params["populations"],
-            pysr_binary_operators=self._pysr_params["binary_operators"],
-            pysr_unary_operators=self._pysr_params["unary_operators"],
-            pysr_maxsize=self._pysr_params["maxsize"],
-            pysr_maxdepth=self._pysr_params["maxdepth"],
-            pysr_constraints=self._pysr_params["constraints"],
-            pysr_nested_constraints=self._pysr_params["nested_constraints"],
-            pysr_parsimony=self._pysr_params["parsimony"],
-            pysr_procs=self._pysr_params["procs"],
-            pysr_population_size=self._pysr_params["population_size"],
-        )
-
-        # 传递股票池
-        if self.stock_codes:
-            service.set_stock_pool(
-                self.stock_codes,
-                list(self.stock_pool_data.values())[0].index[0].strftime("%Y-%m-%d") if self.stock_pool_data else "",
-                list(self.stock_pool_data.values())[0].index[-1].strftime("%Y-%m-%d") if self.stock_pool_data else "",
-            )
-
-        # 设置进度回调
-        if self.progress_callback:
-            def dual_progress(gen, total_gen, best_fitness, avg_fitness, algorithm=""):
-                self._report_progress(
-                    "symbolic_regression",
-                    gen,
-                    total_gen,
-                    f"Dual [{algorithm}] {gen}/{total_gen}"
-                )
-            service.set_progress_callback(dual_progress)
-
-        result = service.mine_factors()
-
-        # 标记来源
-        for f in result.get("best_factors", []):
-            original_source = f.get("source", "")
-            if original_source and not original_source.startswith("tree_prescreen"):
-                f["source"] = f"tree_prescreen/{original_source}"
-            elif not original_source:
-                f["source"] = "tree_prescreen"
-
-        result["source"] = "tree_prescreen/dual"
-        return result
-
     # ------------------------------------------------------------------
     # 结果合并与格式化
     # ------------------------------------------------------------------
@@ -775,13 +703,11 @@ class TreePrescreenMiningService:
                 downstream_result = self._run_downstream_genetic(selected_factor_codes)
             elif self.downstream_algorithm == "pysr":
                 downstream_result = self._run_downstream_pysr(selected_factor_codes)
-            elif self.downstream_algorithm == "dual":
-                downstream_result = self._run_downstream_dual(selected_factor_codes)
             else:
                 logger.warning(
-                    f"未知下游算法 '{self.downstream_algorithm}'，回退到 dual"
+                    f"未知下游算法 '{self.downstream_algorithm}'，回退到 genetic"
                 )
-                downstream_result = self._run_downstream_dual(selected_factor_codes)
+                downstream_result = self._run_downstream_genetic(selected_factor_codes)
         except Exception as e:
             logger.error(f"下游符号回归失败: {e}", exc_info=True)
             downstream_result = {
@@ -833,7 +759,7 @@ def create_tree_prescreen_mining_service(
     * ``importance_threshold`` – 最低重要性阈值 (默认 0.01)
 
     下游算法参数:
-    * ``downstream_algorithm`` – "genetic" / "pysr" / "dual" (默认 "dual")
+    * ``downstream_algorithm`` – "genetic" / "pysr" (默认 "genetic")
     * DEAP GP 参数: population_size, n_generations, cx_prob, mut_prob 等
     * PySR 参数: pysr_niterations, pysr_populations 等
     """

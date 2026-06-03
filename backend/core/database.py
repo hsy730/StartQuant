@@ -32,6 +32,7 @@ def init_db() -> None:
     from backend.models.backtest import BacktestResultModel, TradeRecordModel
     from backend.models.cache_metadata import CacheMetadataModel
     from backend.models.factor_version import FactorVersionModel
+    from backend.models.generated_factor import GeneratedFactorModel
 
     Base.metadata.create_all(bind=engine)
 

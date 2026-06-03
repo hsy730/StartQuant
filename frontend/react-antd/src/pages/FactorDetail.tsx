@@ -209,6 +209,7 @@ const FactorDetail: React.FC = () => {
   // 行情图表相关
   const [chartData, setChartData] = useState<ChartData | null>(null)
   const [chartPeriod, setChartPeriod] = useState<string>('1y')
+  const [dataFreq, setdataFreq] = useState<string>('D')
   const [factorChartType, setFactorChartType] = useState<string>('line')
   const [loadingChart, setLoadingChart] = useState(false)
   const [stockCodes, setStockCodes] = useState<string[]>(['000001.SZ'])
@@ -335,7 +336,9 @@ const FactorDetail: React.FC = () => {
         factor_name: factor.name,
         stock_codes: stockCodes,
         start_date: startDate,
-        end_date: endDate
+        end_date: endDate,
+        freq: dataFreq,
+        period: dataFreq !== 'D' ? dataFreq.replace('min', '') : undefined
       } as any) as any
 
       if (response.success && response.data) {
@@ -1829,25 +1832,33 @@ const FactorDetail: React.FC = () => {
           factor_name: factor.name,
           stock_codes: stockCodes,
           start_date: startDate,
-          end_date: endDate
+          end_date: endDate,
+          freq: dataFreq,
+          period: dataFreq !== 'D' ? dataFreq.replace('min', '') : undefined
         } as any),
         api.analyzeEffectiveness({
           factor_name: factor.name,
           stock_codes: stockCodes,
           start_date: startDate,
-          end_date: endDate
+          end_date: endDate,
+          freq: dataFreq,
+          period: dataFreq !== 'D' ? dataFreq.replace('min', '') : undefined
         } as any),
         api.analyzeAttribution({
           factor_name: factor.name,
           stock_codes: stockCodes,
           start_date: startDate,
-          end_date: endDate
+          end_date: endDate,
+          freq: dataFreq,
+          period: dataFreq !== 'D' ? dataFreq.replace('min', '') : undefined
         } as any),
         api.analyzeMonitoring({
           factor_name: factor.name,
           stock_codes: stockCodes,
           start_date: startDate,
-          end_date: endDate
+          end_date: endDate,
+          freq: dataFreq,
+          period: dataFreq !== 'D' ? dataFreq.replace('min', '') : undefined
         } as any)
       ])
 
@@ -2595,6 +2606,21 @@ const FactorDetail: React.FC = () => {
                     </Space>
                   </Col>
                   <Col xs={24} sm={8}>
+                    <Space>
+                      <span style={{ fontSize: 12, color: '#64748b' }}>频率:</span>
+                      <Select
+                        value={dataFreq}
+                        onChange={setdataFreq}
+                        style={{ width: 100 }}
+                        size="small"
+                      >
+                        <Select.Option value="D">日线</Select.Option>
+                        <Select.Option value="5min">5分钟</Select.Option>
+                        <Select.Option value="15min">15分钟</Select.Option>
+                        <Select.Option value="30min">30分钟</Select.Option>
+                        <Select.Option value="60min">60分钟</Select.Option>
+                      </Select>
+                    </Space>
                     <Select
                       value={chartPeriod}
                       onChange={(value) => {
@@ -2603,7 +2629,7 @@ const FactorDetail: React.FC = () => {
                           setShowCustomDatePicker(true)
                         }
                       }}
-                      style={{ width: '100%' }}
+                      style={{ width: '100%', marginTop: 8 }}
                     >
                       <Option value="1y">近1年</Option>
                       <Option value="3y">近3年</Option>
