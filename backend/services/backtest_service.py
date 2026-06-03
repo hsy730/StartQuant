@@ -1,9 +1,9 @@
 """
-回测服务核心引擎（薄编排层 - 优先委托VectorBT金标准）
+回测服务核心引擎（薄编排层 - 委托VectorBT金标准）
 
 集成了新的策略系统，支持预置策略和策略对比。
-当vectorbt可用时，核心回测方法委托给VectorBTBacktestService；
-不可用时回退到自建逻辑。
+所有核心回测方法委托给VectorBTBacktestService；
+VectorBT不可用时抛出明确错误，不再使用有Bug的自建fallback。
 """
 import pandas as pd
 import numpy as np
@@ -40,18 +40,24 @@ logger = logging.getLogger(__name__)
 
 
 class BacktestService:
-    """回测服务 — 薄编排层（P2改造: 委托VectorBT金标准）"""
+    """回测服务 — 薄编排层（委托VectorBT金标准）"""
 
     def __init__(self, initial_capital: float = 1000000, commission_rate: float = 0.0003):
         self.initial_capital = initial_capital
         self.commission_rate = commission_rate
         self._vbt = None
 
-    def _get_vbt(self):
+    def _get_vbt(self) -> VectorBTBacktestService:
+        """获取VectorBT实例，不可用时抛出明确错误"""
         if self._vbt is None and VECTORBT_AVAILABLE:
             self._vbt = VectorBTBacktestService(
                 initial_capital=self.initial_capital,
                 commission_rate=self.commission_rate,
+            )
+        if self._vbt is None:
+            raise ImportError(
+                "VectorBT不可用，请安装: pip install vectorbt。"
+                "自建回测引擎已移除（存在已知Bug），VectorBT是唯一支持的回测引擎。"
             )
         return self._vbt
 
@@ -66,170 +72,28 @@ class BacktestService:
         n_quantiles: int = 5,
         use_tradable_mask: bool = True,
     ) -> Dict:
-        vbt = self._get_vbt()
-        if vbt is not None:
-            result = vbt.single_factor_backtest(
-                df=df, factor_name=factor_name,
-                percentile=percentile, direction=direction,
-                n_quantiles=n_quantiles,
-                use_tradable_mask=use_tradable_mask,
-            )
-            result["engine"] = "vectorbt"
-            return result
-        return self._single_factor_fallback(df, factor_name, percentile, direction, n_quantiles, use_tradable_mask)
-
-    def _single_factor_fallback(self, df, factor_name, percentile, direction, n_quantiles, use_tradable_mask):
-        logger.info("Backtest using fallback engine (vectorbt unavailable)")
-        df = df.copy()
-        if "date" in df.columns:
-            df = df.sort_values("date")
-        elif df.index.name == "date":
-            df = df.sort_index()
-        if use_tradable_mask and "tradable_mask" in df.columns:
-            tradable_mask = df["tradable_mask"]
-            if tradable_mask.sum() == 0:
-                raise ValueError("tradable_mask全为False！所有日期都不可交易")
-        else:
-            tradable_mask = pd.Series(True, index=df.index)
-        if use_tradable_mask and "tradable_mask" in df.columns:
-            factor_clean = df[factor_name].where(tradable_mask)
-            df["factor_rank"] = factor_clean.rolling(window=252, min_periods=150).rank(pct=True)
-        else:
-            df["factor_rank"] = df[factor_name].rolling(window=252, min_periods=1).rank(pct=True)
-        df["quantile"] = pd.qcut(df["factor_rank"], q=n_quantiles, labels=False, duplicates="drop")
-        df["next_return_raw"] = df["close"].pct_change(1).shift(-1)
-        if use_tradable_mask and "tradable_mask" in df.columns:
-            mask_today = tradable_mask
-            mask_tomorrow = tradable_mask.shift(-1)
-            valid_return_mask = mask_today & mask_tomorrow.fillna(False)
-            df["next_return"] = df["next_return_raw"].where(valid_return_mask)
-        else:
-            df["next_return"] = df["next_return_raw"]
-        quantile_returns = {}
-        for q in range(n_quantiles):
-            layer_mask = (df["quantile"] == q) & df["next_return"].notna()
-            quantile_returns[f"Q{q + 1}"] = df.loc[layer_mask, "next_return"]
-        percentile_threshold = percentile / 100.0
-        signal_mask = df["factor_rank"] >= percentile_threshold if direction == "long" else df["factor_rank"] <= percentile_threshold
-        if use_tradable_mask and "tradable_mask" in df.columns:
-            signal_mask = signal_mask & tradable_mask
-        portfolio_returns = df["next_return"].copy()
-        portfolio_returns[~signal_mask] = 0
-        portfolio_returns = portfolio_returns.clip(lower=-0.5, upper=0.5)
-        equity = (1 + portfolio_returns.fillna(0)).cumprod() * self.initial_capital
-        trades_count = int(signal_mask.astype(int).diff().abs().sum())
-        return {
-            "quantile_returns": quantile_returns,
-            "portfolio_returns": portfolio_returns,
-            "equity_curve": equity,
-            "trades_count": trades_count,
-            "signal_mask": signal_mask,
-            "factor_rank": df["factor_rank"],
-            "mask_statistics": {
-                "total_days": len(df),
-                "tradable_days": int(tradable_mask.sum()) if "tradable_mask" in df.columns else len(df),
-                "tradable_ratio": float(tradable_mask.mean()) if "tradable_mask" in df.columns else 1.0,
-                "limit_up_days": int(df["is_limit_up"].sum()) if "is_limit_up" in df.columns else 0,
-                "limit_down_days": int(df["is_limit_down"].sum()) if "is_limit_down" in df.columns else 0,
-                "suspended_days": int(df["is_suspended"].sum()) if "is_suspended" in df.columns else 0,
-            },
-            "engine": "fallback",
-        }
+        result = self._get_vbt().single_factor_backtest(
+            df=df, factor_name=factor_name,
+            percentile=percentile, direction=direction,
+            n_quantiles=n_quantiles,
+            use_tradable_mask=use_tradable_mask,
+        )
+        result["engine"] = "vectorbt"
+        return result
 
     # ==================== 横截面回测 (委托VectorBT) ====================
 
     def cross_sectional_backtest(self, df: pd.DataFrame, factor_name: str, top_percentile: float = 0.2, direction: str = "long") -> Dict:
-        vbt = self._get_vbt()
-        if vbt is not None:
-            result = vbt.cross_sectional_backtest(df=df, factor_name=factor_name, top_percentile=top_percentile, direction=direction)
-            result["engine"] = "vectorbt"
-            return result
-        return self._cross_sectional_fallback(df, factor_name, top_percentile, direction)
-
-    def _cross_sectional_fallback(self, df, factor_name, top_percentile, direction):
-        logger.info("Cross-sectional backtest using fallback engine")
-        if "date" not in df.columns:
-            df = df.reset_index()
-        df["next_return"] = df.groupby("stock_code")["close"].pct_change(1).shift(-1)
-        daily_returns = []
-        for date, group in df.groupby("date"):
-            factor_values = group[factor_name].dropna()
-            if len(factor_values) == 0:
-                continue
-            ranks = factor_values.rank(pct=True)
-            selected_stocks = ranks[ranks >= (1 - top_percentile)].index if direction == "long" else ranks[ranks <= top_percentile].index
-            selected_returns = group.loc[selected_stocks, "next_return"]
-            daily_returns.append({"date": date, "return": selected_returns.mean() if len(selected_returns) > 0 else 0.0})
-        returns_df = pd.DataFrame(daily_returns).set_index("date").sort_index()
-        portfolio_returns = returns_df["return"]
-        equity = (1 + portfolio_returns.fillna(0)).cumprod() * self.initial_capital
-        return {
-            "portfolio_returns": portfolio_returns,
-            "equity_curve": equity,
-            "trades_count": len(daily_returns),
-            "daily_selected_count": len(daily_returns),
-            "engine": "fallback",
-        }
+        result = self._get_vbt().cross_sectional_backtest(df=df, factor_name=factor_name, top_percentile=top_percentile, direction=direction)
+        result["engine"] = "vectorbt"
+        return result
 
     # ==================== 多因子回测 (委托VectorBT) ====================
 
     def multi_factor_backtest(self, df: pd.DataFrame, factor_names: List[str], weights: Optional[List[float]] = None, method: str = "equal_weight", percentile: int = 50, direction: str = "long") -> Dict:
-        vbt = self._get_vbt()
-        if vbt is not None:
-            result = vbt.multi_factor_backtest(df=df, factor_names=factor_names, weights=weights, method=method, percentile=percentile, direction=direction)
-            result["engine"] = "vectorbt"
-            return result
-        return self._multi_factor_fallback(df, factor_names, weights, method, percentile, direction)
-
-    def _multi_factor_fallback(self, df, factor_names, weights, method, percentile, direction):
-        logger.info("Multi-factor backtest using fallback engine")
-        df = df.copy()
-        if "date" in df.columns:
-            df = df.sort_values("date")
-        preprocessing_pipeline = FactorPreprocessingPipeline(config=PreprocessingConfig(
-            winsorize_method="mad", enable_market_cap_neutralization=("market_cap" in df.columns),
-            enable_industry_neutralization=("industry" in df.columns), standardize_method="zscore", cross_sectional=True,
-        ))
-        factor_columns_to_process = [fn for fn in factor_names if fn in df.columns]
-        if factor_columns_to_process:
-            df, _ = preprocessing_pipeline.process_factor_dataframe(
-                df=df, factor_columns=factor_columns_to_process,
-                date_column="date" if "date" in df.columns else None, parallel=False,
-            )
-            for factor_name in factor_columns_to_process:
-                if f"{factor_name}_std" not in df.columns:
-                    df[f"{factor_name}_std"] = df[factor_name]
-        std_factor_names = [f"{fn}_std" for fn in factor_names]
-        if weights is None:
-            if method == "equal_weight":
-                weights = [1.0 / len(factor_names)] * len(factor_names)
-            elif method == "risk_parity":
-                inv_vol = []
-                for fn in std_factor_names:
-                    vol = df[fn].std()
-                    inv_vol.append(1.0 / (vol + 1e-8))
-                total = sum(inv_vol)
-                weights = [v / total for v in inv_vol]
-            else:
-                weights = [1.0 / len(factor_names)] * len(factor_names)
-        df["composite_score"] = sum(df[fn] * w for fn, w in zip(std_factor_names, weights))
-        df["score_rank"] = df["composite_score"].rolling(252, min_periods=1).rank(pct=True)
-        percentile_threshold = percentile / 100.0
-        signal_mask = df["score_rank"] >= percentile_threshold if direction == "long" else df["score_rank"] <= percentile_threshold
-        df["next_return"] = df["close"].pct_change(1).shift(-1)
-        portfolio_returns = df["next_return"].copy()
-        portfolio_returns[~signal_mask] = 0
-        equity = (1 + portfolio_returns.fillna(0)).cumprod() * self.initial_capital
-        trades_count = int(signal_mask.astype(int).diff().abs().sum())
-        return {
-            "portfolio_returns": portfolio_returns,
-            "equity_curve": equity,
-            "trades_count": trades_count,
-            "composite_score": df["composite_score"],
-            "signal_mask": signal_mask,
-            "factor_weights": dict(zip(factor_names, weights)),
-            "engine": "fallback",
-        }
+        result = self._get_vbt().multi_factor_backtest(df=df, factor_names=factor_names, weights=weights, method=method, percentile=percentile, direction=direction)
+        result["engine"] = "vectorbt"
+        return result
 
     # ==================== 性能指标计算 (纯计算，保持自建) ====================
 

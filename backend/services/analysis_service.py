@@ -388,7 +388,10 @@ class AnalysisService:
         if ALPHALENS_AVAILABLE:
             return self._calculate_multi_stock_ic_alphalens(factor_data_copy, factor_names, stock_codes)
         else:
-            return self._calculate_multi_stock_ic_fallback(factor_data_copy, factor_names)
+            raise ImportError(
+                "alphalens-reloaded不可用，请安装: pip install alphalens-reloaded。"
+                "自建IC/IR计算已移除（存在已知Bug），alphalens是唯一支持的IC/IR计算引擎。"
+            )
 
     def _calculate_single_stock_ic(
         self, factor_data: Dict[str, pd.DataFrame], factor_names: List[str],
@@ -510,8 +513,13 @@ class AnalysisService:
                 break
 
         if prices is None:
-            logger.warning("无法构建pricing数据，使用fallback计算IC")
-            return self._calculate_multi_stock_ic_fallback(factor_data, factor_names)
+            logger.warning("无法构建pricing数据，IC分析无法进行")
+            return {
+                "ic_stats": {},
+                "monthly_ic": {},
+                "rolling_ir": {},
+                "warning": "无法构建pricing数据，请确保因子数据包含close列",
+            }
 
         try:
             groupby_dict = data_service.get_industry_classification(codes)
@@ -590,65 +598,18 @@ class AnalysisService:
                         all_rolling_ir[factor_key] = self._calculate_rolling_ir({factor_key: ic_s}, window=60)[factor_key]
 
         if not all_ic_stats:
-            logger.warning("Alphalens未能返回有效IC数据，回退到fallback")
-            return self._calculate_multi_stock_ic_fallback(factor_data, factor_names)
+            logger.warning("Alphalens未能返回有效IC数据，请检查因子数据质量")
+            return {
+                "ic_stats": {},
+                "monthly_ic": {},
+                "rolling_ir": {},
+                "warning": "Alphalens分析未返回有效结果，请检查因子数据是否包含足够有效值",
+            }
 
         return {
             "ic_stats": all_ic_stats,
             "monthly_ic": all_monthly_ic,
             "rolling_ir": all_rolling_ir,
-        }
-
-    def _calculate_multi_stock_ic_fallback(
-        self, factor_data: Dict[str, pd.DataFrame], factor_names: List[str]
-    ) -> Dict[str, Any]:
-        """多股票横截面IC fallback（Alphalens不可用时）"""
-        logger.warning("使用fallback横截面IC计算（Alphalens不可用）")
-        all_data = []
-        for stock_code, df in factor_data.items():
-            stock_df = df.copy()
-            stock_df["stock_code"] = stock_code
-            all_data.append(stock_df)
-        merged_df = pd.concat(all_data, ignore_index=False)
-
-        ic_series = {}
-        for factor_name in factor_names:
-            ics, dates_list = [], []
-            for date in merged_df.index.unique():
-                date_data = merged_df.loc[[date]]
-                if len(date_data) < 2 or factor_name not in date_data.columns:
-                    continue
-                factor_vals, return_vals = [], []
-                for stock_code in date_data["stock_code"]:
-                    if stock_code in factor_data and date in factor_data[stock_code].index:
-                        fv = factor_data[stock_code].loc[date, factor_name]
-                        rv = factor_data[stock_code].loc[date, "future_return_1"]
-                        if pd.notna(fv) and pd.notna(rv) and not np.isinf(fv) and not np.isinf(rv):
-                            factor_vals.append(fv)
-                            return_vals.append(rv)
-                if len(factor_vals) >= 2:
-                    ic = pd.Series(factor_vals).corr(pd.Series(return_vals))
-                    if pd.notna(ic) and not np.isinf(ic):
-                        ics.append(ic)
-                        dates_list.append(date)
-            if ics:
-                ic_series[factor_name] = pd.Series(ics, index=dates_list)
-
-        ic_stats = {}
-        for factor_name, ic_s in ic_series.items():
-            ic_mean = ic_s.mean()
-            ic_std = ic_s.std()
-            ic_stats[factor_name] = {
-                "IC均值": ic_mean, "IC标准差": ic_std,
-                "IR": ic_mean / ic_std if ic_std != 0 else 0,
-                "IC>0占比": (ic_s > 0).mean(), "IC绝对值均值": abs(ic_s).mean(),
-                "IC序列": ic_s.to_dict(), "IC类型": "横截面IC（多股票）",
-            }
-
-        return {
-            "ic_stats": ic_stats,
-            "monthly_ic": self._calculate_monthly_ic(ic_series),
-            "rolling_ir": self._calculate_rolling_ir(ic_series, window=60),
         }
 
     def _calculate_monthly_ic(

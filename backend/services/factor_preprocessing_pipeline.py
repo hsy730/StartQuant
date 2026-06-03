@@ -22,6 +22,14 @@ from concurrent.futures import ThreadPoolExecutor
 import warnings
 
 from sklearn.linear_model import LinearRegression
+from sklearn.preprocessing import StandardScaler, RobustScaler
+from scipy.stats.mstats import winsorize as scipy_winsorize
+
+try:
+    import statsmodels.api as sm
+    STATSMODELS_AVAILABLE = True
+except ImportError:
+    STATSMODELS_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -160,7 +168,8 @@ class FactorPreprocessingPipeline:
                     result = self._neutralize_industry(result, industry, date_index)
                     stats["neutralized"] = True
 
-        # Step 4: 标准化
+        # Step 4: 标准化（先清理inf，sklearn不接受inf）
+        result = result.replace([np.inf, -np.inf], np.nan)
         result = self._standardize(result, date_index)
 
         return result, stats
@@ -387,14 +396,12 @@ class FactorPreprocessingPipeline:
 
         elif method == WinsorizeMethod.PERCENTILE:
             lower_pct, upper_pct = self.config.winsorize_limits
-            lower_bound = series.quantile(lower_pct)
-            upper_bound = series.quantile(upper_pct)
-            
-            mask_lower = series < lower_bound
-            mask_upper = series > upper_bound
-            clipped_count = int(mask_lower.sum() + mask_upper.sum())
-            
-            result = series.clip(lower=lower_bound, upper=upper_bound)
+            # 使用scipy标准winsorize实现（原生C，更快更可靠）
+            winsorized = scipy_winsorize(
+                series.values, limits=(lower_pct, 1 - upper_pct), nan_policy="omit"
+            )
+            result = pd.Series(winsorized, index=series.index)
+            clipped_count = int((result != series).sum())
 
         elif method == WinsorizeMethod.STD:
             mean = series.mean()
@@ -470,9 +477,12 @@ class FactorPreprocessingPipeline:
                         upper=median + self.config.winsorize_n_sigma * mad,
                     )
             elif self.config.winsorize_method == WinsorizeMethod.PERCENTILE:
-                lower = factor_vals.quantile(self.config.winsorize_limits[0])
-                upper = factor_vals.quantile(self.config.winsorize_limits[1])
-                factor_vals = factor_vals.clip(lower=lower, upper=upper)
+                winsorized = scipy_winsorize(
+                    factor_vals.values,
+                    limits=(self.config.winsorize_limits[0], 1 - self.config.winsorize_limits[1]),
+                    nan_policy="omit",
+                )
+                factor_vals = pd.Series(winsorized, index=factor_vals.index)
             elif self.config.winsorize_method == WinsorizeMethod.STD:
                 mean = factor_vals.mean()
                 std = factor_vals.std()
@@ -569,17 +579,19 @@ class FactorPreprocessingPipeline:
 
             # 标准化
             if self.config.standardize_method == StandardizeMethod.ZSCORE:
-                mean = factor_vals.mean()
-                std = factor_vals.std()
-                if std > 0:
-                    factor_vals = (factor_vals - mean) / std
+                valid = factor_vals.replace([np.inf, -np.inf], np.nan).dropna()
+                if len(valid) > 1:
+                    scaler = StandardScaler()
+                    scaled = scaler.fit_transform(valid.values.reshape(-1, 1)).flatten()
+                    factor_vals[valid.index] = scaled
             elif self.config.standardize_method == StandardizeMethod.RANK:
                 factor_vals = factor_vals.rank(pct=True)
             elif self.config.standardize_method == StandardizeMethod.MEDIAN_MAD:
-                median = factor_vals.median()
-                mad = 1.4826 * np.median(np.abs(factor_vals - median))
-                if mad > 0:
-                    factor_vals = (factor_vals - median) / mad
+                valid = factor_vals.replace([np.inf, -np.inf], np.nan).dropna()
+                if len(valid) > 1:
+                    scaler = RobustScaler(with_centering=True, with_scaling=True)
+                    scaled = scaler.fit_transform(valid.values.reshape(-1, 1)).flatten()
+                    factor_vals[valid.index] = scaled
 
             return factor_vals
 
@@ -676,26 +688,13 @@ class FactorPreprocessingPipeline:
         行业市值联合回归中性化（⭐推荐方法）
         
         通过多元线性回归同时控制市值和行业的影响，取残差作为中性化后的因子值。
-        相比顺序方法（先市值后行业），联合回归具有以下优势：
-        
-        1. **统计效率更高**：一次回归同时估计所有参数，自由度利用更充分
-        2. **避免顺序偏差**：顺序方法中第二步会受到第一步残差的影响
-        3. **更符合业界标准**：JoinQuant/BigQuant均采用联合回归
-        4. **解释性更强**：可以同时获得市值和行业的回归系数
+        优先使用statsmodels OLS（提供R²、p值、F统计量等诊断信息），
+        不可用时回退到sklearn LinearRegression。
         
         数学模型：
             factor = β₀ + β₁ × log(market_cap) + Σ(γᵢ × industry_dummyᵢ) + ε
         
         其中 ε 即为中性化后的因子值。
-        
-        Args:
-            factor_values: 因子值序列
-            market_cap: 市值序列（与factor_values对齐）
-            industry: 行业分类序列（与factor_values对齐）
-            date_index: 日期索引（可选）
-            
-        Returns:
-            联合中性化后的因子值序列
         """
         valid_mask = (
             factor_values.notna() & 
@@ -726,16 +725,29 @@ class FactorPreprocessingPipeline:
             industry_dummies.values
         ])
         
-        model = LinearRegression()
-        model.fit(X, y)
-        
-        residuals = y - model.predict(X)
-        result.loc[valid_mask] = residuals
-        
-        logger.debug(
-            f"联合回归完成: 市值系数={model.coef_[0]:.6f}, "
-            f"行业数={len(unique_inds)}, R²={model.score(X, y):.4f}"
-        )
+        if STATSMODELS_AVAILABLE:
+            # 使用statsmodels OLS：自动输出R²、p值、F统计量等诊断信息
+            X_with_const = sm.add_constant(X)
+            ols_model = sm.OLS(y, X_with_const).fit()
+            residuals = y - ols_model.fittedvalues
+            result.loc[valid_mask] = residuals
+            
+            logger.debug(
+                f"联合回归完成(statsmodels): 市值系数={ols_model.params[1]:.6f}, "
+                f"行业数={len(unique_inds)}, R²={ols_model.rsquared:.4f}, "
+                f"F-stat={ols_model.fvalue:.2f}(p={ols_model.f_pvalue:.4f})"
+            )
+        else:
+            # 回退到sklearn
+            model = LinearRegression()
+            model.fit(X, y)
+            residuals = y - model.predict(X)
+            result.loc[valid_mask] = residuals
+            
+            logger.debug(
+                f"联合回归完成(sklearn): 市值系数={model.coef_[0]:.6f}, "
+                f"行业数={len(unique_inds)}, R²={model.score(X, y):.4f}"
+            )
         
         return result
 
@@ -752,21 +764,29 @@ class FactorPreprocessingPipeline:
         method = self.config.standardize_method
 
         if method == StandardizeMethod.ZSCORE:
-            mean = factor_values.mean()
-            std = factor_values.std()
-            if std == 0 or np.isnan(std):
-                return factor_values - mean
-            return (factor_values - mean) / std
+            # 使用sklearn StandardScaler（更稳健的边缘情况处理）
+            valid = factor_values.replace([np.inf, -np.inf], np.nan).dropna()
+            if len(valid) < 2:
+                return factor_values
+            scaler = StandardScaler()
+            scaled = scaler.fit_transform(valid.values.reshape(-1, 1)).flatten()
+            result = factor_values.copy()
+            result[valid.index] = scaled
+            return result
 
         elif method == StandardizeMethod.RANK:
             return factor_values.rank(pct=True)
 
         elif method == StandardizeMethod.MEDIAN_MAD:
-            median = factor_values.median()
-            mad = 1.4826 * np.median(np.abs(factor_values - median))
-            if mad == 0:
-                return factor_values - median
-            return (factor_values - median) / mad
+            # 使用sklearn RobustScaler（基于中位数和IQR，抗异常值）
+            valid = factor_values.replace([np.inf, -np.inf], np.nan).dropna()
+            if len(valid) < 2:
+                return factor_values
+            scaler = RobustScaler(with_centering=True, with_scaling=True)
+            scaled = scaler.fit_transform(valid.values.reshape(-1, 1)).flatten()
+            result = factor_values.copy()
+            result[valid.index] = scaled
+            return result
 
         return factor_values
 
