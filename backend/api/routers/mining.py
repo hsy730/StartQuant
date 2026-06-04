@@ -15,6 +15,12 @@ import asyncio
 
 import numpy as np
 import math
+import logging
+
+logger = logging.getLogger(__name__)
+
+# 模块级导入：_unified_validate_factor 等模块级函数需要直接访问
+from backend.services import factor_validation_service
 
 router = APIRouter()
 
@@ -156,9 +162,6 @@ async def start_genetic_mining(request: GeneticMiningRequest, background_tasks: 
 async def _run_mining(task_id: str, request: GeneticMiningRequest):
     """Unified mining entry point that dispatches to the correct algorithm."""
     try:
-        import logging
-        logger = logging.getLogger(__name__)
-
         stock_codes = list(request.stock_codes) if request.stock_codes else []
         if not stock_codes and request.stock_code:
             logger.warning("Single stock_code provided, converting to stock_codes list.")
@@ -226,7 +229,7 @@ async def _run_mining(task_id: str, request: GeneticMiningRequest):
                             if f.name.lower().startswith(prefix_lower):
                                 prefix_matches.append(f)
                         if not matched and prefix_matches:
-                            # Choose the longest name to avoid ambiguity (e.g. "rsi" prefers "rsi" over "rsi_volume")
+                            # Choose the shortest name to get the most precise match (e.g. "rsi" prefers "rsi" over "rsi_volume")
                             prefix_matches.sort(key=lambda f: len(f.name))
                             matched = prefix_matches[0]
                         if matched:
@@ -277,7 +280,8 @@ async def _run_mining(task_id: str, request: GeneticMiningRequest):
             if not result.get("success"):
                 raise Exception(result.get("message", "挖掘失败"))
 
-            _finalize_task(task_id, result, request, logger)
+            _finalize_task(task_id, result, request, data, base_factor_codes,
+                           factor_service.calculator, logger)
 
         except ImportError as e:
             logger.warning(f"Mining library not available, using simulation mode: {e}")
@@ -487,17 +491,98 @@ def _update_progress(task_id, gen, total_gen, best_fitness, avg_fitness, algorit
     )
 
 
-def _finalize_task(task_id: str, result: dict, request: GeneticMiningRequest, logger):
+def _unified_validate_factor(expression: str, factor_calculator, data, return_values) -> dict:
+    """对所有算法的因子执行统一的验证评分。
+
+    无论因子来自哪种算法（genetic/pysr/tree_prescreen/gflownet/deep_implicit），
+    都使用同一套 factor_validation_service.validate_factor() 进行评估，
+    确保跨算法的 score / ic / ir / overall_passed 具有可比性。
+
+    Returns:
+        dict with keys: ic, ir, fitness (score/100), validation_score,
+                        overall_passed, turnover, stability, validation (full)
+    """
+    try:
+        fv = factor_calculator.calculate(data, expression)
+    except Exception as e:
+        logger.debug(f"Unified validate: 无法计算表达式 '{expression[:60]}': {e}")
+        return _empty_unified_result()
+
+    if fv is None or len(fv.dropna()) < 10:
+        return _empty_unified_result()
+
+    fv = fv.replace([np.inf, -np.inf], np.nan).dropna()
+    if len(fv) < 10 or fv.isna().all():
+        return _empty_unified_result()
+
+    if return_values is not None and len(return_values) > 0:
+        try:
+            validation = factor_validation_service.validate_factor(
+                factor_values=fv,
+                return_values=return_values,
+                existing_factors=None,
+            )
+            ic_val = validation.get("ic_validation", {})
+            ir_val = validation.get("ir_validation", {})
+            ic = abs(float(ic_val.get("ic", 0.0)))
+            ir_capped = float(ir_val.get("ir", 0.0))
+            score = float(validation.get("score", 0.0))
+            overall_passed = validation.get("overall_passed", False)
+            turnover_val = validation.get("turnover_validation", {})
+            stability_val = validation.get("stability_validation", {})
+
+            return {
+                "ic": ic,
+                "ir": ir_capped,
+                "fitness": score / 100.0,
+                "validation_score": score,
+                "overall_passed": overall_passed,
+                "turnover": turnover_val.get("turnover"),
+                "stability": stability_val.get("stability_score"),
+                "validation": validation,
+            }
+        except Exception as e:
+            logger.debug(f"Unified validate: 验证失败 '{expression[:60]}': {e}")
+            return _empty_unified_result()
+
+    return _empty_unified_result()
+
+
+def _empty_unified_result() -> dict:
+    """返回空的统一验证结果（当无法验证时使用）。"""
+    return {
+        "ic": 0.0,
+        "ir": 0.0,
+        "fitness": 0.0,
+        "validation_score": 0.0,
+        "overall_passed": False,
+        "turnover": None,
+        "stability": None,
+        "validation": {},
+    }
+
+
+def _finalize_task(task_id: str, result: dict, request: GeneticMiningRequest,
+                   data, base_factor_codes, factor_calculator, logger):
     """Convert mining result to frontend format and store in task.
 
     挖掘完成后，将因子暂存到 generated_factors 表，标记验证状态。
     只有 is_valid=True 的因子才允许保存到因子库。
+
+    **统一验证**: 所有算法的因子都会通过同一个 factor_validation_service
+    进行重验证，确保跨算法的 score/ic/ir/overall_passed 可比。
+    各算法原始的 fitness 保留为 raw_fitness 供参考。
     """
     from backend.core.database import get_db_session
     from backend.models.generated_factor import GeneratedFactorModel
     from backend.repositories.generated_factor_repository import GeneratedFactorRepository
 
     best_factors = result.get("best_factors", [])
+    return_values = None
+    if request.return_column and request.return_column in data.columns:
+        return_values = data[request.return_column]
+    elif "return" in data.columns:
+        return_values = data["return"]
 
     discovered_factors = []
     db = get_db_session()
@@ -505,22 +590,44 @@ def _finalize_task(task_id: str, result: dict, request: GeneticMiningRequest, lo
 
     try:
         for i, factor_info in enumerate(best_factors):
-            validation = factor_info.get("validation", {})
-            ic = validation.get("ic_validation", {}).get("ic", 0.0)
-            ir = validation.get("ir_validation", {}).get("ir", 0.0)
-            fitness = factor_info.get("fitness", 0.0)
-            complexity = factor_info.get("complexity", 0.0)
+            expression = factor_info["expression"]
             source = factor_info.get("source", result.get("source", "unknown"))
-            overall_passed = validation.get("overall_passed", False)
-            validation_score = validation.get("score", 0.0)
-            turnover = validation.get("turnover_validation", {}).get("turnover", None)
-            stability = validation.get("stability_validation", {}).get("stability_score", None)
+            complexity = factor_info.get("complexity", 0.0)
+
+            # ---- 统一验证：用同一套标准重新打分 ----
+            unified = _unified_validate_factor(
+                expression=expression,
+                factor_calculator=factor_calculator,
+                data=data,
+                return_values=return_values,
+            )
+
+            # 保留各算法原始 fitness 作为参考
+            raw_fitness = factor_info.get("fitness", 0.0)
+
+            # 统一后的指标（全部来自同一个 validate_factor）
+            ic = unified["ic"]
+            ir = unified["ir"]
+            fitness = unified["fitness"]          # = validation_score / 100
+            validation_score = unified["validation_score"]
+            overall_passed = unified["overall_passed"]
+            turnover = unified["turnover"]
+            stability = unified["stability"]
+            full_validation = unified["validation"]
+
+            # 如果统一验证完全无结果（如 deep_implicit 的隐式因子），回退到算法自带数据
+            if validation_score == 0.0 and ic == 0.0 and ir == 0.0:
+                algo_validation = factor_info.get("validation", {})
+                ic = _safe_float(algo_validation.get("ic_validation", {}).get("ic", 0.0))
+                ir = _safe_float(algo_validation.get("ir_validation", {}).get("ir", 0.0))
+                fitness = _safe_float(raw_fitness)
+                validation_score = _safe_float(algo_validation.get("score", 0.0))
+                overall_passed = algo_validation.get("overall_passed", False)
+                full_validation = algo_validation
 
             # 暂存到 generated_factors 表
-            expression = factor_info["expression"]
             existing = repo.get_by_expression(expression)
             if existing:
-                # 表达式已存在，更新验证结果
                 existing.ic_value = _safe_float(ic)
                 existing.ir_value = _safe_float(ir)
                 existing.turnover_value = _safe_float(turnover) if turnover else None
@@ -553,32 +660,51 @@ def _finalize_task(task_id: str, result: dict, request: GeneticMiningRequest, lo
                 "expression": expression,
                 "ic": _safe_float(ic),
                 "ir": _safe_float(ir),
-                "fitness": _safe_float(fitness),
+                "fitness": _safe_float(fitness),           # 统一验证后的 score/100
+                "raw_fitness": _safe_float(raw_fitness),   # 算法原始 fitness（参考）
                 "complexity": _safe_float(complexity),
                 "source": source,
                 "overall_passed": overall_passed,
-                "validation_score": _safe_float(validation_score),
+                "validation_score": _safe_float(validation_score),  # 统一验证分数
                 "generated_factor_id": generated_id,
             })
     except Exception as e:
         logger.warning(f"保存挖掘结果到 generated_factors 表失败: {e}")
         # 降级：即使暂存失败，仍然返回结果给前端（兼容旧逻辑）
         for i, factor_info in enumerate(best_factors):
-            validation = factor_info.get("validation", {})
-            ic = validation.get("ic_validation", {}).get("ic", 0.0)
-            ir = validation.get("ir_validation", {}).get("ir", 0.0)
-            fitness = factor_info.get("fitness", 0.0)
-            complexity = factor_info.get("complexity", 0.0)
+            expression = factor_info["expression"]
             source = factor_info.get("source", result.get("source", "unknown"))
-            overall_passed = validation.get("overall_passed", False)
-            validation_score = validation.get("score", 0.0)
+            complexity = factor_info.get("complexity", 0.0)
+            raw_fitness = factor_info.get("fitness", 0.0)
+
+            # 降级时也尝试统一验证
+            unified = _unified_validate_factor(
+                expression=expression,
+                factor_calculator=factor_calculator,
+                data=data,
+                return_values=return_values,
+            )
+            ic = unified["ic"]
+            ir = unified["ir"]
+            fitness = unified["fitness"]
+            validation_score = unified["validation_score"]
+            overall_passed = unified["overall_passed"]
+
+            if validation_score == 0.0 and ic == 0.0:
+                algo_validation = factor_info.get("validation", {})
+                ic = _safe_float(algo_validation.get("ic_validation", {}).get("ic", 0.0))
+                ir = _safe_float(algo_validation.get("ir_validation", {}).get("ir", 0.0))
+                fitness = _safe_float(raw_fitness)
+                validation_score = _safe_float(algo_validation.get("score", 0.0))
+                overall_passed = algo_validation.get("overall_passed", False)
 
             discovered_factors.append({
                 "name": f"Mined_Factor_{i+1}",
-                "expression": factor_info["expression"],
+                "expression": expression,
                 "ic": _safe_float(ic),
                 "ir": _safe_float(ir),
                 "fitness": _safe_float(fitness),
+                "raw_fitness": _safe_float(raw_fitness),
                 "complexity": _safe_float(complexity),
                 "source": source,
                 "overall_passed": overall_passed,
