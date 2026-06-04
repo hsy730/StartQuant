@@ -52,6 +52,7 @@ class AlphalensAnalysisService:
         groupby_dict: Optional[Dict[str, str]] = None,
         periods: Tuple[int, ...] = (1, 5, 10),
         quantiles: int = 5,
+        max_loss: float = 0.50,
     ) -> Optional[pd.DataFrame]:
         """
         准备alphalens格式的因子数据
@@ -62,6 +63,7 @@ class AlphalensAnalysisService:
             groupby_dict: {股票代码: 行业名称}，可选
             periods: 远期收益计算周期
             quantiles: 分位数数量
+            max_loss: 最大允许数据丢失比例 (默认0.50，即50%)
 
         Returns:
             alphalens格式的factor_data (MultiIndex: date, asset)，失败返回None
@@ -115,6 +117,7 @@ class AlphalensAnalysisService:
                     periods=list(periods),
                     quantiles=quantiles,
                     binning_by_group=groupby_labels is not None,
+                    max_loss=max_loss,
                 )
 
             logger.info(
@@ -520,9 +523,9 @@ class AlphalensAnalysisService:
 
                 autocorr = alphalens.performance.factor_rank_autocorrelation(factor_data)
 
-            results["quantile_turnover"] = self._extract_turnover(turnover)
+            results["quantile_turnover"] = self._extract_turnover(turnover) if turnover is not None else {"error": "换手率数据为空"}
 
-            results["factor_autocorrelation"] = self._extract_autocorrelation(autocorr)
+            results["factor_autocorrelation"] = self._extract_autocorrelation(autocorr) if autocorr is not None else {"error": "自相关数据为空"}
 
             logger.info("换手率分析完成")
             return results
@@ -533,27 +536,41 @@ class AlphalensAnalysisService:
 
     def _extract_turnover(
         self,
-        turnover_df: pd.DataFrame,
+        turnover_data,
     ) -> Dict[str, Any]:
         """
         提取分位数换手率数据
 
         Args:
-            turnover_df: alphalens返回的换手率DataFrame
+            turnover_data: alphalens返回的换手率数据 (DataFrame 或 Series)
 
         Returns:
             各分位数各period的换手率
         """
         turnover_result: Dict[str, Any] = {}
 
-        if isinstance(turnover_df.index, pd.MultiIndex):
-            for period_col in turnover_df.columns:
+        # 处理 Series 类型（单列情况）
+        if isinstance(turnover_data, pd.Series):
+            return {
+                "mean_turnover": _to_python_float(turnover_data.mean()),
+                "std_turnover": _to_python_float(turnover_data.std()) if len(turnover_data) > 1 else 0.0,
+                "series": {
+                    "dates": _index_to_str_list(turnover_data.index),
+                    "values": _series_to_list(turnover_data),
+                },
+            }
+
+        if not hasattr(turnover_data, 'columns') or turnover_data.empty:
+            return {"error": "换手率数据为空或格式不正确"}
+
+        if isinstance(turnover_data.index, pd.MultiIndex):
+            for period_col in turnover_data.columns:
                 period_label = f"{period_col}D" if isinstance(period_col, int) else str(period_col)
                 period_data: Dict[str, Any] = {}
 
-                for quantile in turnover_df.index.get_level_values(0).unique():
+                for quantile in turnover_data.index.get_level_values(0).unique():
                     q_label = str(quantile)
-                    q_series = turnover_df.loc[quantile, period_col]
+                    q_series = turnover_data.loc[quantile, period_col]
                     if isinstance(q_series, pd.Series):
                         period_data[q_label] = {
                             "mean_turnover": _to_python_float(q_series.mean()),
@@ -570,13 +587,13 @@ class AlphalensAnalysisService:
 
                 turnover_result[period_label] = period_data
         else:
-            for period_col in turnover_df.columns:
+            for period_col in turnover_data.columns:
                 period_label = f"{period_col}D" if isinstance(period_col, int) else str(period_col)
                 period_data: Dict[str, Any] = {}
 
-                for quantile in turnover_df.index:
+                for quantile in turnover_data.index:
                     q_label = str(quantile)
-                    value = turnover_df.loc[quantile, period_col]
+                    value = turnover_data.loc[quantile, period_col]
                     if isinstance(value, pd.Series):
                         period_data[q_label] = {
                             "mean_turnover": _to_python_float(value.mean()),
@@ -609,6 +626,20 @@ class AlphalensAnalysisService:
         """
         autocorr_result: Dict[str, Any] = {}
 
+        # 处理 Series 类型（单列情况）
+        if isinstance(autocorr_df, pd.Series):
+            return {
+                "mean_autocorrelation": _to_python_float(autocorr_df.mean()),
+                "std_autocorrelation": _to_python_float(autocorr_df.std()) if len(autocorr_df) > 1 else 0.0,
+                "series": {
+                    "dates": _index_to_str_list(autocorr_df.index),
+                    "values": _series_to_list(autocorr_df),
+                },
+            }
+
+        if not hasattr(autocorr_df, 'columns') or autocorr_df.empty:
+            return {"error": "自相关数据为空或格式不正确"}
+
         for period_col in autocorr_df.columns:
             period_label = f"{period_col}D" if isinstance(period_col, int) else str(period_col)
             ac_series = autocorr_df[period_col].dropna()
@@ -631,6 +662,7 @@ class AlphalensAnalysisService:
         groupby_dict: Optional[Dict[str, str]] = None,
         periods: Tuple[int, ...] = (1, 5, 10),
         quantiles: int = 5,
+        max_loss: float = 0.50,
     ) -> Dict[str, Any]:
         """
         执行完整的alphalens因子分析
@@ -641,6 +673,7 @@ class AlphalensAnalysisService:
             groupby_dict: {股票代码: 行业名称}，可选
             periods: 远期收益计算周期
             quantiles: 分位数数量
+            max_loss: 最大允许数据丢失比例 (默认0.50)
 
         Returns:
             包含所有分析结果的字典
@@ -659,7 +692,7 @@ class AlphalensAnalysisService:
         }
 
         factor_data = self.prepare_factor_data(
-            factor_values_dict, pricing_df, groupby_dict, periods, quantiles
+            factor_values_dict, pricing_df, groupby_dict, periods, quantiles, max_loss
         )
 
         if factor_data is None or factor_data.empty:

@@ -221,14 +221,13 @@ async def calculate_ic(request: ICAnalysisRequest):
             rolling_window=252
         )
 
-        logger.info(f"IC分析原始结果: {result}")
+        logger.info(f"IC分析原始结果 keys: {result.keys() if result else 'None'}")
+        logger.info(f"IC分析原始 ic_ir: {result.get('ic_ir', {}).get('ic_stats', {}) if result else 'None'}")
 
         # 提取 IC/IR 相关数据并简化返回格式
         ic_ir_data = result.get("ic_ir", {})
         ic_stats = ic_ir_data.get("ic_stats", {})
-
-        logger.info(f"提取的ic_stats: {ic_stats}")
-
+        
         # 如果缓存中的数据无效，重新计算
         if not ic_stats or len(ic_stats) == 0:
             logger.warning("缓存中的数据无效，重新计算IC分析")

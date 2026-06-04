@@ -386,12 +386,111 @@ class AnalysisService:
             return result
 
         if ALPHALENS_AVAILABLE:
-            return self._calculate_multi_stock_ic_alphalens(factor_data_copy, factor_names, stock_codes)
-        else:
-            raise ImportError(
-                "alphalens-reloaded不可用，请安装: pip install alphalens-reloaded。"
-                "自建IC/IR计算已移除（存在已知Bug），alphalens是唯一支持的IC/IR计算引擎。"
-            )
+            # 尝试使用Alphalens（业界金标准）
+            try:
+                result = self._calculate_multi_stock_ic_alphalens(factor_data_copy, factor_names, stock_codes)
+                if result.get("ic_stats"):
+                    logger.info("Alphalens多股票IC计算成功")
+                    return result
+                else:
+                    logger.warning("Alphalens返回空结果，回退到手动计算")
+            except Exception as e:
+                logger.warning(f"Alphalens多股票IC计算失败，回退到手动计算: {e}")
+
+        # 回退：使用手动横截面IC计算
+        logger.info("使用手动横截面IC计算（Alphalens不可用或失败）")
+        return self._calculate_multi_stock_ic_manual(factor_data_copy, factor_names, stock_codes)
+
+    def _calculate_multi_stock_ic_manual(
+        self, factor_data: Dict[str, pd.DataFrame], factor_names: List[str],
+        stock_codes: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        """手动多股票横截面IC计算（当Alphalens不可用时的回退方案）"""
+        from scipy import stats as scipy_stats
+
+        codes = stock_codes or list(factor_data.keys())
+
+        ic_series = {}
+        for factor_name in factor_names:
+            # 构建横截面数据
+            all_factor_values = []
+            all_return_values = []
+            all_dates = []
+
+            for stock_code in codes:
+                df = factor_data.get(stock_code)
+                if df is None:
+                    continue
+                if factor_name not in df.columns or "future_return_1" not in df.columns:
+                    continue
+
+                for date_idx, (date, row) in enumerate(df.iterrows()):
+                    fv = row.get(factor_name)
+                    ret = row.get("future_return_1")
+
+                    if pd.notna(fv) and pd.notna(ret) and not np.isinf(fv) and not np.isinf(ret):
+                        all_factor_values.append(float(fv))
+                        all_return_values.append(float(ret))
+                        all_dates.append(date)
+
+            if len(all_factor_values) < 20:
+                continue
+
+            # 按日期分组计算每日横截面IC
+            date_ic_map = {}
+            date_groups = {}
+            for i, date in enumerate(all_dates):
+                if date not in date_groups:
+                    date_groups[date] = {"factors": [], "returns": []}
+                date_groups[date]["factors"].append(all_factor_values[i])
+                date_groups[date]["returns"].append(all_return_values[i])
+
+            ic_values = []
+            ic_dates = []
+            for date in sorted(date_groups.keys()):
+                group = date_groups[date]
+                if len(group["factors"]) >= 2:
+                    try:
+                        corr = np.corrcoef(group["factors"], group["returns"])[0, 1]
+                        if not np.isnan(corr):
+                            ic_values.append(corr)
+                            ic_dates.append(date)
+                    except Exception:
+                        continue
+
+            if len(ic_values) > 5:
+                ic_s = pd.Series(ic_values, index=ic_dates)
+                ic_series[factor_name] = ic_s
+
+        # 计算统计指标
+        ic_stats = {}
+        for factor_name, ic_s in ic_series.items():
+            ic_mean = float(ic_s.mean())
+            ic_std = float(ic_s.std()) if len(ic_s) > 1 else 0.0
+            ir = ic_mean / ic_std if ic_std != 0 else 0.0
+
+            n = len(ic_s)
+            t_stat = ic_mean / (ic_std / np.sqrt(n)) if n > 1 and ic_std > 0 else 0.0
+            p_value = float(2 * (1 - scipy_stats.t.cdf(abs(t_stat), df=n - 1))) if n > 1 else 1.0
+
+            ic_stats[factor_name] = {
+                "IC均值": ic_mean,
+                "IC标准差": ic_std,
+                "IR": ir,
+                "IC>0占比": float((ic_s > 0).mean()),
+                "IC绝对值均值": float(abs(ic_s).mean()),
+                "IC序列": ic_s.to_dict(),
+                "IC类型": "横截面IC（手动计算）",
+                "t统计量": t_stat,
+                "p值": p_value,
+            }
+
+        return {
+            "ic_stats": ic_stats,
+            "monthly_ic": self._calculate_monthly_ic(ic_series),
+            "rolling_ir": self._calculate_rolling_ir(ic_series, window=20),
+            "warning": "使用手动横截面IC计算（Alphalens不可用或返回空结果）",
+        }
 
     def _calculate_single_stock_ic(
         self, factor_data: Dict[str, pd.DataFrame], factor_names: List[str],
@@ -492,34 +591,10 @@ class AnalysisService:
         """多股票横截面IC计算（委托Alphalens——业界金标准）"""
         codes = stock_codes or list(factor_data.keys())
 
-        prices = None
-        for factor_name in factor_names:
-            factor_values_dict = {}
-            for stock_code in codes:
-                df = factor_data[stock_code]
-                if factor_name in df.columns and "close" in df.columns:
-                    factor_values_dict[stock_code] = df[factor_name].dropna()
-            if len(factor_values_dict) >= 2:
-                all_dates = set()
-                for s in factor_values_dict.values():
-                    all_dates.update(s.index)
-                all_dates = sorted(all_dates)
-                prices = pd.DataFrame(index=all_dates)
-                for stock_code in codes:
-                    df = factor_data[stock_code]
-                    if "close" in df.columns:
-                        prices[stock_code] = df["close"]
-                prices = prices.dropna(how="all")
-                break
-
-        if prices is None:
-            logger.warning("无法构建pricing数据，IC分析无法进行")
-            return {
-                "ic_stats": {},
-                "monthly_ic": {},
-                "rolling_ir": {},
-                "warning": "无法构建pricing数据，请确保因子数据包含close列",
-            }
+        all_ic_stats = {}
+        all_monthly_ic = {}
+        all_rolling_ir = {}
+        is_single_factor = len(factor_names) == 1
 
         try:
             groupby_dict = data_service.get_industry_classification(codes)
@@ -527,22 +602,45 @@ class AnalysisService:
         except Exception:
             groupby_dict = None
 
-        all_ic_stats = {}
-        all_monthly_ic = {}
-        all_rolling_ir = {}
-        is_single_factor = len(factor_names) == 1
-
         for factor_name in factor_names:
+            # 为当前因子构建独立的 pricing_df 和 factor_values_dict
             factor_values_dict = {}
+            factor_dates = set()
+
             for stock_code in codes:
-                df = factor_data[stock_code]
-                if factor_name in df.columns and "close" in df.columns:
+                df = factor_data.get(stock_code)
+                if df is not None and factor_name in df.columns and "close" in df.columns:
                     series = df[factor_name].dropna()
                     if len(series) > 0:
                         factor_values_dict[stock_code] = series
+                        factor_dates.update(series.index)
 
             if len(factor_values_dict) < 2:
                 logger.warning(f"因子 {factor_name} 有效股票数不足2只，跳过")
+                continue
+
+            # 使用因子日期范围构建pricing_df（确保forward returns可计算）
+            factor_dates_sorted = sorted(factor_dates)
+
+            # 构建完整的pricing_df（包含因子日期+额外未来日期用于计算forward returns）
+            all_price_dates = set()
+            for stock_code in codes:
+                df = factor_data.get(stock_code)
+                if df is not None and "close" in df.columns:
+                    all_price_dates.update(df.index)
+
+            # 合并因子日期和价格日期
+            combined_dates = sorted(factor_dates | all_price_dates)
+
+            prices = pd.DataFrame(index=combined_dates)
+            for stock_code in codes:
+                df = factor_data.get(stock_code)
+                if df is not None and "close" in df.columns:
+                    prices[stock_code] = df["close"]
+            prices = prices.dropna(how="all")
+
+            if prices.empty:
+                logger.warning(f"因子 {factor_name} 无法构建pricing数据")
                 continue
 
             try:
@@ -550,6 +648,7 @@ class AnalysisService:
                     factor_values_dict=factor_values_dict,
                     pricing_df=prices,
                     groupby_dict=groupby_dict,
+                    max_loss=1.0,
                 )
             except Exception as e:
                 logger.warning(f"因子 {factor_name} Alphalens分析失败: {e}")
