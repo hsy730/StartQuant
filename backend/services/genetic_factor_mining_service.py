@@ -181,6 +181,9 @@ class GeneticFactorMiningService:
         self.base_factor_values: Dict[str, dict] = {}
         self._precompute_base_factors()
 
+        # Build tradable_mask from OHLC data (detect limit-up/down days)
+        self.tradable_mask: Optional[pd.Series] = self._build_tradable_mask()
+
         # GP primitives & toolbox
         self.pset: Optional[gp.PrimitiveSet] = None
         self._setup_genetic_algorithm()
@@ -232,6 +235,43 @@ class GeneticFactorMiningService:
             self._sampled_stock_codes = random.sample(available, self.max_eval_stocks)
 
     # ------------------------------------------------------------------
+    # Tradable mask construction (limit-up/down detection)
+    # ------------------------------------------------------------------
+
+    def _build_tradable_mask(self) -> Optional[pd.Series]:
+        """Build a tradable mask from OHLC data to filter limit-up/down days.
+
+        A day is marked as NOT tradable (False) when:
+        - Close == High AND Close >= Open * 1.095 (limit-up, ~10% for main board)
+        - Close == Low  AND Close <= Open * 0.905 (limit-down, ~10%)
+
+        Returns None if the data lacks the required columns.
+        """
+        required = {"open", "close", "high", "low"}
+        if not required.issubset(self.data.columns):
+            logger.info("无法构建tradable_mask: 数据缺少OHLC列")
+            return None
+
+        try:
+            close = self.data["close"]
+            open_ = self.data["open"]
+            high = self.data["high"]
+            low = self.data["low"]
+
+            # 涨停: 收盘=最高 且 涨幅>=9.5%
+            limit_up = (close == high) & (close >= open_ * 1.095)
+            # 跌停: 收盘=最低 且 跌幅>=9.5%
+            limit_down = (close == low) & (close <= open_ * 0.905)
+
+            mask = ~(limit_up | limit_down)
+            n_excluded = (~mask).sum()
+            logger.info(f"tradable_mask构建完成: {mask.sum()}个可交易日, {n_excluded}个涨跌停日已排除")
+            return mask
+        except Exception as e:
+            logger.warning(f"构建tradable_mask失败: {e}")
+            return None
+
+    # ------------------------------------------------------------------
     # Base factor precomputation
     # ------------------------------------------------------------------
 
@@ -267,7 +307,8 @@ class GeneticFactorMiningService:
         _ensure_creator_types()
 
         n_factors = max(len(self.base_factor_values), 1)
-        self.pset = create_pset(n_factors, extended=self.use_extended_primitives)
+        self.pset = create_pset(n_factors, extended=self.use_extended_primitives,
+                                tradable_mask=self.tradable_mask)
 
         self.toolbox = base.Toolbox()
         # Phase 7: deeper initial trees when extended primitives + parsimony control bloat
@@ -310,8 +351,9 @@ class GeneticFactorMiningService:
             self.toolbox.register("evaluate", self._evaluate_factor)
         self.toolbox.register("compile", gp.compile, pset=self.pset)
 
-        # Statistics
-        self.stats = tools.Statistics(lambda ind: ind.fitness.values)
+        # Statistics — only track the primary objective (IC fitness) to avoid
+        # complexity values contaminating max/avg in NSGA-II mode.
+        self.stats = tools.Statistics(lambda ind: ind.fitness.values[0])
         self.stats.register("avg", np.mean)
         self.stats.register("min", np.min)
         self.stats.register("max", np.max)
@@ -721,7 +763,14 @@ class GeneticFactorMiningService:
             return (0.0,)
 
     def _evaluate_single_stock_ic(self, tree) -> tuple:
-        """Time-series IC evaluation (single stock / fallback)."""
+        """Time-series IC evaluation (single stock / fallback).
+
+        Uses factor validation service when possible (returns fitness in [0, 1]).
+        Falls back to rank-IC against forward returns only when validation is
+        unavailable.  The old ``std / mean`` fallback is removed because it
+        produces unbounded fitness values that are incompatible with the
+        progress callback and fitness_history display.
+        """
         fv = self._compute_factor_expression(tree)
         if fv is None or len(fv.dropna()) < 10:
             return (0.0,)
@@ -734,7 +783,23 @@ class GeneticFactorMiningService:
             )
             fitness = validation["score"] / 100.0
         else:
-            fitness = fv.std() / (fv.mean() + 1e-8)
+            # Compute forward returns from close prices for time-series IC
+            try:
+                close = self.data["close"]
+                fwd_ret = close.shift(-1) / close - 1
+                fwd_ret = fwd_ret.dropna()
+                fv_aligned = fv.reindex(fwd_ret.index).dropna()
+
+                if len(fv_aligned) < 10:
+                    return (0.0,)
+
+                # Spearman rank IC as fitness (bounded in [-1, 1], take abs)
+                from scipy.stats import spearmanr
+                corr, _ = spearmanr(fv_aligned, fwd_ret.reindex(fv_aligned.index))
+                fitness = abs(corr) if not np.isnan(corr) else 0.0
+            except Exception as e:
+                logger.debug(f"Single stock IC fallback failed: {e}")
+                fitness = 0.0
 
         return (fitness,)
 
@@ -905,16 +970,10 @@ class GeneticFactorMiningService:
             record = self.stats.compile(population)
             logbook.record(gen=gen, **record)
 
-            # For multi-objective, report the first objective (IC fitness)
-            best_fit = record.get("max", 0.0)
-            avg_fit = record.get("avg", 0.0)
-            if self.use_nsga2:
-                if isinstance(best_fit, (tuple, list, np.ndarray)):
-                    best_fit = best_fit[0] if len(best_fit) > 0 else 0.0
-                if isinstance(avg_fit, (tuple, list, np.ndarray)):
-                    avg_fit = avg_fit[0] if len(avg_fit) > 0 else 0.0
-            best_fit = float(best_fit)
-            avg_fit = float(avg_fit)
+            # Stats now only track the primary objective (IC fitness),
+            # so record["max"]/["avg"] are already scalar IC values.
+            best_fit = float(record.get("max", 0.0))
+            avg_fit = float(record.get("avg", 0.0))
 
             if self.progress_callback:
                 self.progress_callback(gen, self.n_generations, best_fit, avg_fit)

@@ -606,7 +606,7 @@ ${factorNames.map(name => `    ${name}: ${(weights[name] * 100).toFixed(2)}%`).j
       }
     } catch (error: any) {
       console.error('保存组合因子失败:', error)
-      const errorMsg = error.message || '未知错误'
+      const errorMsg = (error as any).response?.data?.detail || (error as any).response?.data?.message || error.message || '未知错误'
       message.error('保存组合因子失败: ' + errorMsg)
     } finally {
       setSavingFactor(false)

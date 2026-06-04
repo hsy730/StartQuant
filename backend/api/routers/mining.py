@@ -213,7 +213,27 @@ async def _run_mining(task_id: str, request: GeneticMiningRequest):
                         base_factor_codes.append(factor.code)
                         logger.info(f"Found factor: {factor_name} -> {factor.code}")
                     else:
-                        logger.warning(f"Factor not found in database: {factor_name}")
+                        # Fuzzy match: try case-insensitive prefix match
+                        all_factors = repo.get_all()
+                        matched = None
+                        name_lower = factor_name.lower()
+                        prefix_lower = name_lower.replace(" ", "_")
+                        prefix_matches = []
+                        for f in all_factors:
+                            if f.name.lower() == name_lower:
+                                matched = f
+                                break
+                            if f.name.lower().startswith(prefix_lower):
+                                prefix_matches.append(f)
+                        if not matched and prefix_matches:
+                            # Choose the longest name to avoid ambiguity (e.g. "rsi" prefers "rsi" over "rsi_volume")
+                            prefix_matches.sort(key=lambda f: len(f.name))
+                            matched = prefix_matches[0]
+                        if matched:
+                            base_factor_codes.append(matched.code)
+                            logger.info(f"Found factor (fuzzy): {factor_name} -> {matched.name} -> {matched.code}")
+                        else:
+                            logger.warning(f"Factor not found in database: {factor_name}")
 
                 db.close()
             except Exception as e:
@@ -438,8 +458,10 @@ async def _run_unified_mining(
     mining_service.set_progress_callback(progress_callback)
     result = mining_service.mine_factors()
 
-    if result.get("fitness_history"):
-        mining_tasks[task_id]["fitness_history"] = result["fitness_history"]
+    # NOTE: Do NOT overwrite fitness_history from result here.
+    # The progress callback already records normalized IC values per generation.
+    # result["fitness_history"] may contain raw multi-objective tuples from logbook,
+    # which would overwrite the correct callback data. _finalize_task handles this.
 
     return result
 
@@ -566,16 +588,20 @@ def _finalize_task(task_id: str, result: dict, request: GeneticMiningRequest, lo
     finally:
         db.close()
 
-    logbook = result.get("logbook")
-    if logbook is not None:
-        fitness_history = {
-            "best": [_extract_first_fitness(gen["max"]) for gen in logbook],
-            "average": [_extract_first_fitness(gen["avg"]) for gen in logbook]
-        }
-    elif result.get("fitness_history"):
-        fitness_history = result["fitness_history"]
+    # Prefer fitness_history from progress callback (already normalized IC values),
+    # fallback to logbook extraction (may contain raw multi-objective tuples).
+    fitness_history = mining_tasks[task_id].get("fitness_history")
+    if fitness_history and len(fitness_history.get("best", [])) > 0:
+        pass  # use progress callback data as-is
     else:
-        fitness_history = {"best": [], "average": []}
+        logbook = result.get("logbook")
+        if logbook is not None:
+            fitness_history = {
+                "best": [_extract_first_fitness(gen["max"]) for gen in logbook],
+                "average": [_extract_first_fitness(gen["avg"]) for gen in logbook]
+            }
+        else:
+            fitness_history = {"best": [], "average": []}
 
     result_data = {
         "factors": discovered_factors,
