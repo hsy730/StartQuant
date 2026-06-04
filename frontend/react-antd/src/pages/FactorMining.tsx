@@ -1635,7 +1635,7 @@ const FactorMining: React.FC = () => {
                   适应度函数
                 </Divider>
 
-                <Form.Item label="优化目标" name="fitness_objective" tooltip="适应度函数决定进化方向。IC均值=优化因子与收益的秩相关；IR比率=IC均值/IC标准差，偏好稳定因子；夏普比率=直接优化回测表现；综合得分=IC+IR+换手率的加权">
+                <Form.Item label="优化目标" name="fitness_objective" tooltip="适应度函数决定进化方向，不同目标侧重不同因子特性">
                   <Select>
                     <Option value="ic_mean">IC均值</Option>
                     <Option value="ir_ratio">IR比率</Option>
@@ -1651,26 +1651,35 @@ const FactorMining: React.FC = () => {
 
                     let thresholdLabel = "阈值";
                     let thresholdPlaceholder = "0.03";
+                    let thresholdTooltip = "筛选因子的阈值";
 
                     if (objective === "ic_mean") {
                       thresholdLabel = "IC阈值";
                       thresholdPlaceholder = "例如：0.03";
+                      thresholdTooltip = "因子Rank IC的绝对均值下限。推荐：0.03（宽松，挖掘更多因子）~ 0.05（严格，只要强因子）。IC>0.03为弱因子，>0.05为中等，>0.1为强因子";
+                      if (form.getFieldValue("ic_threshold") >= 1.0) form.setFieldValue("ic_threshold", 0.03);
                     } else if (objective === "ir_ratio") {
                       thresholdLabel = "IR阈值";
                       thresholdPlaceholder = "例如：0.5";
+                      thresholdTooltip = "信息比率(IR=IC均值/IC标准差)下限，衡量因子预测稳定性。推荐：0.3（宽松）~ 1.0（严格）。IR>0.5说明因子信号较稳定，>1.0非常稳定";
+                      if (form.getFieldValue("ic_threshold") < 0.1) form.setFieldValue("ic_threshold", 0.5);
                     } else if (objective === "sharpe") {
                       thresholdLabel = "夏普阈值";
                       thresholdPlaceholder = "例如：1.0";
+                      thresholdTooltip = "基于多空组合的夏普比率下限。实际以IR近似代理（IR≈年化夏普/√周期数）。推荐：0.5（宽松）~ 2.0（严格）。夏普>1.0为可接受，>2.0为优秀";
+                      if (form.getFieldValue("ic_threshold") < 0.1) form.setFieldValue("ic_threshold", 1.0);
                     } else if (objective === "combined") {
                       thresholdLabel = "综合阈值";
-                      thresholdPlaceholder = "例如：0.5";
+                      thresholdPlaceholder = "例如：0.3";
+                      thresholdTooltip = "综合得分采用代际Z-Score归一化加权：60%×Norm(IC) + 40%×Norm(IR)。IC和IR先通过前一代（GA/GFlowNet）或全部方程（PySR）的统计量做Z-Score归一化：z=clip((x-μ)/σ,-3,3)，再映射到[0,1]：Norm=(z+3)/6，最后按权重求和。σ有下界保护max(σ,max(0.01×μ,0.005))防止收敛时Z-Score爆炸。第一代使用先验值(IC_μ=0.03,IC_σ=0.02,IR_μ=0.5,IR_σ=0.3)冷启动。得分范围[0,1]，推荐：0.3（宽松）~ 0.6（严格）";
+                      if (form.getFieldValue("ic_threshold") < 0.1) form.setFieldValue("ic_threshold", 0.3);
                     }
 
                     return (
                       <Form.Item
                         label={thresholdLabel}
                         name="ic_threshold"
-                        tooltip={`筛选因子的${thresholdLabel}`}
+                        tooltip={thresholdTooltip}
                       >
                         <InputNumber
                           min={0}

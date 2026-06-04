@@ -513,6 +513,21 @@ if GFLOWNET_AVAILABLE:
             # 进度回调
             self.progress_callback = None
 
+            # Iterative Z-Score normalization for combined score
+            # Collect raw IC/IR per iteration → compute Z-Score stats → apply next iteration
+            self._gen_ic_values: List[float] = []   # raw IC values collected in current iteration
+            self._gen_ir_values: List[float] = []   # raw IR values collected in current iteration
+            # Prior cold-start values based on domain knowledge of quantitative factors
+            _PRIOR_IC_MEAN = 0.03
+            _PRIOR_IC_STD = 0.02
+            _PRIOR_IR_MEAN = 0.5
+            _PRIOR_IR_STD = 0.3
+            self._zscore_ic_mean: float = _PRIOR_IC_MEAN  # μ of IC from previous iteration
+            self._zscore_ic_std: float = _PRIOR_IC_STD   # σ of IC from previous iteration
+            self._zscore_ir_mean: float = _PRIOR_IR_MEAN  # μ of IR from previous iteration
+            self._zscore_ir_std: float = _PRIOR_IR_STD   # σ of IR from previous iteration
+            self._has_zscore_stats: bool = True  # Prior values are valid from the start
+
             # 经验回放
             self.replay_buffer = ReplayBuffer(max_size=buffer_size)
 
@@ -961,7 +976,22 @@ if GFLOWNET_AVAILABLE:
         # ---------------------------------------------------------------
 
         def _route_fitness(self, ic_results: dict) -> float:
-            """根据fitness_objective选择适应度值"""
+            """根据fitness_objective选择适应度值
+
+            对于 combined 模式，IC 和 IR 先通过代际 Z-Score 归一化，
+            使得 60/40 权重在 IC（典型0.01-0.10）和 IR（典型0.3-2.0）
+            不同量纲下仍然有效。
+
+            公式:
+                z_ic = clip((IC - μ_ic) / (σ_ic + ε), -3, 3)
+                z_ir = clip((IR - μ_ir) / (σ_ir + ε), -3, 3)
+                Norm(IC) = (z_ic + 3) / 6   → maps [-3σ, +3σ] to [0, 1]
+                Norm(IR) = (z_ir + 3) / 6
+                combined  = 0.6 * Norm(IC) + 0.4 * Norm(IR)
+
+            统计量从前一轮迭代收集，通过 _update_zscore_stats() 更新。
+            第一轮迭代使用先验冷启动值。
+            """
             best_ic = 0.0
             best_ir = 0.0
 
@@ -982,14 +1012,66 @@ if GFLOWNET_AVAILABLE:
                     if ir > best_ir:
                         best_ir = ir
 
+            # Collect raw IC/IR for iterative Z-Score computation
+            self._gen_ic_values.append(best_ic)
+            self._gen_ir_values.append(best_ir)
+
             if self.fitness_objective == "ir_ratio":
                 return best_ir
             elif self.fitness_objective == "sharpe":
                 return best_ir
             elif self.fitness_objective == "combined":
-                return 0.6 * best_ic + 0.4 * best_ir
+                # Z-Score normalize using previous iteration's statistics (with prior cold-start)
+                z_ic = max(-3.0, min((best_ic - self._zscore_ic_mean) / (self._zscore_ic_std + 1e-8), 3.0))
+                z_ir = max(-3.0, min((best_ir - self._zscore_ir_mean) / (self._zscore_ir_std + 1e-8), 3.0))
+                # Map from [-3, 3] to [0, 1]
+                norm_ic = (z_ic + 3.0) / 6.0
+                norm_ir = (z_ir + 3.0) / 6.0
+                return 0.6 * norm_ic + 0.4 * norm_ir
             else:
                 return best_ic
+
+        def _update_zscore_stats(self):
+            """Compute Z-Score normalization stats from the current iteration's
+            collected IC/IR values.  Called at each iteration boundary.
+
+            Requirements: at least 5 valid values to compute stable statistics.
+            Applies σ lower-bound protection: max(σ, max(0.01*μ, 0.005)) to
+            prevent Z-Score explosion when trajectories converge.
+            After computing, clears the collection lists for the next iteration.
+            """
+            valid_ic = [v for v in self._gen_ic_values if v > 1e-10]
+            valid_ir = [v for v in self._gen_ir_values if v > 1e-10]
+
+            if len(valid_ic) >= 5 and len(valid_ir) >= 5:
+                ic_mean = float(np.mean(valid_ic))
+                ic_std = float(np.std(valid_ic))
+                ir_mean = float(np.mean(valid_ir))
+                ir_std = float(np.std(valid_ir))
+
+                # σ lower-bound protection: prevent Z-Score explosion on convergence
+                ic_std = max(ic_std, max(0.01 * ic_mean, 0.005))
+                ir_std = max(ir_std, max(0.01 * ir_mean, 0.005))
+
+                if ic_std < self._zscore_ic_std * 0.1 or ir_std < self._zscore_ir_std * 0.1:
+                    logger.warning(
+                        f"Z-Score σ very small (IC σ={ic_std:.6f}, IR σ={ir_std:.6f}), "
+                        f"search may be stagnating"
+                    )
+
+                self._zscore_ic_mean = ic_mean
+                self._zscore_ic_std = ic_std
+                self._zscore_ir_mean = ir_mean
+                self._zscore_ir_std = ir_std
+                self._has_zscore_stats = True
+                logger.debug(
+                    f"Z-Score stats updated: IC μ={self._zscore_ic_mean:.4f} σ={self._zscore_ic_std:.4f}, "
+                    f"IR μ={self._zscore_ir_mean:.4f} σ={self._zscore_ir_std:.4f}"
+                )
+
+            # Clear for next iteration
+            self._gen_ic_values = []
+            self._gen_ir_values = []
 
         def _cv_penalty(self, factor_values_dict: Dict[str, pd.Series]) -> float:
             """交叉验证过拟合惩罚"""
@@ -1235,6 +1317,9 @@ if GFLOWNET_AVAILABLE:
                 # 刷新股票评估样本
                 if len(self.stock_pool_data) >= 2:
                     self._refresh_stock_sample()
+
+                # Update Z-Score normalization stats from this iteration's evaluations
+                self._update_zscore_stats()
 
             # ---- 构建返回结果 ----
             best_factors = []

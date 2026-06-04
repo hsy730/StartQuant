@@ -31,6 +31,7 @@ from .routers import (
     backtest,
     data,
     orchestrator,
+    preprocessing_api,
 )
 
 
@@ -132,6 +133,8 @@ app.include_router(portfolio.router, prefix="/api/portfolio", tags=["组合分�
 app.include_router(backtest.router, prefix="/api/backtest", tags=["策略回测"])
 app.include_router(data.router, prefix="/api/data", tags=["数据管理"])
 app.include_router(orchestrator.router, prefix="/api", tags=["编排器/排序学习/模型管理"])
+# preprocessing_api 自带 prefix="/api/preprocessing"，无需额外前缀
+app.include_router(preprocessing_api.router)
 
 
 @app.get("/api")

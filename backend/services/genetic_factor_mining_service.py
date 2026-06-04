@@ -162,6 +162,21 @@ class GeneticFactorMiningService:
         # Phase 4: factor value cache (keyed by tree string)
         self._factor_cache: OrderedDict = OrderedDict()
 
+        # Phase 1: Generational Z-Score normalization for combined objective
+        # Collect raw IC/IR per generation → compute Z-Score stats → apply next gen
+        self._gen_ic_values: List[float] = []  # raw IC values collected in current generation
+        self._gen_ir_values: List[float] = []  # raw IR values collected in current generation
+        # Prior cold-start values based on domain knowledge of quantitative factors
+        _PRIOR_IC_MEAN = 0.03
+        _PRIOR_IC_STD = 0.02
+        _PRIOR_IR_MEAN = 0.5
+        _PRIOR_IR_STD = 0.3
+        self._zscore_ic_mean: float = _PRIOR_IC_MEAN  # μ of IC from previous generation
+        self._zscore_ic_std: float = _PRIOR_IC_STD    # σ of IC from previous generation
+        self._zscore_ir_mean: float = _PRIOR_IR_MEAN  # μ of IR from previous generation
+        self._zscore_ir_std: float = _PRIOR_IR_STD    # σ of IR from previous generation
+        self._has_zscore_stats: bool = True  # Prior values are valid from the start
+
         # Pre-computed factor cache
         self.base_factor_values: Dict[str, dict] = {}
         self._precompute_base_factors()
@@ -390,7 +405,22 @@ class GeneticFactorMiningService:
         - ``ic_mean``  : best absolute mean IC across Spearman/Pearson (default)
         - ``ir_ratio`` : IC mean / IC std (information ratio)
         - ``sharpe``   : Sharpe-like ratio of the long-short portfolio
-        - ``combined`` : weighted blend of ic_mean and ir_ratio
+        - ``combined`` : weighted blend of *Z-Score normalized* ic_mean and ir_ratio
+
+        For ``combined``, IC and IR have very different scales (IC ≈ 0.01–0.10,
+        IR ≈ 0.3–2.0), which makes naive 0.6*IC + 0.4*IR meaningless (IR dominates).
+        Instead, we apply Z-Score normalization using statistics from the *previous*
+        generation's batch of evaluations, then clip to [-3, 3] and shift to [0, 1]:
+
+            z_ic = clip((IC - μ_ic) / (σ_ic + ε), -3, 3)
+            z_ir = clip((IR - μ_ir) / (σ_ir + ε), -3, 3)
+            Norm(IC) = (z_ic + 3) / 6      → maps [-3σ, +3σ] to [0, 1]
+            Norm(IR) = (z_ir + 3) / 6
+            combined  = 0.6 * Norm(IC) + 0.4 * Norm(IR)
+
+        The 60/40 weighting is now meaningful because both components are on the
+        same [0, 1] scale. Statistics are computed at generation boundaries in
+        ``_update_zscore_stats()``.
         """
         best_ic = 0.0
         best_ir = 0.0
@@ -412,15 +442,67 @@ class GeneticFactorMiningService:
                 if ir > best_ir:
                     best_ir = ir
 
+        # Collect raw IC/IR for generational Z-Score computation
+        self._gen_ic_values.append(best_ic)
+        self._gen_ir_values.append(best_ir)
+
         if self.fitness_objective == "ir_ratio":
             return best_ir
         elif self.fitness_objective == "sharpe":
             # Approximate Sharpe: use IR as proxy
             return best_ir
         elif self.fitness_objective == "combined":
-            return 0.6 * best_ic + 0.4 * best_ir
+            # Z-Score normalize using previous generation's statistics (with prior cold-start)
+            z_ic = max(-3.0, min((best_ic - self._zscore_ic_mean) / (self._zscore_ic_std + 1e-8), 3.0))
+            z_ir = max(-3.0, min((best_ir - self._zscore_ir_mean) / (self._zscore_ir_std + 1e-8), 3.0))
+            # Map from [-3, 3] to [0, 1]
+            norm_ic = (z_ic + 3.0) / 6.0
+            norm_ir = (z_ir + 3.0) / 6.0
+            return 0.6 * norm_ic + 0.4 * norm_ir
         else:  # ic_mean (default)
             return best_ic
+
+    def _update_zscore_stats(self):
+        """Compute Z-Score normalization stats from the current generation's
+        collected IC/IR values.  Called at each generation boundary.
+
+        Requirements: at least 5 valid values to compute stable statistics.
+        After computing, clears the collection lists for the next generation.
+        Applies σ lower-bound protection: max(σ, max(0.01*μ, 0.005)) to
+        prevent Z-Score explosion when the population converges.
+        """
+        valid_ic = [v for v in self._gen_ic_values if v > 1e-10]
+        valid_ir = [v for v in self._gen_ir_values if v > 1e-10]
+
+        if len(valid_ic) >= 5 and len(valid_ir) >= 5:
+            ic_mean = float(np.mean(valid_ic))
+            ic_std = float(np.std(valid_ic))
+            ir_mean = float(np.mean(valid_ir))
+            ir_std = float(np.std(valid_ir))
+
+            # σ lower-bound protection: prevent Z-Score explosion on convergence
+            ic_std = max(ic_std, max(0.01 * ic_mean, 0.005))
+            ir_std = max(ir_std, max(0.01 * ir_mean, 0.005))
+
+            if ic_std < self._zscore_ic_std * 0.1 or ir_std < self._zscore_ir_std * 0.1:
+                logger.warning(
+                    f"Z-Score σ very small (IC σ={ic_std:.6f}, IR σ={ir_std:.6f}), "
+                    f"search may be stagnating"
+                )
+
+            self._zscore_ic_mean = ic_mean
+            self._zscore_ic_std = ic_std
+            self._zscore_ir_mean = ir_mean
+            self._zscore_ir_std = ir_std
+            self._has_zscore_stats = True
+            logger.debug(
+                f"Z-Score stats updated: IC μ={self._zscore_ic_mean:.4f} σ={self._zscore_ic_std:.4f}, "
+                f"IR μ={self._zscore_ir_mean:.4f} σ={self._zscore_ir_std:.4f}"
+            )
+
+        # Clear for next generation
+        self._gen_ic_values = []
+        self._gen_ir_values = []
 
     # ------------------------------------------------------------------
     # Evaluation
@@ -746,6 +828,9 @@ class GeneticFactorMiningService:
         for ind, fit in zip(population, fitnesses):
             ind.fitness.values = fit
 
+        # Update Z-Score normalization stats from initial population
+        self._update_zscore_stats()
+
         # Hall-of-Fame (stored as instance attr so evaluation can access it)
         hof_size = max(self.elite_size * 2, 10)
         halloffame = tools.HallOfFame(hof_size)
@@ -811,6 +896,9 @@ class GeneticFactorMiningService:
 
             # ---- Replace population: offspring + elites ----
             population[:] = offspring + elites
+
+            # Update Z-Score normalization stats from this generation's evaluations
+            self._update_zscore_stats()
 
             halloffame.update(population)
 
@@ -915,6 +1003,9 @@ class GeneticFactorMiningService:
         for ind, fit in zip(population, fitnesses):
             ind.fitness.values = fit
 
+        # Update Z-Score normalization stats from initial population
+        self._update_zscore_stats()
+
         halloffame = tools.HallOfFame(5)
         halloffame.update(population)
         self._halloffame = halloffame
@@ -943,6 +1034,10 @@ class GeneticFactorMiningService:
                 ind.fitness.values = fit
 
             population[:] = offspring + elites
+
+            # Update Z-Score normalization stats from this generation's evaluations
+            self._update_zscore_stats()
+
             halloffame.update(population)
 
         best = halloffame[0]

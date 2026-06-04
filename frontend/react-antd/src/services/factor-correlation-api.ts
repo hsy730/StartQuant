@@ -7,10 +7,9 @@
  * POST /api/analysis/correlation/mixed-type - Phik混合类型分析
  */
 
-import axios from 'axios';
-import { useState } from 'react';
+import { useState } from 'react'
 
-const API_BASE_URL = 'http://localhost:8000/api/analysis';
+import request from './api'
 
 // ==================== 类型定义 ====================
 
@@ -135,20 +134,20 @@ interface CorrelationAnalysisResponse {
 // ==================== API 调用函数 ====================
 
 export async function analyzeFactorCorrelation(
-  request: CorrelationAnalysisRequest
+  requestData: CorrelationAnalysisRequest
 ): Promise<CorrelationAnalysisResponse> {
   try {
-    const response = await axios.post<CorrelationAnalysisResponse>(
-      `${API_BASE_URL}/correlation/enhanced`,
-      request,
+    const data = await request.post<CorrelationAnalysisResponse>(
+      '/analysis/correlation/enhanced',
+      requestData,
       { timeout: 30000 }
-    );
-    
-    return response.data;
-    
+    )
+
+    return data
+
   } catch (error) {
-    console.error('因子相关性分析失败:', error);
-    throw error;
+    console.error('因子相关性分析失败:', error)
+    throw error
   }
 }
 

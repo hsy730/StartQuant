@@ -134,19 +134,24 @@ export const api = {
     return request.get(`/data/stock-pools/${poolId}/stocks`, { timeout: 60000 })
   },
 
-  // 组合分析
+  // 组合分析（权重优化）
   analyzePortfolio(data: any) {
-    return request.post('/portfolio/analyze', data)
+    return request.post('/portfolio/optimize-weights', data)
   },
 
-  // 策略回测
+  // 策略回测（单策略）
   runBacktest(data: any) {
-    return request.post('/backtesting/run', data)
+    return request.post('/backtest/single', data)
   },
 
-  // 获取回测结果
-  getBacktestResult(taskId: string) {
-    return request.get(`/backtesting/results/${taskId}`)
+  // 获取回测历史
+  getBacktestHistory(params?: { limit?: number }) {
+    return request.get('/backtest/history', { params })
+  },
+
+  // 策略对比
+  runBacktestComparison(data: any) {
+    return request.post('/backtest/comparison', data)
   },
 
   // 验证因子公式
