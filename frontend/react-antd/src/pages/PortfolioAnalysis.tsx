@@ -29,7 +29,7 @@ import {
 } from '@ant-design/icons'
 import { AimOutlined, BulbOutlined } from '@ant-design/icons'
 import * as echarts from 'echarts'
-import axios from 'axios'
+import { api } from '@/services/api'
 import dayjs from 'dayjs'
 import './PortfolioAnalysis.css'
 
@@ -104,9 +104,9 @@ const PortfolioAnalysis: React.FC = () => {
   // 加载因子列表
   const loadFactors = async () => {
     try {
-      const response = await axios.get('/api/factors')
-      if (response.data.success) {
-        setFactors(response.data.data)
+      const response = await api.getFactors()
+      if (response.success) {
+        setFactors(response.data)
       }
     } catch (error) {
       console.error('加载因子列表失败:', error)
@@ -183,10 +183,10 @@ const PortfolioAnalysis: React.FC = () => {
 
       setOptimizationResult(null)
 
-      const response = await axios.post('/api/portfolio/optimize-weights', requestData)
+      const response = await api.optimizeWeights(requestData)
 
-      if (response.data.success) {
-        const resultData = response.data.data
+      if (response.success) {
+        const resultData = response.data
         setOptimizationResult(resultData)
         message.success('权重优化完成')
 
@@ -215,7 +215,7 @@ const PortfolioAnalysis: React.FC = () => {
           }
         }, 300)
       } else {
-        message.error(response.data.message || '优化失败')
+        message.error(response.message || '优化失败')
       }
     } catch (error: any) {
       console.error('权重优化失败:', error)
@@ -595,18 +595,18 @@ ${factorNames.map(name => `    ${name}: ${(weights[name] * 100).toFixed(2)}%`).j
 
     try {
       setSavingFactor(true)
-      const response = await axios.post('/api/factors', factorData)
+      const response = await api.createFactor(factorData)
 
-      if (response.data.success) {
+      if (response.success) {
         message.success('组合因子保存成功')
         // 重新加载因子列表
         loadFactors()
       } else {
-        message.error(response.data.message || '保存失败')
+        message.error(response.message || '保存失败')
       }
     } catch (error: any) {
       console.error('保存组合因子失败:', error)
-      const errorMsg = error.response?.data?.detail || error.response?.data?.message || error.message || '未知错误'
+      const errorMsg = error.message || '未知错误'
       message.error('保存组合因子失败: ' + errorMsg)
     } finally {
       setSavingFactor(false)
@@ -796,18 +796,18 @@ ${factorNames.map(name => `    ${name}: ${(weights[name] * 100).toFixed(2)}%`).j
 
       setCompareResult(null)
 
-      const response = await axios.post('/api/portfolio/compare-methods', requestData)
+      const response = await api.compareWeightMethods(requestData)
 
-      if (response.data.success) {
-        setCompareResult(response.data.data.results || response.data.data)
+      if (response.success) {
+        setCompareResult(response.data.results || response.data)
         message.success('方法对比完成')
 
         // 延迟渲染图表
         setTimeout(() => {
-          updateCompareChart(response.data.data.results || response.data.data)
+          updateCompareChart(response.data.results || response.data)
         }, 300)
       } else {
-        message.error(response.data.message || '对比失败')
+        message.error(response.message || '对比失败')
       }
     } catch (error: any) {
       console.error('方法对比失败:', error)

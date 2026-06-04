@@ -35,7 +35,7 @@ import {
 import dayjs from 'dayjs'
 import type { Dayjs } from 'dayjs'
 import * as echarts from 'echarts'
-import axios from 'axios'
+import { api } from '@/services/api'
 import PreprocessingConfigPanel, { PreprocessingConfig } from '@/components/PreprocessingConfigPanel'
 import './Backtesting.css'
 
@@ -150,9 +150,9 @@ const Backtesting: React.FC = () => {
   // ========== 数据加载 ==========
   const loadFactors = async () => {
     try {
-      const response = await axios.get('/api/factors')
-      if (response.data.success) {
-        setFactors(response.data.data || [])
+      const response = await api.getFactors()
+      if (response.success) {
+        setFactors(response.data || [])
       }
     } catch (error) {
       console.error('加载因子失败:', error)
@@ -218,23 +218,23 @@ const Backtesting: React.FC = () => {
       setChartData({})
       setSingleBacktestResult(null)
 
-      const response = await axios.post('/api/backtest/single', config)
+      const response = await api.runBacktest(config)
 
-      if (response.data.success) {
-        setSingleBacktestResult(response.data.data)
+      if (response.success) {
+        setSingleBacktestResult(response.data)
 
         // 设置图表数据
-        if (response.data.data.chart_data) {
+        if (response.data.chart_data) {
           const chartDataForStocks: any = {}
 
           // 检查是否是单股票模式返回的结构
-          if (response.data.data.chart_data.kline) {
+          if (response.data.chart_data.kline) {
             // 单股票模式：直接使用返回的数据
             const firstStockCode = config.stock_codes[0]
-            chartDataForStocks[firstStockCode] = response.data.data.chart_data
+            chartDataForStocks[firstStockCode] = response.data.chart_data
           } else {
             // 多股票模式：数据结构已经是 {stock_code: chart_data}
-            Object.assign(chartDataForStocks, response.data.data.chart_data)
+            Object.assign(chartDataForStocks, response.data.chart_data)
           }
 
           setChartData(chartDataForStocks)
@@ -244,11 +244,11 @@ const Backtesting: React.FC = () => {
 
         // 延迟渲染旧图表（保留向后兼容）
         setTimeout(() => {
-          renderEquityChart(response.data.data.result.equity_curve || response.data.data.result.returns || [])
-          renderDrawdownChart(response.data.data.result.equity_curve || response.data.data.result.returns || [])
+          renderEquityChart(response.data.result.equity_curve || response.data.result.returns || [])
+          renderDrawdownChart(response.data.result.equity_curve || response.data.result.returns || [])
         }, 300)
       } else {
-        message.error(response.data.message || '回测失败')
+        message.error(response.message || '回测失败')
       }
     } catch (error: any) {
       console.error('回测失败:', error)

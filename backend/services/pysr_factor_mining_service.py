@@ -113,10 +113,6 @@ class PySRFactorMiningService:
         self._current_iteration = 0
         self._total_iterations = niterations
 
-        # Z-Score batch normalization for combined score (post-hoc, after all equations evaluated)
-        self._batch_ic_values: List[float] = []   # collected raw |IC| values for batch Z-Score
-        self._batch_ir_values: List[float] = []   # collected raw |IR| values for batch Z-Score
-
     def set_stock_pool(self, stock_codes: List[str], start_date: str, end_date: str):
         self.stock_codes = stock_codes
         self.stock_pool_data = data_service.get_multiple_stocks_data(stock_codes, start_date, end_date)
@@ -476,9 +472,9 @@ class PySRFactorMiningService:
     def _route_fitness(self, ic_results: dict) -> float:
         """Select the fitness value according to ``self.fitness_objective``.
 
-        For ``combined``, raw IC and IR are collected for post-hoc batch Z-Score
-        normalization (applied after all equations are evaluated in mine_factors).
-        During evaluation, a raw weighted score is returned as a placeholder.
+        For ``combined``, returns a raw weighted score as a placeholder; the actual
+        Z-Score normalization is applied post-hoc in ``_apply_batch_zscore`` using
+        only the filtered best_factors subset.
 
         For other objectives, returns the raw metric directly.
         """
@@ -502,10 +498,6 @@ class PySRFactorMiningService:
                 if ir > best_ir:
                     best_ir = ir
 
-        # Collect raw IC/IR for batch Z-Score normalization
-        self._batch_ic_values.append(best_ic)
-        self._batch_ir_values.append(best_ir)
-
         if self.fitness_objective == "ir_ratio":
             return best_ir
         elif self.fitness_objective == "sharpe":
@@ -528,8 +520,19 @@ class PySRFactorMiningService:
         if not best_factors or self.fitness_objective != "combined":
             return best_factors
 
-        valid_ic = [v for v in self._batch_ic_values if v > 1e-10]
-        valid_ir = [v for v in self._batch_ir_values if v > 1e-10]
+        # Dynamically collect raw IC/IR from best_factors (filtered subset only)
+        valid_ic = []
+        valid_ir = []
+        for factor_info in best_factors:
+            validation = factor_info.get("validation", {})
+            if not isinstance(validation, dict):
+                continue
+            raw_ic = abs(validation.get("_raw_ic_mean", 0.0))
+            raw_ir = abs(validation.get("_raw_ir", 0.0))
+            if raw_ic > 1e-10:
+                valid_ic.append(raw_ic)
+            if raw_ir > 1e-10:
+                valid_ir.append(raw_ir)
 
         if len(valid_ic) < 2 or len(valid_ir) < 2:
             logger.warning("Too few valid IC/IR values for batch Z-Score, keeping raw scores")
@@ -572,10 +575,6 @@ class PySRFactorMiningService:
         best_factors.sort(key=lambda f: f.get("fitness", 0), reverse=True)
         for i, fi in enumerate(best_factors):
             fi["rank"] = i + 1
-
-        # Clear batch data
-        self._batch_ic_values = []
-        self._batch_ir_values = []
 
         return best_factors
 

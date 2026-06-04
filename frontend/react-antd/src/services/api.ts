@@ -135,8 +135,18 @@ export const api = {
   },
 
   // 组合分析（权重优化）
-  analyzePortfolio(data: any) {
+  optimizeWeights(data: any) {
     return request.post('/portfolio/optimize-weights', data)
+  },
+
+  // 组合分析（方法对比）
+  compareWeightMethods(data: any) {
+    return request.post('/portfolio/compare-methods', data)
+  },
+
+  // 组合分析（综合得分）
+  calculateCompositeScore(data: any) {
+    return request.post('/portfolio/composite-score', data)
   },
 
   // 策略回测（单策略）
@@ -149,9 +159,19 @@ export const api = {
     return request.get('/backtest/history', { params })
   },
 
-  // 策略对比
-  runBacktestComparison(data: any) {
-    return request.post('/backtest/comparison', data)
+  // 数据预处理（智能推荐）
+  recommendPreprocessing(data: any) {
+    return request.post('/preprocessing/recommend', data)
+  },
+
+  // 数据预处理（配置验证）
+  validatePreprocessing(data: any) {
+    return request.post('/preprocessing/validate', data)
+  },
+
+  // 因子相关性分析
+  analyzeCorrelation(data: any) {
+    return request.post('/analysis/correlation/enhanced', data, { timeout: 30000 })
   },
 
   // 验证因子公式

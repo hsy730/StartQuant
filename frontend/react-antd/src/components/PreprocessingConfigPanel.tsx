@@ -15,7 +15,9 @@ import {
   Row,
   Col,
   Divider,
-  Collapse
+  Collapse,
+  InputNumber,
+  message
 } from 'antd'
 import {
   QuestionCircleOutlined,
@@ -131,19 +133,13 @@ export const PreprocessingConfigPanel: React.FC<PreprocessingConfigPanelProps> =
 
     setLoading(true)
     try {
-      const response = await fetch('/api/preprocessing/recommend', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          stock_codes: stockCodes,
-          factor_names: factorNames,
-          start_date: startDate || '2024-01-01',
-          end_date: endDate || new Date().toISOString().split('T')[0],
-          mode: 'smart'
-        })
+      const result = await api.recommendPreprocessing({
+        stock_codes: stockCodes,
+        factor_names: factorNames,
+        start_date: startDate || '2024-01-01',
+        end_date: endDate || new Date().toISOString().split('T')[0],
+        mode: 'smart'
       })
-
-      const result = await response.json()
 
       if (result.success) {
         setRecommendation(result.data)
@@ -171,13 +167,7 @@ export const PreprocessingConfigPanel: React.FC<PreprocessingConfigPanelProps> =
   const validateConfig = useCallback(async () => {
     setValidating(true)
     try {
-      const response = await fetch('/api/preprocessing/validate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(value)
-      })
-
-      const result = await response.json()
+      const result = await api.validatePreprocessing(value)
 
       if (result.success) {
         setValidationResult(result.data)
@@ -805,9 +795,5 @@ export const PreprocessingConfigPanel: React.FC<PreprocessingConfigPanelProps> =
 
 // 导出默认配置常量
 export { DEFAULT_CONFIG }
-
-// 导入缺失的组件（Ant Design 5.x）
-import { InputNumber } from 'antd'
-import { message } from 'antd'
 
 export default PreprocessingConfigPanel
