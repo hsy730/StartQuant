@@ -224,8 +224,17 @@ class DualMiningService:
         self._tree_prescreen_service = None
         self._gflownet_service = None
         self._deep_factor_service = None
+        # 股票池信息（在set_stock_pool时保存，用于子服务创建后传递）
+        self._stock_codes: Optional[List[str]] = None
+        self._stock_start_date: Optional[str] = None
+        self._stock_end_date: Optional[str] = None
 
     def set_stock_pool(self, stock_codes: List[str], start_date: str, end_date: str):
+        # 保存股票池信息，以便子服务创建时传递
+        self._stock_codes = stock_codes
+        self._stock_start_date = start_date
+        self._stock_end_date = end_date
+        # 如果子服务已存在，直接传递
         if self._gp_service is not None:
             self._gp_service.set_stock_pool(stock_codes, start_date, end_date)
         if self._pysr_service is not None:
@@ -236,6 +245,13 @@ class DualMiningService:
             self._gflownet_service.set_stock_pool(stock_codes, start_date, end_date)
         if self._deep_factor_service is not None:
             self._deep_factor_service.set_stock_pool(stock_codes, start_date, end_date)
+
+    def _pass_stock_pool_to_service(self, service):
+        """将保存的股票池信息传递给新创建的子服务"""
+        if self._stock_codes is not None and service is not None:
+            service.set_stock_pool(
+                self._stock_codes, self._stock_start_date, self._stock_end_date
+            )
 
     def set_progress_callback(self, callback):
         self.progress_callback = callback
@@ -269,6 +285,7 @@ class DualMiningService:
             max_eval_stocks=self.max_eval_stocks,
             **self._gp_params,
         )
+        self._pass_stock_pool_to_service(self._gp_service)
 
         if self.progress_callback:
             def gp_progress(gen, total_gen, best_fitness, avg_fitness):
@@ -297,6 +314,7 @@ class DualMiningService:
             max_eval_stocks=self.max_eval_stocks,
             **self._pysr_params,
         )
+        self._pass_stock_pool_to_service(self._pysr_service)
 
         if self.progress_callback:
             def pysr_progress(iteration, total_iter, best_fitness, avg_fitness):
@@ -421,6 +439,7 @@ class DualMiningService:
             max_eval_stocks=self.max_eval_stocks,
             **self._gflownet_params,
         )
+        self._pass_stock_pool_to_service(self._gflownet_service)
 
         if self.progress_callback:
             def gfn_progress(iteration, total_iter, best_fitness, avg_fitness, **kwargs):
@@ -461,6 +480,7 @@ class DualMiningService:
             max_eval_stocks=self.max_eval_stocks,
             **filtered_deep,
         )
+        self._pass_stock_pool_to_service(self._deep_factor_service)
 
         if self.progress_callback:
             def deep_progress(epoch, total_epochs, best_fitness, avg_fitness, **kwargs):

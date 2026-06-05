@@ -68,8 +68,12 @@ class FactorNeutralizationService:
         if len(valid_data) < self.MIN_SAMPLES:
             raise ValueError("有效数据不足，无法进行中性化")
 
-        log_market_cap = np.log(valid_data[market_cap_column].replace(0, np.nan))
-        log_market_cap = log_market_cap.fillna(log_market_cap.mean())
+        # 排除市值<=0的记录，避免log(0)或log(负数)
+        valid_data = valid_data[valid_data[market_cap_column] > 0]
+        if len(valid_data) < self.MIN_SAMPLES:
+            raise ValueError("有效数据不足（市值>0），无法进行中性化")
+
+        log_market_cap = np.log(valid_data[market_cap_column])
 
         model = LinearRegression()
         X = log_market_cap.values.reshape(-1, 1)

@@ -320,53 +320,113 @@ class FactorGeneratorService:
         将因子表达式编译为可执行代码
 
         Args:
-            expression: 因子表达式
+            expression: 因子表达式，如 mean(close, 20) / std(close, 20)
             data_column: 数据列名
 
         Returns:
             可执行的Python代码
         """
-        # 替换函数为实际实现
-        code = expression
+        import re
 
-        # 替换统计函数
-        # rank
-        code = code.replace(
-            "rank(",
-            f".rank(pct=True).rolling(252, min_periods=1)."
-        )
+        # 使用正则进行函数替换，避免简单字符串替换的互相干扰
+        # 定义函数映射表（按函数名长度降序排列，避免短名匹配长名）
+        # 格式: (函数名, 替换模板, 是否需要特殊处理)
+        func_map = [
+            # 技术指标 → talib
+            ("BBANDS", "talib.BBANDS({args})"),
+            ("STOCH", "talib.STOCH({args})"),
+            ("MACD", "talib.MACD({args})"),
+            ("SMA", "talib.SMA({args})"),
+            ("EMA", "talib.EMA({args})"),
+            ("RSI", "talib.RSI({args})"),
+            ("ADX", "talib.ADX({args})"),
+            ("CCI", "talib.CCI({args})"),
+            ("ATR", "talib.ATR({args})"),
+            # 滚动统计函数 → df.rolling().func()
+            ("kurtosis", "df['{col}'].rolling(window=252, min_periods=1).kurtosis()"),
+            ("quantile", "df['{col}'].rolling(window=252, min_periods=1).quantile({args})"),
+            ("median", "df['{col}'].rolling(window=252, min_periods=1).median()"),
+            ("skew", "df['{col}'].rolling(window=252, min_periods=1).skew()"),
+            ("std", "df['{col}'].rolling(window=252, min_periods=1).std()"),
+            ("mean", "df['{col}'].rolling(window=252, min_periods=1).mean()"),
+            ("max", "df['{col}'].rolling(window=252, min_periods=1).max()"),
+            ("min", "df['{col}'].rolling(window=252, min_periods=1).min()"),
+            # 排名函数
+            ("rank", "df['{col}'].rolling(252, min_periods=1).rank(pct=True)"),
+            # 差分/变化率
+            ("diff", "df['{col}'].diff({args})"),
+            ("pct_change", "df['{col}'].pct_change({args})"),
+            # 数学函数
+            ("log", "np.log({args})"),
+            ("abs", "np.abs({args})"),
+            ("sqrt", "np.sqrt({args})"),
+            ("exp", "np.exp({args})"),
+            # zscore 特殊处理
+            ("zscore", None),  # 手动处理
+        ]
 
-        # zscore (需要特殊处理)
-        code = code.replace("zscore(", "((")
+        # 用栈解析表达式，逐层替换函数调用
+        def parse_and_replace(expr: str) -> str:
+            """递归解析表达式并替换函数调用"""
+            expr = expr.strip()
 
-        # 均值、标准差等滚动函数
-        for func in ["mean", "std", "max", "min", "median", "skew", "kurtosis"]:
-            code = code.replace(
-                f"{func}(",
-                f".rolling(window=252, min_periods=1).{func}("
-            )
+            # 匹配函数调用: func_name(args)
+            # 从最外层函数开始解析
+            i = 0
+            while i < len(expr):
+                if expr[i].isalpha() or expr[i] == '_':
+                    # 找到函数名
+                    j = i
+                    while j < len(expr) and (expr[j].isalnum() or expr[j] == '_'):
+                        j += 1
+                    func_name = expr[i:j]
+                    # 跳过空白
+                    k = j
+                    while k < len(expr) and expr[k] == ' ':
+                        k += 1
+                    if k < len(expr) and expr[k] == '(':
+                        # 找到匹配的右括号
+                        paren_depth = 1
+                        m = k + 1
+                        while m < len(expr) and paren_depth > 0:
+                            if expr[m] == '(':
+                                paren_depth += 1
+                            elif expr[m] == ')':
+                                paren_depth -= 1
+                            m += 1
+                        args = expr[k+1:m-1]
+                        # 递归解析参数
+                        parsed_args = parse_and_replace(args)
+                        # 替换函数
+                        prefix = expr[:i]
+                        suffix = expr[m:]
+                        # 查找函数映射
+                        replaced = False
+                        for fname, template in func_map:
+                            if fname == func_name and template is not None:
+                                if '{col}' in template:
+                                    replacement = template.replace('{col}', data_column).replace('{args}', parsed_args)
+                                else:
+                                    replacement = template.replace('{args}', parsed_args)
+                                replaced = True
+                                break
+                        if not replaced:
+                            # 未映射的函数，保持原样
+                            replacement = f"{func_name}({parsed_args})"
+                        return prefix + replacement + parse_and_replace(suffix)
+                    else:
+                        i = j
+                else:
+                    i += 1
+            return expr
 
-        # 其他统计函数
-        code = code.replace("diff(", ".diff(")
-        code = code.replace("pct_change(", ".pct_change(")
-        code = code.replace("log(", "np.log(")
-        code = code.replace("abs(", "np.abs(")
-        code = code.replace("sqrt(", "np.sqrt(")
-        code = code.replace("exp(", "np.exp(")
-
-        # quantile需要特殊处理
-        code = code.replace("quantile(", ".quantile(")
-
-        # 替换技术指标
-        code = code.replace("SMA(", "talib.SMA(")
-        code = code.replace("EMA(", "talib.EMA(")
-        code = code.replace("RSI(", "talib.RSI(")
-        code = code.replace("MACD(", "talib.MACD(")
-        code = code.replace("BBANDS(", "talib.BBANDS(")
-        code = code.replace("STOCH(", "talib.STOCH(")
-        code = code.replace("ADX(", "talib.ADX(")
-        code = code.replace("CCI(", "talib.CCI(")
-        code = code.replace("ATR(", "talib.ATR(")
+        # 如果表达式是 zscore(expr)，特殊处理
+        if expression.strip().startswith("zscore("):
+            inner = expression.strip()[len("zscore("):-1]
+            parsed_inner = parse_and_replace(inner)
+            code = f"({parsed_inner} - ({parsed_inner}).rolling(252, min_periods=1).mean()) / (({parsed_inner}).rolling(252, min_periods=1).std() + 1e-8)"
+        else:
+            code = parse_and_replace(expression)
 
         # 包装成完整的代码
         full_code = f"""
@@ -384,14 +444,6 @@ def calculate_factor(df):
     # 计算因子
     try:
         factor = {code}
-
-        # 处理zscore特殊情况
-        if isinstance(factor, pd.Series):
-            # 检查是否是zscore表达式（以"("开头但没有匹配的右括号）
-            if '{expression}'.startswith('zscore('):
-                # 移除最外层的多余括号
-                factor = (factor - factor.mean()) / (factor.std() + 1e-8)
-
         return factor
     except Exception as e:
         print(f"计算因子时出错: {{e}}")

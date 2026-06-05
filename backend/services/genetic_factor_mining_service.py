@@ -590,7 +590,7 @@ class GeneticFactorMiningService:
                     diversity_penalty += self.diversity_penalty_coeff * sim
 
         adjusted_fitness = raw_fitness - parsimony_penalty - diversity_penalty
-        return (max(adjusted_fitness, 0.0),)
+        return (adjusted_fitness,)
 
     def _evaluate_factor_multi(self, individual) -> tuple:
         """Multi-objective evaluation for NSGA-II.

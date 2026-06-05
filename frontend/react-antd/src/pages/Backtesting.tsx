@@ -166,7 +166,7 @@ const Backtesting: React.FC = () => {
         message.success(`已自动选择因子: ${matchedFactor.name}`)
       }
     }
-  }, [location.search, factors.length])
+  }, [location.search, factors])
 
   // ========== 数据加载 ==========
   const loadFactors = async () => {

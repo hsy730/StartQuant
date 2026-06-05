@@ -239,24 +239,32 @@ class TearSheetService:
         try:
             all_ics = []
             
+            # 横截面IC：每个日期计算因子值与未来收益的Spearman秩相关
+            from scipy.stats import spearmanr
+            
+            # 构建日期-股票面板
+            date_factors = {}
+            date_returns = {}
             for stock_code, df in factor_data.items():
                 if factor_name in df.columns and "close" in df.columns:
                     df_copy = df.copy()
-                    future_ret = df_copy["close"].pct_change(1).shift(-1)
-                    valid_mask = (
-                        df_copy[factor_name].notna() & 
-                        future_ret.notna()
-                    )
-                    
-                    if valid_mask.sum() > 20:
-                        ic_series = (
-                            df_copy.loc[valid_mask, factor_name]
-                            .rolling(20)
-                            .corr(future_ret.loc[valid_mask])
-                        )
-                        valid_ic = ic_series.dropna()
-                        if len(valid_ic) > 0:
-                            all_ics.extend(valid_ic.tolist())
+                    df_copy["future_return"] = df_copy["close"].pct_change(1).shift(-1)
+                    valid_mask = df_copy[factor_name].notna() & df_copy["future_return"].notna()
+                    for date, row in df_copy[valid_mask].iterrows():
+                        if date not in date_factors:
+                            date_factors[date] = []
+                            date_returns[date] = []
+                        date_factors[date].append(row[factor_name])
+                        date_returns[date].append(row["future_return"])
+            
+            # 每日横截面Rank IC
+            for date in sorted(date_factors.keys()):
+                fv = date_factors[date]
+                rv = date_returns[date]
+                if len(fv) >= 5 and np.std(fv) > 1e-12:
+                    ic, _ = spearmanr(fv, rv)
+                    if not np.isnan(ic):
+                        all_ics.append(ic)
             
             if not all_ics:
                 return None

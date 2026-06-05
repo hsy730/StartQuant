@@ -84,11 +84,18 @@ class DataPreprocessingService:
         outliers = self.detect_outliers(df, column, n_sigma, detection_method)
 
         if method == "clip":
-            # 截断到边界值
-            mean = df[column].mean()
-            std = df[column].std()
-            lower_bound = mean - n_sigma * std
-            upper_bound = mean + n_sigma * std
+            # 截断到边界值（根据检测方法选择对应的边界计算方式）
+            if detection_method == "iqr":
+                Q1 = df[column].quantile(0.25)
+                Q3 = df[column].quantile(0.75)
+                IQR = Q3 - Q1
+                lower_bound = Q1 - 1.5 * IQR
+                upper_bound = Q3 + 1.5 * IQR
+            else:  # std
+                mean = df[column].mean()
+                std = df[column].std()
+                lower_bound = mean - n_sigma * std
+                upper_bound = mean + n_sigma * std
             df.loc[df[column] < lower_bound, column] = lower_bound
             df.loc[df[column] > upper_bound, column] = upper_bound
 

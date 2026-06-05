@@ -704,13 +704,8 @@ class StockRankerService:
                 # 整个组属于验证集
                 valid_groups.append(g)
             else:
-                # 组被分割：前半部分训练，后半部分验证
-                train_part = split_idx - cumulative
-                valid_part = g - train_part
-                if train_part > 0:
-                    train_groups.append(train_part)
-                if valid_part > 0:
-                    valid_groups.append(valid_part)
+                # 组被分割：整个组归训练集（Learning-to-Rank要求同一日期组完整）
+                train_groups.append(g)
             cumulative += g
 
         # 确保总和正确（容错）

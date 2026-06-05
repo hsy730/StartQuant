@@ -473,6 +473,9 @@ class PySRFactorMiningService:
             return fitness, validation
         else:
             fitness = float(fv.std() / (fv.mean() + 1e-8))
+            # CV代理不反映预测能力，返回0.0避免误导
+            logger.warning("无收益率数据时无法评估因子预测能力，适应度设为0")
+            fitness = 0.0
             return fitness, {}
 
     def _route_fitness(self, ic_results: dict) -> float:

@@ -537,7 +537,7 @@ class VectorBTBacktestService:
         total_return = float((1 + returns).prod() - 1) if n_bars > 0 else 0.0
         annual_return = float((1 + total_return) ** (fc["annual_bars"] / n_bars) - 1) if n_bars > 0 else 0.0
         volatility = float(returns.std() * np.sqrt(fc["annual_bars"])) if n_bars > 0 else 0.0
-        sharpe_ratio = float(annual_return / volatility) if volatility > 0 else 0.0
+        sharpe_ratio = float(returns.mean() / returns.std() * np.sqrt(fc["annual_bars"])) if returns.std() > 0 else 0.0
 
         # 最大回撤
         peak = equity_curve.cummax()
@@ -551,7 +551,7 @@ class VectorBTBacktestService:
         downside = returns[returns < 0]
         if len(downside) > 0:
             downside_std = float(downside.std() * np.sqrt(fc["annual_bars"]))
-            sortino_ratio = float(annual_return / downside_std) if downside_std > 0 else 0.0
+            sortino_ratio = float(returns.mean() * np.sqrt(fc["annual_bars"]) / downside_std) if downside_std > 0 else 0.0
         else:
             sortino_ratio = 0.0
 
@@ -878,15 +878,15 @@ class VectorBTBacktestService:
                 df = df.set_index("date")
             df.index = pd.to_datetime(df.index)
 
-        # 1. 标准化因子值（z-score）
+        # 1. 标准化因子值（z-score，使用滚动窗口避免前视偏差）
+        std_window = min(252, max(20, len(df) // 2))
         for factor_name in factor_names:
             if factor_name in df.columns:
-                factor_mean = df[factor_name].mean()
-                factor_std = df[factor_name].std()
-                if factor_std > 0:
-                    df[f"{factor_name}_normalized"] = (df[factor_name] - factor_mean) / factor_std
-                else:
-                    df[f"{factor_name}_normalized"] = 0
+                rolling_mean = df[factor_name].rolling(std_window, min_periods=20).mean()
+                rolling_std = df[factor_name].rolling(std_window, min_periods=20).std()
+                df[f"{factor_name}_normalized"] = (
+                    (df[factor_name] - rolling_mean) / rolling_std.replace(0, np.nan)
+                ).fillna(0)
 
         # 2. 计算因子组合得分
         normalized_factors = [f"{name}_normalized" for name in factor_names]
@@ -898,13 +898,22 @@ class VectorBTBacktestService:
             df["composite_score"] = sum(df[nf] * w for nf, w in zip(normalized_factors, weights))
 
         elif method == "ic_weight":
-            # IC加权（简化版：使用因子与收益的相关性作为权重）
-            df["returns"] = df["close"].pct_change().shift(-1)
+            # IC加权：使用滚动窗口历史IC，避免前视偏差
+            # 对每个因子，用过去数据计算因子值与未来收益的滚动IC
+            df["forward_return"] = df["close"].pct_change().shift(-1)
+            ic_window = min(60, max(10, len(df) // 4))
             ic_weights = []
             for factor_name in factor_names:
                 norm_factor = f"{factor_name}_normalized"
-                ic = df[[norm_factor, "returns"]].dropna().corr().iloc[0, 1]
-                ic_weights.append(abs(ic) if not np.isnan(ic) else 1.0)
+                # 滚动IC：当前期因子值与下期收益的相关系数，仅用历史窗口
+                rolling_ic = (
+                    df[norm_factor]
+                    .rolling(ic_window, min_periods=10)
+                    .corr(df["forward_return"])
+                )
+                # 取最新值（shift(1)确保不包含当前期信息）
+                last_ic = rolling_ic.shift(1).iloc[-1]
+                ic_weights.append(abs(last_ic) if not pd.isna(last_ic) else 0.0)
 
             # 归一化权重
             total_ic_weight = sum(ic_weights)

@@ -79,7 +79,7 @@ class SmartPreprocessingDetector:
     def __init__(self):
         self._board_patterns = {
             MarketBoard.MAIN: {
-                "code_pattern": r"^(6\d{5}|0\d{5})",
+                "code_pattern": r"^(60\d{4}|0\d{5})",
                 "price_limit": 0.10,  # ±10%
                 "volatility_factor": 1.0,
                 "default_n_sigma": 3.0,
@@ -187,8 +187,8 @@ class SmartPreprocessingDetector:
                     has_outliers = outliers.any()
                     outlier_ratio = outliers.sum() / len(factor_col)
                 
-                # 肥尾检测（峰度>3表示肥尾）
-                is_fat_tail = kurtosis > 3
+                # 肥尾检测（pandas kurtosis()返回超额峰度，正态分布=0，>0表示肥尾）
+                is_fat_tail = kurtosis > 0
 
         # 5️⃣ 行业结构分析
         n_industries = 0

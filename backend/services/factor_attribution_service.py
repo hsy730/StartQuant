@@ -5,7 +5,7 @@ import logging
 import numpy as np
 import pandas as pd
 from typing import Dict, List, Optional, Any
-from scipy.stats import pearsonr
+from scipy.stats import pearsonr, ttest_1samp
 import akshare as ak
 
 logger = logging.getLogger(__name__)
@@ -124,28 +124,53 @@ class FactorAttributionService:
                 "contribution_ratio": float     # 因子贡献比例
             }
         """
-        # 合并所有股票数据
-        all_factor_values = []
-        all_returns = []
+        # 按日期计算横截面IC（业界标准方法）
+        from scipy.stats import spearmanr
 
+        # 构建日期-股票的因子值和未来收益面板
+        factor_panel = {}
+        return_panel = {}
         for stock_code, df in factor_data.items():
             if factor_name in df.columns and "close" in df.columns:
-                # 计算未来收益
                 df_copy = df.copy()
                 df_copy["future_return"] = df_copy["close"].shift(-1) / df_copy["close"] - 1
+                valid = df_copy[[factor_name, "future_return"]].dropna()
+                valid = valid[~np.isinf(valid["future_return"])]
+                for date, row in valid.iterrows():
+                    if date not in factor_panel:
+                        factor_panel[date] = []
+                        return_panel[date] = []
+                    factor_panel[date].append(row[factor_name])
+                    return_panel[date].append(row["future_return"])
 
-                # 获取有效数据
-                valid_data = df_copy[[factor_name, "future_return"]].dropna()
-                valid_data = valid_data[~np.isinf(valid_data["future_return"])]
+        # 每日横截面Rank IC
+        daily_ics = []
+        for date in sorted(factor_panel.keys()):
+            fv = factor_panel[date]
+            rv = return_panel[date]
+            if len(fv) >= 5 and np.std(fv) > 1e-12:
+                ic, _ = spearmanr(fv, rv)
+                if not np.isnan(ic):
+                    daily_ics.append(ic)
 
-                all_factor_values.extend(valid_data[factor_name].tolist())
-                all_returns.extend(valid_data["future_return"].tolist())
-
-        if len(all_factor_values) < 10:
+        if len(daily_ics) < 3:
             return {"error": "数据不足以计算贡献度"}
 
-        # 计算IC（因子与未来收益的相关性）
-        ic, ic_pvalue = pearsonr(all_factor_values, all_returns)
+        ic = np.mean(daily_ics)
+        _, ic_pvalue = ttest_1samp(daily_ics, 0) if len(daily_ics) > 1 else (0, 1.0)
+        ic_pvalue = float(ic_pvalue)
+
+        # 收集所有数据用于分组收益计算
+        all_factor_values = []
+        all_returns = []
+        for stock_code, df in factor_data.items():
+            if factor_name in df.columns and "close" in df.columns:
+                df_copy = df.copy()
+                df_copy["future_return"] = df_copy["close"].shift(-1) / df_copy["close"] - 1
+                valid_data = df_copy[[factor_name, "future_return"]].dropna()
+                valid_data = valid_data[~np.isinf(valid_data["future_return"])]
+                all_factor_values.extend(valid_data[factor_name].tolist())
+                all_returns.extend(valid_data["future_return"].tolist())
 
         # 计算因子暴露度分组收益
         factor_series = pd.Series(all_factor_values)
@@ -197,28 +222,37 @@ class FactorAttributionService:
                 "interpretation": str
             }
         """
-        # 计算所有股票的等权重收益序列
-        stock_returns_list = []
-
+        # 基于因子暴露度构建高暴露组合收益（而非等权组合）
+        # 对每个日期，根据因子值排序，取高暴露组（前30%）等权收益
+        date_portfolio_returns = {}
         for stock_code, df in factor_data.items():
-            if "close" in df.columns and len(df) > 1:
-                returns = df["close"].pct_change(1).dropna()
-                stock_returns_list.append(returns)
+            if factor_name not in df.columns or "close" not in df.columns:
+                continue
+            df_copy = df.copy()
+            df_copy["return"] = df_copy["close"].pct_change(1)
+            valid = df_copy[[factor_name, "return"]].dropna()
+            for date, row in valid.iterrows():
+                if date not in date_portfolio_returns:
+                    date_portfolio_returns[date] = {"factor": [], "return": []}
+                date_portfolio_returns[date]["factor"].append(row[factor_name])
+                date_portfolio_returns[date]["return"].append(row["return"])
 
-        if not stock_returns_list:
-            return {"error": "没有可用的收益数据"}
+        portfolio_daily_returns = {}
+        for date in sorted(date_portfolio_returns.keys()):
+            fv = pd.Series(date_portfolio_returns[date]["factor"])
+            rv = pd.Series(date_portfolio_returns[date]["return"])
+            if len(fv) < 5:
+                continue
+            top_threshold = fv.quantile(0.7)
+            high_mask = fv >= top_threshold
+            if high_mask.sum() > 0:
+                portfolio_daily_returns[date] = rv[high_mask].mean()
 
-        # 对齐所有股票的日期索引
-        common_index = stock_returns_list[0].index
-        for returns in stock_returns_list[1:]:
-            common_index = common_index.intersection(returns.index)
+        if len(portfolio_daily_returns) < 10:
+            return {"error": "有效交易日不足，无法构建因子组合"}
 
-        if len(common_index) < 10:
-            return {"error": "有效交易日不足"}
-
-        # 计算等权重组合收益
-        aligned_returns = [returns.loc[common_index] for returns in stock_returns_list]
-        portfolio_returns = pd.DataFrame(aligned_returns).mean()
+        portfolio_returns = pd.Series(portfolio_daily_returns)
+        common_index = portfolio_returns.index
 
         # 如果没有提供基准数据
         if benchmark_data is None:
@@ -227,7 +261,7 @@ class FactorAttributionService:
                 "message": "未提供基准数据（如市场指数），无法计算Alpha-Beta",
                 "portfolio_return": {
                     "daily_mean": float(portfolio_returns.mean()),
-                    "annual_return": float(portfolio_returns.mean() * 252),
+                    "annual_return": float((1 + portfolio_returns.mean()) ** 252 - 1),
                     "volatility": float(portfolio_returns.std() * np.sqrt(252)),
                     "sharpe": float(portfolio_returns.mean() / portfolio_returns.std() * np.sqrt(252)) if portfolio_returns.std() > 0 else 0.0
                 }
@@ -316,7 +350,7 @@ class FactorAttributionService:
 
                     returns_by_stock[stock_code] = {
                         "avg_daily_return": avg_return,
-                        "annual_return": float(avg_return * 252),
+                        "annual_return": float((1 + avg_return) ** 252 - 1),
                         "cumulative_return": cum_return,
                         "volatility": float(volatility * np.sqrt(252)),
                         "daily_volatility": volatility,
@@ -338,7 +372,7 @@ class FactorAttributionService:
         return {
             "overall_stats": {
                 "avg_daily_return": overall_avg,
-                "annual_return": float(overall_avg * 252),
+                "annual_return": float((1 + overall_avg) ** 252 - 1),
                 "cumulative_return": overall_cum,
                 "volatility_annual": float(overall_vol * np.sqrt(252)),
                 "daily_volatility": overall_vol,

@@ -35,8 +35,8 @@ class PortfolioAnalysisService:
         if weight_column not in positions.columns:
             return {"error": f"数据中缺少 {weight_column} 列"}
 
-        # 按行业汇总权重（假设每个股票只出现一次，取第一条记录的权重）
-        industry_weights = positions.groupby(industry_column)[weight_column].first()
+        # 按行业汇总权重（同一行业多只股票时求和）
+        industry_weights = positions.groupby(industry_column)[weight_column].sum()
 
         # 归一化
         total_weight = industry_weights.sum()
@@ -86,14 +86,20 @@ class PortfolioAnalysisService:
 
         for factor_name, factor_values in factor_data.items():
             try:
-                # 如果因子值是时间序列，取最后一个值（当前值）
+                # 因子值按股票代码对齐，计算加权平均暴露度
                 if isinstance(factor_values, pd.Series):
-                    factor_value = factor_values.iloc[-1]
+                    aligned_factors = factor_values.reindex(stock_weights.index)
+                    valid_mask = aligned_factors.notna() & stock_weights.notna()
+                    if valid_mask.sum() > 0:
+                        weighted_factor = (
+                            stock_weights[valid_mask] * aligned_factors[valid_mask]
+                        ).sum() / stock_weights[valid_mask].sum()
+                    else:
+                        weighted_factor = 0.0
                 else:
-                    factor_value = factor_values
+                    # 标量因子值：所有股票相同，加权平均后仍是标量本身
+                    weighted_factor = float(factor_values)
 
-                # 加权平均因子值（简化版：假设所有股票的因子值相同）
-                weighted_factor = (stock_weights * factor_value).sum()
                 factor_exposures[factor_name] = float(weighted_factor)
 
             except Exception as e:
@@ -404,18 +410,17 @@ class PortfolioAnalysisService:
 
             extra_info["sharpe_ratios"] = sharpe_ratios.to_dict()
 
-        # 5. 最小方差
+        # 5. 逆方差权重（Inverse Variance）
         elif method == "min_variance":
             # 计算协方差矩阵
             cov_matrix = factor_returns.cov()
 
-            # 简化的最小方差：根据因子的方差（对角线）加权
-            # 方差越小，权重越大
+            # 逆方差加权：方差越小权重越大
             variances = pd.Series(np.diag(cov_matrix), index=cov_matrix.index)
             inv_var = 1.0 / (variances + 1e-8)  # 添加小值避免除零
             weights = inv_var / inv_var.sum()
 
-            extra_info["note"] = "基于方差倒数的简化最小方差"
+            extra_info["note"] = "逆方差加权（Inverse Variance），非严格最小方差优化"
 
         else:
             return {
@@ -545,7 +550,7 @@ class PortfolioAnalysisService:
                     "annual_return": optimization_result["expected_return"],
                     "volatility": optimization_result["expected_volatility"],
                     "sharpe_ratio": (
-                        optimization_result["expected_return"] / optimization_result["expected_volatility"]
+                        (optimization_result["expected_return"] - risk_free_rate) / optimization_result["expected_volatility"]
                         if optimization_result["expected_volatility"] > 0
                         else 0
                     ),

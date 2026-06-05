@@ -67,8 +67,10 @@ class EqualWeightStrategy(BaseStrategy):
         """
         weights = pd.Series(0.0, index=df.index)
 
-        # 有信号时，等权配置
+        # 有信号时，等权配置（1/N）
         mask = signals == 1
-        weights[mask] = 1.0
+        n_active = mask.sum()
+        if n_active > 0:
+            weights[mask] = 1.0 / n_active
 
         return weights

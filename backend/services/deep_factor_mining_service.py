@@ -551,8 +551,11 @@ class DeepFactorMiningService:
                 # MSE 损失
                 mse_loss = criterion(pred, batch_y)
 
-                # 稀疏惩罚: 鼓励隐因子稀疏 (L1 正则化)
-                sparsity_loss = self.sparsity_coeff * torch.mean(torch.abs(latent))
+                # 稀疏惩罚: 鼓励仅使用少数隐因子（组稀疏正则化）
+                # 对每个隐因子维度计算L2范数，再用L1惩罚，鼓励整个因子维度趋零
+                # latent shape: [batch, seq_len, n_latent_factors]
+                factor_norms = torch.norm(latent, p=2, dim=(0, 1))  # [n_latent_factors]
+                sparsity_loss = self.sparsity_coeff * torch.sum(factor_norms)
 
                 loss = mse_loss + sparsity_loss
                 loss.backward()

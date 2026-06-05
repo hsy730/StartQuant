@@ -60,15 +60,26 @@ class MeanReversionStrategy(BaseStrategy):
         # 计算Z-score
         zscore = (df["close"] - rolling_mean) / rolling_std
 
-        # 生成信号
-        # Z-score > entry_threshold: 超买，卖出
-        signals[zscore > self.entry_threshold] = -1
-
-        # Z-score < -entry_threshold: 超卖，买入
-        signals[zscore < -self.entry_threshold] = 1
-
-        # Z-score回归到exit_threshold以内：平仓
-        signals[abs(zscore) < self.exit_threshold] = 0
+        # 带持仓状态记忆的均值回归信号生成
+        # entry_threshold: 进场阈值（超买/超卖）
+        # exit_threshold: 出场阈值（回归到均值附近时平仓）
+        position = 0  # 0: 空仓, 1: 多头, -1: 空头
+        for i in range(len(zscore)):
+            z = zscore.iloc[i]
+            if pd.isna(z):
+                continue
+            if position == 0:
+                if z < -self.entry_threshold:
+                    position = 1   # 超卖 → 买入
+                elif z > self.entry_threshold:
+                    position = -1  # 超买 → 卖出
+            elif position == 1:
+                if abs(z) < self.exit_threshold:
+                    position = 0   # 回归均值 → 平仓
+            elif position == -1:
+                if abs(z) < self.exit_threshold:
+                    position = 0   # 回归均值 → 平仓
+            signals.iloc[i] = position
 
         return signals
 

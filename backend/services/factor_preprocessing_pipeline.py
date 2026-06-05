@@ -137,6 +137,13 @@ class FactorPreprocessingPipeline:
         result, missing_stats = self._handle_missing(result)
         stats.update(missing_stats)
 
+        # Step 1.5: 清理无穷大值（避免污染去极值和中性化计算）
+        inf_count = int((np.isinf(result)).sum())
+        if inf_count > 0:
+            result = result.replace([np.inf, -np.inf], np.nan)
+            result, inf_stats = self._handle_missing(result)
+            stats["inf_cleaned_count"] = inf_count
+
         # Step 2: 去极值
         result, winsorize_stats = self._winsorize(result, date_index)
         stats["winsorized_count"] = winsorize_stats["clipped_count"]
@@ -589,9 +596,10 @@ class FactorPreprocessingPipeline:
             elif self.config.standardize_method == StandardizeMethod.MEDIAN_MAD:
                 valid = factor_vals.replace([np.inf, -np.inf], np.nan).dropna()
                 if len(valid) > 1:
-                    scaler = RobustScaler(with_centering=True, with_scaling=True)
-                    scaled = scaler.fit_transform(valid.values.reshape(-1, 1)).flatten()
-                    factor_vals[valid.index] = scaled
+                    median = valid.median()
+                    mad = 1.4826 * (valid - median).abs().median()
+                    if mad > 0 and not np.isnan(mad):
+                        factor_vals[valid.index] = (valid - median) / mad
 
             return factor_vals
 
@@ -662,6 +670,13 @@ class FactorPreprocessingPipeline:
         unique_inds = sorted(industries.unique())
         if len(unique_inds) < 2:
             logger.warning("行业分类不足2个，跳过行业中性化")
+            return factor_values
+
+        # 检查最小行业样本量（<5只股票的行业可能导致回归不稳定）
+        industry_counts = industries.value_counts()
+        min_ind_size = industry_counts.min()
+        if min_ind_size < 5:
+            logger.warning(f"存在仅{min_ind_size}只股票的小行业，跳过行业中性化")
             return factor_values
 
         result = factor_values.copy()
@@ -778,14 +793,17 @@ class FactorPreprocessingPipeline:
             return factor_values.rank(pct=True)
 
         elif method == StandardizeMethod.MEDIAN_MAD:
-            # 使用sklearn RobustScaler（基于中位数和IQR，抗异常值）
+            # 使用真正的Median-MAD标准化（非RobustScaler/IQR）
+            # MAD = 1.4826 * median(|x - median(x)|)，正态分布下 MAD ≈ σ
             valid = factor_values.replace([np.inf, -np.inf], np.nan).dropna()
             if len(valid) < 2:
                 return factor_values
-            scaler = RobustScaler(with_centering=True, with_scaling=True)
-            scaled = scaler.fit_transform(valid.values.reshape(-1, 1)).flatten()
+            median = valid.median()
+            mad = 1.4826 * (valid - median).abs().median()
+            if mad == 0 or np.isnan(mad):
+                return factor_values
             result = factor_values.copy()
-            result[valid.index] = scaled
+            result[valid.index] = (valid - median) / mad
             return result
 
         return factor_values

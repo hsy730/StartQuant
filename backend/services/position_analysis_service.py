@@ -70,9 +70,8 @@ class PositionAnalysisService:
             total_invested_days / invested_periods if invested_periods > 0 else 0
         )
 
-        # 5. 换手率
-        # 简化版：权重变化总和
-        turnover = position_changes.sum()
+        # 5. 换手率（权重变化绝对值之和除以2，买入和卖出是同一笔交易的两面）
+        turnover = position_changes.sum() / 2
 
         # 6. 持仓价值
         position_values = positions_clean * initial_capital
