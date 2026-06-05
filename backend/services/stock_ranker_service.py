@@ -210,14 +210,7 @@ class StockRankerService:
         if len(feature_cols) == 0:
             raise ValueError("没有可用的数值特征列")
 
-        # 清洗数据：先对特征列做缺失值填充（避免多因子下过度删除），再仅对标签做 dropna
-        for feat in feature_cols:
-            missing_ratio = df[feat].isna().mean()
-            if missing_ratio > 0.3:
-                logger.warning(f"特征 [{feat}] 缺失率 {missing_ratio*100:.1f}% > 30%，建议检查数据质量")
-            if missing_ratio > 0:
-                df[feat] = df[feat].fillna(df[feat].median())
-
+        # 清洗数据：先对标签做 dropna，特征填充在分割后执行以避免数据泄漏
         df[label_col] = pd.to_numeric(df[label_col], errors="coerce")
         df = df.dropna(subset=[label_col])
 
@@ -261,6 +254,20 @@ class StockRankerService:
             logger.info(
                 f"[StockRanker] 分割点已调整: {split_idx} → {adjusted_split_idx}（对齐日期组边界）"
             )
+
+        # 特征缺失值填充：仅用训练集统计量，避免数据泄漏
+        train_df = df.iloc[:adjusted_split_idx]
+        for feat in feature_cols:
+            missing_ratio = df[feat].isna().mean()
+            if missing_ratio > 0.3:
+                logger.warning(f"特征 [{feat}] 缺失率 {missing_ratio*100:.1f}% > 30%，建议检查数据质量")
+            if missing_ratio > 0:
+                train_median = train_df[feat].median()
+                df[feat] = df[feat].fillna(train_median)
+
+        # 重新提取特征矩阵（填充后）
+        X = df[feature_cols].values
+        y = df[label_col].values
 
         dtrain = xgb.DMatrix(X[:adjusted_split_idx], label=y[:adjusted_split_idx], feature_names=feature_cols)
         dvalid = xgb.DMatrix(X[adjusted_split_idx:], label=y[adjusted_split_idx:], feature_names=feature_cols)

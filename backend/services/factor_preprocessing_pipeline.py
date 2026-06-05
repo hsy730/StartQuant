@@ -296,6 +296,12 @@ class FactorPreprocessingPipeline:
             )
 
         # 逐股票时间序列模式（fallback）
+        # 注意：单股票模式下市值/行业中性化是对时间序列做回归，非横截面回归，量化意义有限
+        if (self.config.enable_market_cap_neutralization or self.config.enable_industry_neutralization):
+            logger.warning(
+                "单股票逐时间序列模式下，市值/行业中性化对时间维度回归（非横截面），"
+                "量化意义有限。建议使用横截面模式(cross_sectional=True)获得正确的中性化结果。"
+            )
         result_data = {}
         all_stats = {}
 
@@ -402,7 +408,7 @@ class FactorPreprocessingPipeline:
                 logger.error(f"横截面处理因子{factor_name}失败: {e}")
                 all_stats[factor_name] = {"error": str(e)}
 
-        # 拆分回各股票
+        # 拆分回各股票（按日期索引对齐，确保数据不错位）
         for stock_code in factor_data.keys():
             stock_rows = merged_df[merged_df["stock_code"] == stock_code]
             # 恢复原始索引
@@ -410,13 +416,26 @@ class FactorPreprocessingPipeline:
             result_df = original_df.copy()
             for factor_name in factor_names:
                 if factor_name in stock_rows.columns and factor_name in result_df.columns:
-                    # 按原始索引对齐
-                    if isinstance(original_df.index, pd.DatetimeIndex):
-                        stock_rows_indexed = stock_rows.set_index("date")
+                    # 按日期对齐：确保两边索引类型一致
+                    stock_rows_indexed = stock_rows.set_index("date")
+                    stock_rows_indexed.index = pd.to_datetime(stock_rows_indexed.index)
+                    # 将result_df的索引也转为DatetimeIndex以匹配
+                    if isinstance(result_df.index, pd.DatetimeIndex):
                         common_idx = result_df.index.intersection(stock_rows_indexed.index)
-                        result_df.loc[common_idx, factor_name] = stock_rows_indexed.loc[common_idx, factor_name]
                     else:
-                        result_df[factor_name] = stock_rows[factor_name].values[:len(result_df)]
+                        # 非DatetimeIndex：用日期列对齐
+                        result_indexed = result_df.copy()
+                        if "date" in result_indexed.columns:
+                            result_indexed = result_indexed.set_index("date")
+                        else:
+                            result_indexed.index = pd.to_datetime(result_indexed.index)
+                        common_idx = result_indexed.index.intersection(stock_rows_indexed.index)
+                        result_df.loc[result_indexed.index.isin(common_idx), factor_name] = stock_rows_indexed.loc[
+                            stock_rows_indexed.index.isin(common_idx), factor_name
+                        ].values
+                        continue
+                    if len(common_idx) > 0:
+                        result_df.loc[common_idx, factor_name] = stock_rows_indexed.loc[common_idx, factor_name]
             result_data[stock_code] = result_df
 
         return result_data, all_stats
@@ -458,7 +477,8 @@ class FactorPreprocessingPipeline:
 
         if method == WinsorizeMethod.MAD:
             median = series.median()
-            mad = 1.4826 * np.median(np.abs(series - median))
+            # 使用pandas .median()自动忽略NaN，而非np.median（遇NaN返回NaN）
+            mad = 1.4826 * (series - median).abs().median()
 
             if mad == 0:
                 # MAD=0时（如数据过于集中），用标准差作为σ_hat的估计
@@ -542,7 +562,7 @@ class FactorPreprocessingPipeline:
             # 去极值
             if self.config.winsorize_method == WinsorizeMethod.MAD:
                 median = factor_vals.median()
-                mad = 1.4826 * np.median(np.abs(factor_vals - median))
+                mad = 1.4826 * (factor_vals - median).abs().median()
                 if mad == 0:
                     # 同_winsorize方法：MAD=0时用std作为σ_hat估计
                     mad = factor_vals.std()

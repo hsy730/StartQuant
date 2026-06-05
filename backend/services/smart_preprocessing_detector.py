@@ -79,7 +79,7 @@ class SmartPreprocessingDetector:
     def __init__(self):
         self._board_patterns = {
             MarketBoard.MAIN: {
-                "code_pattern": r"^(60\d{4}|0\d{5})",
+                "code_pattern": r"^(6[0-57-9]\d{4}|0\d{5})",
                 "price_limit": 0.10,  # ±10%
                 "volatility_factor": 1.0,
                 "default_n_sigma": 3.0,
@@ -211,7 +211,7 @@ class SmartPreprocessingDetector:
                     merged_df[first_factor]
                     .groupby(merged_df["date"])
                     .std()
-                    .rolling(window=min(20, n_dates // 5))
+                    .rolling(window=max(2, min(20, n_dates // 5)))
                     .std()
                 )
                 if len(rolling_vol.dropna()) > 10:

@@ -119,7 +119,11 @@ class BacktestService:
         calmar_ratio = annual_return / max_drawdown if max_drawdown > 0 else 0.0
         win_rate = (returns_clean > 0).mean()
         downside_returns = returns_clean[returns_clean < 0]
-        sortino_ratio = (returns_clean.mean() * annual_trading_days - risk_free_rate) / (downside_returns.std() * np.sqrt(annual_trading_days)) if len(downside_returns) > 0 and downside_returns.std() > 0 else 0.0
+        # 标准Sortino下行偏差公式
+        daily_rf = risk_free_rate / annual_trading_days
+        downside_diff = np.minimum(returns_clean - daily_rf, 0)
+        downside_std = np.sqrt((downside_diff ** 2).mean()) * np.sqrt(annual_trading_days)
+        sortino_ratio = (excess_returns.mean() * annual_trading_days) / downside_std if downside_std > 0 else 0.0
         var_95 = returns_clean.quantile(0.05)
         cvar_95 = returns_clean[returns_clean <= var_95].mean()
         return {

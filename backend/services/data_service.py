@@ -69,12 +69,12 @@ class DataService:
                 "description": "创业板市场",
             },
             MarketBoard.BEIJING: {
-                "code_pattern": r"^4\d{4}|^8[0-3]\d{3}|^87\d{3}",  # 北交所 (4xxxx, 8xxxx)
+                "code_pattern": r"^(8\d{5}|4\d{5})",  # 北交所 (6位代码: 8xxxxx, 4xxxxx)
                 "price_limit": 0.30,      # ±30%
                 "description": "北交所市场",
             },
             MarketBoard.MAIN: {
-                "code_pattern": r"^(6[0-57-9]\d{4}|0\d{5}|6\d{5})$",  # 主板 (600xxx, 000xxx, 排除科创板)
+                "code_pattern": r"^(6[0-57-9]\d{4}|0\d{5})$",  # 主板 (600xxx, 000xxx, 排除科创板)
                 "price_limit": 0.10,      # ±10%
                 "description": "主板市场",
             },
@@ -147,6 +147,15 @@ class DataService:
                     end_date=end_date.replace("-", ""),
                     adjust="qfq",
                 )
+            elif stock_code.endswith(".BJ"):
+                # 北交所股票
+                symbol = "bj" + stock_code.replace(".BJ", "")
+                df = ak.stock_zh_a_daily(
+                    symbol=symbol,
+                    start_date=start_date.replace("-", ""),
+                    end_date=end_date.replace("-", ""),
+                    adjust="qfq",
+                )
             else:
                 # 尝试自动识别
                 # 添加市场前缀
@@ -154,6 +163,8 @@ class DataService:
                     symbol = "sh" + stock_code
                 elif stock_code.startswith(("0", "3")):
                     symbol = "sz" + stock_code
+                elif stock_code.startswith(("4", "8")):
+                    symbol = "bj" + stock_code
                 else:
                     symbol = stock_code
 
@@ -234,12 +245,14 @@ class DataService:
     def _normalize_stock_code(self, code: str) -> str:
         """标准化股票代码格式"""
         code = code.strip().upper()
-        if not code.endswith((".SH", ".SZ")):
-            # 自动判断上海或深圳
+        if not code.endswith((".SH", ".SZ", ".BJ")):
+            # 自动判断上海、深圳或北交所
             if code.startswith("6"):
                 return f"{code}.SH"
             elif code.startswith(("0", "3")):
                 return f"{code}.SZ"
+            elif code.startswith(("4", "8")):
+                return f"{code}.BJ"
         return code
 
     def _standardize_columns(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -382,15 +395,15 @@ class DataService:
         df["prev_close"] = df["close"].shift(1)
 
         # 3. 计算理论涨跌停价格
-        df["limit_up_price"] = df["prev_close"] * (1 + price_limit)
-        df["limit_down_price"] = df["prev_close"] * (1 - price_limit)
+        df["limit_up_price"] = (df["prev_close"] * (1 + price_limit)).round(2)
+        df["limit_down_price"] = (df["prev_close"] * (1 - price_limit)).round(2)
 
         # 4. 检测涨停
         if config.check_limit_up:
-            # 一字涨停：最高价>=涨停价 且 最低价==最高价（全天封死）
+            # 一字涨停：最高价>=涨停价 且 最低价≈最高价（全天封死，允许浮点误差）
             df["is_limit_up"] = (
                 (df["high"] >= df["limit_up_price"]) &
-                (df["low"] == df["high"])
+                np.isclose(df["low"], df["high"], atol=0.001)
             ).fillna(False)
             
             # 额外检测：收盘价==涨停价（触及涨停）
@@ -403,10 +416,10 @@ class DataService:
 
         # 5. 检测跌停
         if config.check_limit_down:
-            # 一字跌停：最低价<=跌停价 且 最低价==最高价
+            # 一字跌停：最低价<=跌停价 且 最低价≈最高价（允许浮点误差）
             df["is_limit_down"] = (
                 (df["low"] <= df["limit_down_price"]) &
-                (df["low"] == df["high"])
+                np.isclose(df["low"], df["high"], atol=0.001)
             ).fillna(False)
             
             # 触及跌停

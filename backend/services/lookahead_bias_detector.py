@@ -525,10 +525,20 @@ class LookaheadBiasDetector:
             return self._skip_result("rank_ic_magnitude", "数据量不足")
 
         window = min(20, len(aligned) // 2)
+        # 窗口内Spearman秩相关（非全局rank后rolling corr）
+        from scipy.stats import spearmanr
+        def _window_spearman(x):
+            if len(x) < 3:
+                return np.nan
+            y_vals = aligned["r"].loc[x.index]
+            if len(y_vals) < 3:
+                return np.nan
+            return spearmanr(x, y_vals)[0]
+
         rolling_rank_ic = (
-            aligned["f"].rank()
-            .rolling(window=window, min_periods=max(2, window // 2))
-            .corr(aligned["r"].rank())
+            aligned["f"]
+            .rolling(window=window, min_periods=max(3, window // 2))
+            .apply(_window_spearman, raw=False)
         )
         rolling_rank_ic = rolling_rank_ic.replace([np.inf, -np.inf], np.nan).dropna()
 
@@ -612,7 +622,7 @@ class LookaheadBiasDetector:
 
         # 峰度过高（>50 极端）或过低（<-3 几乎均匀分布）
         kurtosis_abnormal = abs(kurtosis) > 50 or kurtosis < -3
-        outlier_abnormal = outlier_ratio > 0.3 or (outlier_ratio == 0 and std > 0)
+        outlier_abnormal = outlier_ratio > 0.3
 
         is_abnormal = kurtosis_abnormal or outlier_abnormal
 
@@ -716,9 +726,11 @@ class LookaheadBiasDetector:
                 keys = sorted(quantile_returns.keys())
                 if len(keys) >= 3:
                     means = [np.nanmean(quantile_returns[k]) for k in keys]
-                    # 计算单调性：相邻层之间的方向一致性
+                    # 计算单调性：相邻层之间的方向一致性（双向检测）
                     directions = [means[i + 1] - means[i] for i in range(len(means) - 1)]
-                    same_direction = sum(1 for d in directions if d > 0) / len(directions)
+                    increase_ratio = sum(1 for d in directions if d > 0) / len(directions)
+                    decrease_ratio = sum(1 for d in directions if d < 0) / len(directions)
+                    same_direction = max(increase_ratio, decrease_ratio)
                     # 同向比例过高（>0.95 且各层差距很大）是可疑信号
                     max_gap = max(means) - min(means) if means else 0
 

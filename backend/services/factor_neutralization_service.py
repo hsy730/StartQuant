@@ -188,7 +188,10 @@ class FactorNeutralizationService:
         if has_industry:
             industries = valid_data[industry_column].astype(str)
             unique_industries = sorted(industries.unique())
-            if len(unique_industries) >= 2:
+            if len(unique_industries) < 2:
+                logger.warning("联合中性化：行业分类不足2个，跳过行业中性化部分")
+                has_industry = False
+            else:
                 # 检查最小行业样本量
                 MIN_INDUSTRY_SIZE = 5
                 industry_counts = industries.value_counts()
@@ -217,6 +220,9 @@ class FactorNeutralizationService:
             return df[factor_name]
 
         X = np.hstack(X_list)
+        if X.shape[1] == 0:
+            logger.warning("联合中性化：有效特征维度为0，跳过中性化")
+            return df[factor_name]
 
         model = LinearRegression()
         model.fit(X, y)

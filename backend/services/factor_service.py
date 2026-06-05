@@ -345,12 +345,15 @@ class FactorCalculator:
             # 提供完整的全局变量，包括 pandas, numpy 和常见函数
             global_vars = {
                 "__builtins__": {
-                    "__import__": __import__,
+                    # 安全的内置函数（不含__import__、exec、eval、open等）
                     "abs": abs, "min": min, "max": max, "len": len,
                     "range": range, "float": float, "int": int, "bool": bool,
                     "list": list, "tuple": tuple, "dict": dict, "sum": sum,
                     "any": any, "all": all, "enumerate": enumerate, "zip": zip,
                     "round": round, "pow": pow, "divmod": divmod,
+                    "sorted": sorted, "reversed": reversed, "map": map, "filter": filter,
+                    "isinstance": isinstance, "hasattr": hasattr, "getattr": getattr,
+                    "print": print, "str": str, "set": set,
                 },
                 "pd": pd,
                 "np": np,
@@ -411,7 +414,7 @@ class FactorCalculator:
                 "HIGH": df["high"],
                 "LOW": df["low"],
                 "VOL": df["volume"],
-                "VWAP": (df["high"] + df["low"] + df["close"]) / 3,
+                "VWAP": (df["amount"] / df["volume"]).replace([np.inf, -np.inf], np.nan) if "amount" in df.columns else (df["high"] + df["low"] + df["close"]) / 3,
                 # Python内置函数
                 "int": int,
                 "float": float,

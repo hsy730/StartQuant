@@ -282,7 +282,11 @@ class VectorBTBacktestService:
         for q in range(n_quantiles):
             q_min = q / n_quantiles
             q_max = (q + 1) / n_quantiles
-            layer_mask = (factor_rank >= q_min) & (factor_rank < q_max)
+            # 最后一层使用<=，避免rank=1.0的样本被排除
+            if q == n_quantiles - 1:
+                layer_mask = (factor_rank >= q_min) & (factor_rank <= q_max)
+            else:
+                layer_mask = (factor_rank >= q_min) & (factor_rank < q_max)
             layer_returns = df.loc[layer_mask, "returns"]
             quantile_returns[f"Q{q + 1}"] = layer_returns
 
@@ -494,16 +498,18 @@ class VectorBTBacktestService:
         # 从拼接净值计算收益率
         returns = equity_curve.pct_change().dropna()
 
-        # 拼接分层收益
+        # 拼接分层收益（按时间索引裁剪warmup区，而非按位置）
         quantile_returns = {}
         for q in range(n_quantiles):
             q_parts = []
-            for cr in chunk_results:
+            for i, cr in enumerate(chunk_results):
                 q_key = f"Q{q + 1}"
                 if q_key in cr["quantile_returns"]:
                     q_series = cr["quantile_returns"][q_key]
-                    if len(q_series) > overlap_size:
-                        q_series = q_series.iloc[overlap_size:]
+                    if i > 0 and len(cr.get("equity_curve", [])) > overlap_size:
+                        # 按时间索引过滤warmup区
+                        warmup_end_time = cr["equity_curve"].index[overlap_size]
+                        q_series = q_series[q_series.index >= warmup_end_time]
                     q_parts.append(q_series)
             if q_parts:
                 quantile_returns[q_key] = pd.concat(q_parts)
@@ -539,7 +545,7 @@ class VectorBTBacktestService:
         volatility = float(returns.std() * np.sqrt(fc["annual_bars"])) if n_bars > 0 else 0.0
         daily_rf = 0.03 / fc["annual_bars"]  # 无风险利率3%，年化转日频
         excess_returns = returns - daily_rf
-        sharpe_ratio = float(excess_returns.mean() / returns.std() * np.sqrt(fc["annual_bars"])) if returns.std() > 0 else 0.0
+        sharpe_ratio = float(excess_returns.mean() / excess_returns.std() * np.sqrt(fc["annual_bars"])) if excess_returns.std() > 0 else 0.0
 
         # 最大回撤
         peak = equity_curve.cummax()
@@ -549,14 +555,10 @@ class VectorBTBacktestService:
 
         win_rate = float((returns > 0).mean()) if n_bars > 0 else 0.0
 
-        # Sortino（扣除无风险利率）
-        downside = returns[returns < 0]
-        if len(downside) > 0:
-            downside_std = float(downside.std() * np.sqrt(fc["annual_bars"]))
-            # excess_returns已扣daily_rf，年化: excess_mean * annual_bars / downside_std
-            sortino_ratio = float(excess_returns.mean() * fc["annual_bars"] / downside_std) if downside_std > 0 else 0.0
-        else:
-            sortino_ratio = 0.0
+        # Sortino（标准下行偏差公式，扣除无风险利率）
+        downside_diff = np.minimum(returns - daily_rf, 0)
+        downside_std = float(np.sqrt((downside_diff ** 2).mean()) * np.sqrt(fc["annual_bars"]))
+        sortino_ratio = float(excess_returns.mean() * fc["annual_bars"] / downside_std) if downside_std > 0 else 0.0
 
         var_95 = float(returns.quantile(0.05)) if n_bars > 0 else 0.0
         cvar_95 = float(returns[returns <= var_95].mean()) if n_bars > 0 and var_95 is not None else 0.0
@@ -702,8 +704,11 @@ class VectorBTBacktestService:
 
         volatility = self._calculate_volatility(returns_clean, stats)
 
-        sharpe_ratio = stats.get('Sharpe Ratio', 0)
-        sortino_ratio = stats.get('Sortino Ratio', 0)
+        # 使用统一的calculate_metrics计算Sharpe/Sortino（扣除无风险利率3%）
+        # VectorBT默认rf=0，此处统一为rf=3%以保持与分块回测一致
+        metrics = self.calculate_metrics(returns_clean, equity_curve=(1 + returns_clean).cumprod())
+        sharpe_ratio = metrics["sharpe_ratio"]
+        sortino_ratio = metrics["sortino_ratio"]
         max_drawdown = stats.get('Max Drawdown [%]', 0) / 100.0
         calmar_ratio = stats.get('Calmar Ratio', 0)
         win_rate = stats.get('Win Rate [%]', 0) / 100.0
@@ -905,7 +910,8 @@ class VectorBTBacktestService:
             # 对每个因子，用过去数据计算因子值与未来收益的滚动IC
             df["forward_return"] = df["close"].pct_change().shift(-1)
             ic_window = min(60, max(10, len(df) // 4))
-            ic_weights = []
+            # 使用滚动IC作为时变权重，每个时间点仅使用截至前一天的信息
+            ic_weight_frames = []
             for factor_name in factor_names:
                 norm_factor = f"{factor_name}_normalized"
                 # 滚动IC：当前期因子值与下期收益的相关系数，仅用历史窗口
@@ -914,35 +920,36 @@ class VectorBTBacktestService:
                     .rolling(ic_window, min_periods=10)
                     .corr(df["forward_return"])
                 )
-                # 取最新值（shift(1)确保不包含当前期信息）
-                last_ic = rolling_ic.shift(1).iloc[-1]
-                ic_weights.append(abs(last_ic) if not pd.isna(last_ic) else 0.0)
+                # shift(1)确保不包含当前期信息
+                ic_abs = rolling_ic.shift(1).abs()
+                ic_weight_frames.append(ic_abs)
 
-            # 归一化权重
-            total_ic_weight = sum(ic_weights)
-            if total_ic_weight > 0:
-                ic_weights = [w / total_ic_weight for w in ic_weights]
-            else:
-                ic_weights = [1.0 / len(normalized_factors)] * len(normalized_factors)
-
-            df["composite_score"] = sum(df[nf] * w for nf, w in zip(normalized_factors, ic_weights))
+            # 逐行计算归一化权重和复合得分
+            ic_weight_sum = sum(ic_weight_frames)
+            composite_parts = []
+            for nf, ic_wf in zip(normalized_factors, ic_weight_frames):
+                safe_weight = ic_wf / ic_weight_sum.replace(0, 1.0 / len(normalized_factors))
+                composite_parts.append(df[nf] * safe_weight.fillna(1.0 / len(normalized_factors)))
+            df["composite_score"] = sum(composite_parts)
 
         elif method == "risk_parity":
-            # 风险平价（简化版：使用因子波动率的倒数作为权重）
-            vol_weights = []
+            # 风险平价：使用滚动波动率，避免前视偏差
+            vol_window = min(252, max(60, len(df) // 2))
+            vol_weight_frames = []
             for factor_name in factor_names:
                 norm_factor = f"{factor_name}_normalized"
-                vol = df[norm_factor].std()
-                vol_weights.append(1.0 / vol if vol > 0 else 1.0)
+                # 滚动波动率，shift(1)避免前视
+                rolling_vol = df[norm_factor].rolling(vol_window, min_periods=20).std().shift(1)
+                inv_vol = 1.0 / rolling_vol.replace(0, np.nan)
+                vol_weight_frames.append(inv_vol)
 
-            # 归一化权重
-            total_vol_weight = sum(vol_weights)
-            if total_vol_weight > 0:
-                vol_weights = [w / total_vol_weight for w in vol_weights]
-            else:
-                vol_weights = [1.0 / len(normalized_factors)] * len(normalized_factors)
-
-            df["composite_score"] = sum(df[nf] * w for nf, w in zip(normalized_factors, vol_weights))
+            # 逐行计算归一化权重和复合得分
+            vol_weight_sum = sum(vol_weight_frames)
+            composite_parts = []
+            for nf, vw_f in zip(normalized_factors, vol_weight_frames):
+                safe_weight = vw_f / vol_weight_sum.replace(0, 1.0 / len(normalized_factors))
+                composite_parts.append(df[nf] * safe_weight.fillna(1.0 / len(normalized_factors)))
+            df["composite_score"] = sum(composite_parts)
 
         else:
             # 默认等权重
@@ -1090,8 +1097,11 @@ class VectorBTBacktestService:
 
         volatility = self._calculate_volatility(returns_clean, stats)
 
-        sharpe_ratio = stats.get('Sharpe Ratio', 0)
-        sortino_ratio = stats.get('Sortino Ratio', 0)
+        # 使用统一的calculate_metrics计算Sharpe/Sortino（扣除无风险利率3%）
+        # VectorBT默认rf=0，此处统一为rf=3%以保持与分块回测一致
+        metrics = self.calculate_metrics(returns_clean, equity_curve=(1 + returns_clean).cumprod())
+        sharpe_ratio = metrics["sharpe_ratio"]
+        sortino_ratio = metrics["sortino_ratio"]
         max_drawdown = stats.get('Max Drawdown [%]', 0) / 100.0
         calmar_ratio = stats.get('Calmar Ratio', 0)
         win_rate = stats.get('Win Rate [%]', 0) / 100.0
@@ -1222,6 +1232,88 @@ class VectorBTBacktestService:
             "slippage_info": self.get_slippage_info(),
         }
 
+    def run_vectorbt_backtest_from_weights(
+        self,
+        weights_df: pd.DataFrame,
+        price_data: pd.DataFrame,
+        rebalance_freq: str = "M",
+        date_col: str = "date",
+        ticker_col: str = "ticker",
+    ) -> Dict:
+        """
+        基于权重DataFrame执行回测（用于StockRanker等场景）
+
+        Args:
+            weights_df: 包含date/ticker/weight列的DataFrame
+            price_data: 包含date/ticker/close列的DataFrame
+            rebalance_freq: 再平衡频率
+            date_col: 日期列名
+            ticker_col: 股票代码列名
+
+        Returns:
+            Dict: 回测结果
+        """
+        if not VECTORBT_AVAILABLE:
+            return {"error": "VectorBT不可用"}
+
+        try:
+            # 构建价格透视表
+            price_pivot = price_data.pivot(index=date_col, columns=ticker_col, values="close")
+            price_pivot.index = pd.to_datetime(price_pivot.index)
+
+            # 构建权重透视表
+            weight_pivot = weights_df.pivot(index=date_col, columns=ticker_col, values="weight")
+            weight_pivot.index = pd.to_datetime(weight_pivot.index)
+            weight_pivot = weight_pivot.reindex(price_pivot.index).ffill().fillna(0)
+
+            # 归一化权重
+            weight_pivot = weight_pivot.div(weight_pivot.sum(axis=1).replace(0, 1), axis=0)
+
+            # 使用VectorBT的从权重构建组合
+            pf = vbt.Portfolio.from_pypf(
+                vbt.PYPortfolio(
+                    close=price_pivot,
+                    weight=weight_pivot,
+                    init_cash=self.initial_capital,
+                    fee=self.commission_rate,
+                    freq="1D",
+                )
+            )
+
+            # 计算指标
+            returns = pf.returns()
+            equity_curve = pf.value
+
+            metrics = self.calculate_metrics(returns, equity_curve)
+
+            return {
+                "success": True,
+                "metrics": metrics,
+                "equity_curve": equity_curve,
+                "total_return": metrics.get("total_return", 0),
+                "sharpe_ratio": metrics.get("sharpe_ratio", 0),
+                "max_drawdown": metrics.get("max_drawdown", 0),
+            }
+
+        except Exception as e:
+            logger.error(f"权重回测失败: {e}", exc_info=True)
+            # fallback: 简单计算等权组合收益
+            try:
+                price_pivot = price_data.pivot(index=date_col, columns=ticker_col, values="close")
+                price_pivot.index = pd.to_datetime(price_pivot.index)
+                returns = price_pivot.pct_change().mean(axis=1).dropna()
+                equity_curve = (1 + returns).cumprod()
+                metrics = self.calculate_metrics(returns, equity_curve)
+                return {
+                    "success": True,
+                    "metrics": metrics,
+                    "equity_curve": equity_curve,
+                    "fallback": True,
+                    "fallback_reason": str(e),
+                }
+            except Exception as e2:
+                return {"error": f"权重回测失败: {e2}", "success": False}
+
     def calculate_metrics(
         self, returns: pd.Series, equity_curve: pd.Series = None, annual_trading_days: int = 252, risk_free_rate: float = 0.03
     ) -> Dict:
@@ -1291,14 +1383,12 @@ class VectorBTBacktestService:
         # 胜率
         win_rate = (returns_clean > 0).mean()
 
-        # 索提诺比率（只考虑下行风险）
-        downside_returns = returns_clean[returns_clean < 0]
-        if len(downside_returns) > 0:
-            downside_std = downside_returns.std() * np.sqrt(annual_trading_days)
-            if downside_std > 0:
-                sortino_ratio = (returns_clean.mean() * annual_trading_days - risk_free_rate) / downside_std
-            else:
-                sortino_ratio = 0.0
+        # 索提诺比率（标准下行偏差公式）
+        daily_rf = risk_free_rate / annual_trading_days
+        downside_diff = np.minimum(returns_clean - daily_rf, 0)
+        downside_std = np.sqrt((downside_diff ** 2).mean()) * np.sqrt(annual_trading_days)
+        if downside_std > 0:
+            sortino_ratio = (excess_returns.mean() * annual_trading_days) / downside_std
         else:
             sortino_ratio = 0.0
 

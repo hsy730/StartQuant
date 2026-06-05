@@ -248,8 +248,15 @@ class AnalysisService:
         results["ic_ir"] = ic_ir_results
 
         # 未来函数检测（Look-ahead Bias Detection）
+        # 需要先为factor_data添加future_return_1列
+        factor_data_for_detection = {}
+        for stock_code, df in factor_data.items():
+            df_det = df.copy()
+            if "future_return_1" not in df_det.columns and "close" in df_det.columns:
+                df_det["future_return_1"] = df_det["close"].pct_change(1).shift(-1)
+            factor_data_for_detection[stock_code] = df_det
         results["lookahead_bias"] = self._detect_lookahead_bias_for_all_factors(
-            factor_data, factor_names, stock_codes
+            factor_data_for_detection, factor_names, stock_codes
         )
 
         if ALPHALENS_AVAILABLE and len(stock_codes) >= 2:
@@ -780,8 +787,9 @@ class AnalysisService:
 
                     if len(all_factor_rows) >= 50:
                         bias_df = pd.DataFrame(all_factor_rows)
+                        # factor_df仅包含date/stock_code/factor_value，避免与return_df的return列冲突
                         detection_result = lookahead_bias_detector.detect_cross_sectional(
-                            factor_df=bias_df.rename(columns={factor_name: "factor_value"}),
+                            factor_df=bias_df[["date", "stock_code", factor_name]].rename(columns={factor_name: "factor_value"}),
                             return_df=bias_df[["date", "stock_code", "return"]],
                             factor_name="factor_value",
                         )
@@ -1036,8 +1044,8 @@ class AnalysisService:
                     elif isinstance(w, (int, float)):
                         w_sum += abs(w)
                         count += 1
-            # 按日期归一化：该日所有股票权重之和为1
-            date_weights[date] = w_sum / count if count > 0 else 1.0
+            # 按日期归一化：使用总权重（而非平均权重），市值大的日期IC更可靠
+            date_weights[date] = w_sum if count > 0 else 1.0
 
         weights_series = pd.Series(date_weights)
         total_weight = weights_series.sum()
@@ -1127,13 +1135,16 @@ class AnalysisService:
         logger.debug(f"[SHAP] X_combined shape: {X_combined.shape}")
         logger.debug(f"[SHAP] X_combined columns: {X_combined.columns.tolist()}")
 
-        # 按时间顺序分割训练集和测试集（避免未来信息泄漏）
-        n_samples = len(X_combined)
-        split_idx = int(n_samples * 0.8)
-        X_train_raw = X_combined.iloc[:split_idx]
-        X_test_raw = X_combined.iloc[split_idx:]
-        y_train = y_combined.iloc[:split_idx]
-        y_test = y_combined.iloc[split_idx:]
+        # 按日期分割训练集和测试集（避免同日数据分属train/test导致泄漏）
+        all_dates = sorted(X_combined.index.unique())
+        if len(all_dates) < 2:
+            logger.warning("[SHAP] 日期数不足2，无法分割训练/测试集")
+            return {"error": "日期数不足，无法进行SHAP分析"}
+        split_date = all_dates[int(len(all_dates) * 0.8)]
+        X_train_raw = X_combined[X_combined.index < split_date]
+        X_test_raw = X_combined[X_combined.index >= split_date]
+        y_train = y_combined[y_combined.index < split_date]
+        y_test = y_combined[y_combined.index >= split_date]
 
         # 标准化特征（仅在训练集上fit，避免数据泄漏）
         scaler = StandardScaler()
