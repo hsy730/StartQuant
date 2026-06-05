@@ -532,12 +532,14 @@ class VectorBTBacktestService:
             if "Entry Timestamp" in trades_df.columns and "Exit Timestamp" in trades_df.columns:
                 trades_df = trades_df.drop_duplicates(subset=["Entry Timestamp", "Exit Timestamp"])
 
-        # 指标计算
+        # 指标计算（扣除无风险利率，与calculate_metrics保持一致）
         n_bars = len(returns)
         total_return = float((1 + returns).prod() - 1) if n_bars > 0 else 0.0
         annual_return = float((1 + total_return) ** (fc["annual_bars"] / n_bars) - 1) if n_bars > 0 else 0.0
         volatility = float(returns.std() * np.sqrt(fc["annual_bars"])) if n_bars > 0 else 0.0
-        sharpe_ratio = float(returns.mean() / returns.std() * np.sqrt(fc["annual_bars"])) if returns.std() > 0 else 0.0
+        daily_rf = 0.03 / fc["annual_bars"]  # 无风险利率3%，年化转日频
+        excess_returns = returns - daily_rf
+        sharpe_ratio = float(excess_returns.mean() / returns.std() * np.sqrt(fc["annual_bars"])) if returns.std() > 0 else 0.0
 
         # 最大回撤
         peak = equity_curve.cummax()
@@ -547,11 +549,12 @@ class VectorBTBacktestService:
 
         win_rate = float((returns > 0).mean()) if n_bars > 0 else 0.0
 
-        # Sortino
+        # Sortino（扣除无风险利率）
         downside = returns[returns < 0]
         if len(downside) > 0:
             downside_std = float(downside.std() * np.sqrt(fc["annual_bars"]))
-            sortino_ratio = float(returns.mean() * np.sqrt(fc["annual_bars"]) / downside_std) if downside_std > 0 else 0.0
+            # excess_returns已扣daily_rf，年化: excess_mean * annual_bars / downside_std
+            sortino_ratio = float(excess_returns.mean() * fc["annual_bars"] / downside_std) if downside_std > 0 else 0.0
         else:
             sortino_ratio = 0.0
 

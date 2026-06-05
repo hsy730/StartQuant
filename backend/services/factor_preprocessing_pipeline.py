@@ -275,9 +275,9 @@ class FactorPreprocessingPipeline:
     ) -> Tuple[Dict[str, pd.DataFrame], Dict[str, Dict]]:
         """
         处理多只股票的因子数据（字典格式）
-        
+
         这是最常用的接口，与现有代码无缝集成
-        
+
         Args:
             factor_data: {stock_code: DataFrame} 格式的因子数据
             factor_names: 因子名称列表
@@ -285,10 +285,17 @@ class FactorPreprocessingPipeline:
             industry_col: 行业列名
             parallel_stocks: 是否并行处理不同股票
             max_workers: 并行线程数
-            
+
         Returns:
             (处理后的因子数据字典, 统计信息字典)
         """
+        # 横截面模式：将所有股票合并为一个DataFrame，按日期分组处理
+        if self.config.cross_sectional and len(factor_data) > 1:
+            return self._process_multi_stock_cross_sectional(
+                factor_data, factor_names, market_cap_col, industry_col,
+            )
+
+        # 逐股票时间序列模式（fallback）
         result_data = {}
         all_stats = {}
 
@@ -342,6 +349,75 @@ class FactorPreprocessingPipeline:
                     logger.error(f"处理股票{code}失败: {e}")
                     result_data[code] = df
                     all_stats[code] = {"error": str(e)}
+
+        return result_data, all_stats
+
+    def _process_multi_stock_cross_sectional(
+        self,
+        factor_data: Dict[str, pd.DataFrame],
+        factor_names: List[str],
+        market_cap_col: str = "market_cap",
+        industry_col: str = "industry",
+    ) -> Tuple[Dict[str, pd.DataFrame], Dict[str, Dict]]:
+        """
+        横截面模式处理多只股票因子数据
+
+        将所有股票合并为一个DataFrame，按日期分组进行横截面去极值、中性化、标准化。
+        这是业界标准做法：每天对所有股票的因子进行截面处理。
+        """
+        # 合并所有股票数据
+        all_dfs = []
+        for stock_code, df in factor_data.items():
+            df_copy = df.copy()
+            df_copy["stock_code"] = stock_code
+            # 确保有date列
+            if isinstance(df_copy.index, pd.DatetimeIndex):
+                df_copy["date"] = df_copy.index
+            elif "date" not in df_copy.columns:
+                df_copy["date"] = df_copy.index
+            all_dfs.append(df_copy)
+
+        if not all_dfs:
+            return factor_data, {}
+
+        merged_df = pd.concat(all_dfs, ignore_index=True)
+
+        # 确保date列是datetime类型
+        merged_df["date"] = pd.to_datetime(merged_df["date"])
+
+        result_data = {}
+        all_stats = {}
+
+        for factor_name in factor_names:
+            if factor_name not in merged_df.columns:
+                continue
+
+            try:
+                processed_col, stats = self._process_cross_sectional(
+                    merged_df, factor_name, market_cap_col, industry_col, "date",
+                )
+                merged_df[factor_name] = processed_col
+                all_stats[factor_name] = stats
+            except Exception as e:
+                logger.error(f"横截面处理因子{factor_name}失败: {e}")
+                all_stats[factor_name] = {"error": str(e)}
+
+        # 拆分回各股票
+        for stock_code in factor_data.keys():
+            stock_rows = merged_df[merged_df["stock_code"] == stock_code]
+            # 恢复原始索引
+            original_df = factor_data[stock_code]
+            result_df = original_df.copy()
+            for factor_name in factor_names:
+                if factor_name in stock_rows.columns and factor_name in result_df.columns:
+                    # 按原始索引对齐
+                    if isinstance(original_df.index, pd.DatetimeIndex):
+                        stock_rows_indexed = stock_rows.set_index("date")
+                        common_idx = result_df.index.intersection(stock_rows_indexed.index)
+                        result_df.loc[common_idx, factor_name] = stock_rows_indexed.loc[common_idx, factor_name]
+                    else:
+                        result_df[factor_name] = stock_rows[factor_name].values[:len(result_df)]
+            result_data[stock_code] = result_df
 
         return result_data, all_stats
 

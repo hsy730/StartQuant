@@ -365,6 +365,9 @@ class FactorGeneratorService:
             ("zscore", None),  # 手动处理
         ]
 
+        # 按函数名长度降序排列，确保最长匹配优先（避免短名误匹配长名前缀）
+        func_map.sort(key=lambda x: len(x[0]), reverse=True)
+
         # 用栈解析表达式，逐层替换函数调用
         def split_args_by_comma(args_str: str) -> list:
             """按逗号分割参数列表，尊重括号嵌套"""

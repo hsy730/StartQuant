@@ -117,6 +117,21 @@ class FactorNeutralizationService:
             logger.warning("行业分类不足2个，跳过行业中性化")
             return df[factor_name]
 
+        # 检查最小行业样本量，样本过小的行业会导致回归不稳定
+        MIN_INDUSTRY_SIZE = 5
+        industry_counts = industries.value_counts()
+        small_industries = industry_counts[industry_counts < MIN_INDUSTRY_SIZE]
+        if len(small_industries) > 0:
+            logger.warning(f"行业{small_industries.index.tolist()}样本量< {MIN_INDUSTRY_SIZE}，中性化可能不稳定")
+            # 过滤掉样本量过小的行业
+            valid_industries = industry_counts[industry_counts >= MIN_INDUSTRY_SIZE].index.tolist()
+            if len(valid_industries) < 2:
+                logger.warning("过滤后行业分类不足2个，跳过行业中性化")
+                return df[factor_name]
+            mask = industries.isin(valid_industries)
+            valid_data = valid_data[mask]
+            industries = industries[mask]
+
         industry_dummies = pd.get_dummies(industries, drop_first=True).astype(float)
         X = industry_dummies.values
         y = valid_data[factor_name].values
@@ -174,8 +189,24 @@ class FactorNeutralizationService:
             industries = valid_data[industry_column].astype(str)
             unique_industries = sorted(industries.unique())
             if len(unique_industries) >= 2:
-                industry_dummies = pd.get_dummies(industries, drop_first=True).astype(float)
-                X_list.append(industry_dummies.values)
+                # 检查最小行业样本量
+                MIN_INDUSTRY_SIZE = 5
+                industry_counts = industries.value_counts()
+                small_industries = industry_counts[industry_counts < MIN_INDUSTRY_SIZE]
+                if len(small_industries) > 0:
+                    logger.warning(f"联合中性化：行业{small_industries.index.tolist()}样本量< {MIN_INDUSTRY_SIZE}，可能不稳定")
+                    valid_industries = industry_counts[industry_counts >= MIN_INDUSTRY_SIZE].index.tolist()
+                    if len(valid_industries) >= 2:
+                        mask = industries.isin(valid_industries)
+                        valid_data = valid_data[mask]
+                        industries = industries[mask]
+                        y = valid_data[factor_name].values
+                    else:
+                        logger.warning("过滤后行业分类不足2个，跳过行业中性化部分")
+                        has_industry = False
+                if has_industry:
+                    industry_dummies = pd.get_dummies(industries, drop_first=True).astype(float)
+                    X_list.append(industry_dummies.values)
 
         if has_mc:
             log_mc = np.log(valid_data[market_cap_column].replace(0, np.nan))

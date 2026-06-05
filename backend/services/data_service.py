@@ -438,12 +438,14 @@ class DataService:
         mask_conditions = []
 
         if config.check_limit_up:
-            # 排除涨停日（买不进去）
+            # 排除涨停日（买不进去）- 包括一字涨停和触及涨停
             mask_conditions.append(~df["is_limit_up"])
+            mask_conditions.append(~df["touched_limit_up"])
 
         if config.check_limit_down:
-            # 排除跌停日（卖不出来）
+            # 排除跌停日（卖不出来）- 包括一字跌停和触及跌停
             mask_conditions.append(~df["is_limit_down"])
+            mask_conditions.append(~df["touched_limit_down"])
 
         if config.check_suspended:
             # 排除停牌日（无法交易）
@@ -522,7 +524,7 @@ class DataService:
         if settings.DATA_FILL_MISSING:
             df = df.ffill()
 
-        # Step 2: 异常值检测与处理
+        # Step 2: 异常值检测与处理（使用MAD法，比3σ更抗异常值）
         if settings.DATA_OUTLIER_DETECTION:
             price_columns = ["open", "high", "low", "close"]
             window = 20
@@ -530,11 +532,12 @@ class DataService:
             for col in price_columns:
                 if col not in df.columns:
                     continue
-                rolling_mean = df[col].rolling(window=window, min_periods=1).mean()
-                rolling_std = df[col].rolling(window=window, min_periods=1).std()
-                rolling_std = rolling_std.replace(0, float("nan")).ffill().bfill()
-                lower_bound = rolling_mean - n_sigma * rolling_std
-                upper_bound = rolling_mean + n_sigma * rolling_std
+                rolling_median = df[col].rolling(window=window, min_periods=1).median()
+                # MAD = median(|x - median(x)|)，1.4826为正态分布修正因子
+                mad = (df[col] - rolling_median).abs().rolling(window=window, min_periods=1).median() * 1.4826
+                mad = mad.replace(0, float("nan")).ffill().bfill()
+                lower_bound = rolling_median - n_sigma * mad
+                upper_bound = rolling_median + n_sigma * mad
                 df.loc[df[col] < lower_bound, col] = lower_bound[df[col] < lower_bound]
                 df.loc[df[col] > upper_bound, col] = upper_bound[df[col] > upper_bound]
 

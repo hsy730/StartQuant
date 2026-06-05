@@ -405,18 +405,18 @@ class AnalysisService:
         self, factor_data: Dict[str, pd.DataFrame], factor_names: List[str],
         stock_codes: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
-        """手动多股票横截面IC计算（当Alphalens不可用时的回退方案）"""
+        """手动多股票横截面IC计算（当Alphalens不可用时的回退方案）
+
+        使用Spearman秩相关（业界标准）+ 向量化groupby操作
+        """
         from scipy import stats as scipy_stats
 
         codes = stock_codes or list(factor_data.keys())
 
         ic_series = {}
         for factor_name in factor_names:
-            # 构建横截面数据
-            all_factor_values = []
-            all_return_values = []
-            all_dates = []
-
+            # 向量化构建横截面数据：拼接所有股票，用groupby计算每日IC
+            all_rows = []
             for stock_code in codes:
                 df = factor_data.get(stock_code)
                 if df is None:
@@ -424,43 +424,44 @@ class AnalysisService:
                 if factor_name not in df.columns or "future_return_1" not in df.columns:
                     continue
 
-                for date_idx, (date, row) in enumerate(df.iterrows()):
-                    fv = row.get(factor_name)
-                    ret = row.get("future_return_1")
+                stock_data = df[[factor_name, "future_return_1"]].copy()
+                stock_data["stock_code"] = stock_code
+                # 保留日期信息
+                if isinstance(df.index, pd.DatetimeIndex):
+                    stock_data["date"] = df.index
+                elif "date" in df.columns:
+                    stock_data["date"] = df["date"]
+                else:
+                    stock_data["date"] = df.index
+                all_rows.append(stock_data)
 
-                    if pd.notna(fv) and pd.notna(ret) and not np.isinf(fv) and not np.isinf(ret):
-                        all_factor_values.append(float(fv))
-                        all_return_values.append(float(ret))
-                        all_dates.append(date)
-
-            if len(all_factor_values) < 20:
+            if not all_rows:
                 continue
 
-            # 按日期分组计算每日横截面IC
-            date_ic_map = {}
-            date_groups = {}
-            for i, date in enumerate(all_dates):
-                if date not in date_groups:
-                    date_groups[date] = {"factors": [], "returns": []}
-                date_groups[date]["factors"].append(all_factor_values[i])
-                date_groups[date]["returns"].append(all_return_values[i])
+            merged = pd.concat(all_rows, ignore_index=True)
+            merged["date"] = pd.to_datetime(merged["date"])
 
-            ic_values = []
-            ic_dates = []
-            for date in sorted(date_groups.keys()):
-                group = date_groups[date]
-                if len(group["factors"]) >= 2:
-                    try:
-                        corr = np.corrcoef(group["factors"], group["returns"])[0, 1]
-                        if not np.isnan(corr):
-                            ic_values.append(corr)
-                            ic_dates.append(date)
-                    except Exception:
-                        continue
+            # 清理无效值
+            valid_mask = (
+                merged[factor_name].notna() & merged["future_return_1"].notna()
+                & ~np.isinf(merged[factor_name]) & ~np.isinf(merged["future_return_1"])
+            )
+            merged = merged[valid_mask]
 
-            if len(ic_values) > 5:
-                ic_s = pd.Series(ic_values, index=ic_dates)
-                ic_series[factor_name] = ic_s
+            if len(merged) < 20:
+                continue
+
+            # 向量化：按日期分组计算Spearman秩相关IC
+            def _spearman_ic(group):
+                if len(group) < 2:
+                    return np.nan
+                return group[factor_name].rank().corr(group["future_return_1"].rank())
+
+            daily_ic = merged.groupby("date").apply(_spearman_ic)
+            daily_ic = daily_ic.dropna()
+
+            if len(daily_ic) > 5:
+                ic_series[factor_name] = daily_ic
 
         # 计算统计指标
         ic_stats = {}
@@ -532,9 +533,9 @@ class AnalysisService:
                 combined_mask = valid_mask & tradable_mask
                 factor_clean = factor_values[combined_mask]
                 return_clean = return_values[combined_mask]
-                min_periods = max(2, int(20 * 0.6))
-                rolling_ic = factor_clean.rolling(window=20, min_periods=min_periods).corr(return_clean)
-                rolling_rank_ic = factor_clean.rank().rolling(window=20, min_periods=min_periods).corr(return_clean.rank())
+                min_periods = max(2, int(60 * 0.6))
+                rolling_ic = factor_clean.rolling(window=60, min_periods=min_periods).corr(return_clean)
+                rolling_rank_ic = factor_clean.rank().rolling(window=60, min_periods=min_periods).corr(return_clean.rank())
             else:
                 valid_mask = (
                     factor_values.notna() & return_values.notna()
@@ -542,10 +543,10 @@ class AnalysisService:
                 )
                 factor_clean = factor_values[valid_mask]
                 return_clean = return_values[valid_mask]
-                if len(factor_clean) < 20:
+                if len(factor_clean) < 60:
                     continue
-                rolling_ic = factor_clean.rolling(window=20).corr(return_clean)
-                rolling_rank_ic = factor_clean.rank().rolling(window=20).corr(return_clean.rank())
+                rolling_ic = factor_clean.rolling(window=60).corr(return_clean)
+                rolling_rank_ic = factor_clean.rank().rolling(window=60).corr(return_clean.rank())
 
             rolling_ic = rolling_ic.replace([np.inf, -np.inf], np.nan).dropna()
             rolling_rank_ic = rolling_rank_ic.replace([np.inf, -np.inf], np.nan).dropna()
@@ -920,10 +921,9 @@ class AnalysisService:
                 if df is not None and "market_cap" in df.columns:
                     mc = df["market_cap"].dropna()
                     if len(mc) > 0:
-                        weight_map[stock_code] = mc.mean()
-            total_mc = sum(weight_map.values())
-            if total_mc > 0:
-                weight_map = {k: v / total_mc for k, v in weight_map.items()}
+                        # 使用截面市值（完整Series），而非时间平均市值
+                        weight_map[stock_code] = mc
+            # 截面市值无需全局归一化，_compute_weighted_ic_mean按日期逐日归一化
         elif weight_type == "liquidity":
             for stock_code in codes:
                 df = factor_data.get(stock_code)
@@ -1018,7 +1018,7 @@ class AnalysisService:
 
     @staticmethod
     def _compute_weighted_ic_mean(ic_s: pd.Series, factor_values_dict: dict, weight_map: dict, weight_type: str) -> float:
-        """计算加权IC均值（按截面对齐权重）"""
+        """计算加权IC均值（按截面对齐权重，每日归一化）"""
         if not weight_map or weight_type == "equal":
             return float(ic_s.mean())
 
@@ -1036,7 +1036,8 @@ class AnalysisService:
                     elif isinstance(w, (int, float)):
                         w_sum += abs(w)
                         count += 1
-            date_weights[date] = w_sum if count > 0 else 1.0
+            # 按日期归一化：该日所有股票权重之和为1
+            date_weights[date] = w_sum / count if count > 0 else 1.0
 
         weights_series = pd.Series(date_weights)
         total_weight = weights_series.sum()
@@ -1119,13 +1120,25 @@ class AnalysisService:
         X_combined = pd.concat(X_list)
         y_combined = pd.concat(y_list)
 
+        # 按时间索引排序，确保时间顺序正确，避免未来数据泄漏
+        X_combined = X_combined.sort_index()
+        y_combined = y_combined.sort_index()
+
         logger.debug(f"[SHAP] X_combined shape: {X_combined.shape}")
         logger.debug(f"[SHAP] X_combined columns: {X_combined.columns.tolist()}")
 
-        # 标准化特征
+        # 按时间顺序分割训练集和测试集（避免未来信息泄漏）
+        n_samples = len(X_combined)
+        split_idx = int(n_samples * 0.8)
+        X_train_raw = X_combined.iloc[:split_idx]
+        X_test_raw = X_combined.iloc[split_idx:]
+        y_train = y_combined.iloc[:split_idx]
+        y_test = y_combined.iloc[split_idx:]
+
+        # 标准化特征（仅在训练集上fit，避免数据泄漏）
         scaler = StandardScaler()
-        X_scaled = scaler.fit_transform(X_combined)
-        X_scaled = pd.DataFrame(X_scaled, columns=X_combined.columns)
+        X_train = pd.DataFrame(scaler.fit_transform(X_train_raw), columns=X_combined.columns, index=X_train_raw.index)
+        X_test = pd.DataFrame(scaler.transform(X_test_raw), columns=X_combined.columns, index=X_test_raw.index)
 
         # 训练XGBoost模型
         model = xgb.XGBRegressor(
@@ -1135,14 +1148,6 @@ class AnalysisService:
             objective="reg:squarederror",
             random_state=42,
         )
-
-        # 按时间顺序分割训练集和测试集（避免未来信息泄漏）
-        n_samples = len(X_scaled)
-        split_idx = int(n_samples * 0.8)
-        X_train = X_scaled.iloc[:split_idx]
-        X_test = X_scaled.iloc[split_idx:]
-        y_train = y_combined.iloc[:split_idx]
-        y_test = y_combined.iloc[split_idx:]
 
         logger.debug(f"[SHAP] Training with {len(X_train)} samples, testing with {len(X_test)} samples")
 
