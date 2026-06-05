@@ -298,7 +298,10 @@ class TestFactorPreprocessingPipeline:
         print(f"✅ 多股票批量处理测试通过:")
         print(f"   - 处理股票数: {len(processed_data)}")
         print(f"   - 处理耗时: {elapsed_time:.3f}秒")
-        print(f"   - 统计摘要:\n{pipeline.get_processing_summary(all_stats.get(list(all_stats.keys())[0], {}))}")
+        # all_stats 结构: {stock_code: {factor_name: stats_dict}}
+        # 取第一只股票的统计信息展示
+        first_stock_stats = all_stats.get(list(all_stats.keys())[0], {})
+        print(f"   - 统计摘要:\n{pipeline.get_processing_summary(first_stock_stats)}")
 
     def test_edge_cases(self):
         """边界情况测试"""

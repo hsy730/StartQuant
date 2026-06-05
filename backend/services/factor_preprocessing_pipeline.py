@@ -144,8 +144,8 @@ class FactorPreprocessingPipeline:
             result, inf_stats = self._handle_missing(result)
             stats["inf_cleaned_count"] = inf_count
 
-        # Step 2: 去极值
-        result, winsorize_stats = self._winsorize(result, date_index)
+        # Step 2: 去极值（全局模式，横截面去极值在 _process_cross_sectional 中实现）
+        result, winsorize_stats = self._winsorize(result)
         stats["winsorized_count"] = winsorize_stats["clipped_count"]
 
         # Step 3: 中性化（⭐支持联合回归）
@@ -414,28 +414,40 @@ class FactorPreprocessingPipeline:
             # 恢复原始索引
             original_df = factor_data[stock_code]
             result_df = original_df.copy()
+
+            # 统一构建以日期为索引的映射表，避免 .values 导致的数据错位
+            stock_rows_by_date = stock_rows.set_index("date")
+            stock_rows_by_date.index = pd.to_datetime(stock_rows_by_date.index)
+
             for factor_name in factor_names:
-                if factor_name in stock_rows.columns and factor_name in result_df.columns:
-                    # 按日期对齐：确保两边索引类型一致
-                    stock_rows_indexed = stock_rows.set_index("date")
-                    stock_rows_indexed.index = pd.to_datetime(stock_rows_indexed.index)
-                    # 将result_df的索引也转为DatetimeIndex以匹配
-                    if isinstance(result_df.index, pd.DatetimeIndex):
-                        common_idx = result_df.index.intersection(stock_rows_indexed.index)
-                    else:
-                        # 非DatetimeIndex：用日期列对齐
-                        result_indexed = result_df.copy()
-                        if "date" in result_indexed.columns:
-                            result_indexed = result_indexed.set_index("date")
-                        else:
-                            result_indexed.index = pd.to_datetime(result_indexed.index)
-                        common_idx = result_indexed.index.intersection(stock_rows_indexed.index)
-                        result_df.loc[result_indexed.index.isin(common_idx), factor_name] = stock_rows_indexed.loc[
-                            stock_rows_indexed.index.isin(common_idx), factor_name
-                        ].values
-                        continue
+                if factor_name not in stock_rows_by_date.columns or factor_name not in result_df.columns:
+                    continue
+
+                factor_values_by_date = stock_rows_by_date[factor_name]
+
+                if isinstance(result_df.index, pd.DatetimeIndex):
+                    # DatetimeIndex：直接按索引对齐赋值
+                    common_idx = result_df.index.intersection(factor_values_by_date.index)
                     if len(common_idx) > 0:
-                        result_df.loc[common_idx, factor_name] = stock_rows_indexed.loc[common_idx, factor_name]
+                        result_df.loc[common_idx, factor_name] = factor_values_by_date.loc[common_idx]
+                else:
+                    # 非DatetimeIndex：通过日期列对齐，使用索引对齐而非 .values
+                    if "date" in result_df.columns:
+                        result_temp = result_df.set_index("date")
+                        result_temp.index = pd.to_datetime(result_temp.index)
+                        common_idx = result_temp.index.intersection(factor_values_by_date.index)
+                        if len(common_idx) > 0:
+                            result_temp.loc[common_idx, factor_name] = factor_values_by_date.loc[common_idx]
+                        result_df[factor_name] = result_temp[factor_name].values
+                    else:
+                        # 无日期列：尝试将原始索引转为日期
+                        result_temp = result_df.copy()
+                        result_temp.index = pd.to_datetime(result_temp.index)
+                        common_idx = result_temp.index.intersection(factor_values_by_date.index)
+                        if len(common_idx) > 0:
+                            result_temp.loc[common_idx, factor_name] = factor_values_by_date.loc[common_idx]
+                        result_df[factor_name] = result_temp[factor_name].values
+
             result_data[stock_code] = result_df
 
         return result_data, all_stats
@@ -464,12 +476,13 @@ class FactorPreprocessingPipeline:
     def _winsorize(
         self,
         series: pd.Series,
-        date_index: Optional[pd.DatetimeIndex] = None,
     ) -> Tuple[pd.Series, Dict]:
         """
-        高性能去极值实现
-        
-        使用pandas向量化操作，比循环快100倍以上
+        高性能去极值实现（全局模式）
+
+        使用pandas向量化操作，比循环快100倍以上。
+        注意：此方法始终执行全局去极值，不按日期分组。
+        横截面去极值在 _process_cross_sectional 的 process_group 中实现。
         """
         method = self.config.winsorize_method
         original = series.copy()
@@ -477,19 +490,18 @@ class FactorPreprocessingPipeline:
 
         if method == WinsorizeMethod.MAD:
             median = series.median()
-            # 使用pandas .median()自动忽略NaN，而非np.median（遇NaN返回NaN）
-            mad = 1.4826 * (series - median).abs().median()
+            # σ_hat = 1.4826 * MAD（正态分布下 1.4826*MAD ≈ σ）
+            sigma_hat = 1.4826 * (series - median).abs().median()
 
-            if mad == 0:
+            if sigma_hat == 0:
                 # MAD=0时（如数据过于集中），用标准差作为σ_hat的估计
-                # 注意：mad变量在此处代表σ_hat（1.4826*MAD ≈ σ），
-                # 因此fallback应直接使用std()而非std()*0.6745
-                mad = series.std()
-                if mad == 0 or np.isnan(mad):
+                # σ_hat ≈ std()，因此fallback直接使用std()而非std()*0.6745
+                sigma_hat = series.std()
+                if sigma_hat == 0 or np.isnan(sigma_hat):
                     return series, {"clipped_count": 0}
             
-            lower_bound = median - self.config.winsorize_n_sigma * mad
-            upper_bound = median + self.config.winsorize_n_sigma * mad
+            lower_bound = median - self.config.winsorize_n_sigma * sigma_hat
+            upper_bound = median + self.config.winsorize_n_sigma * sigma_hat
             
             mask_lower = series < lower_bound
             mask_upper = series > upper_bound
@@ -559,25 +571,37 @@ class FactorPreprocessingPipeline:
             if len(factor_vals) < self.config.min_samples:
                 return factor_vals
 
+            # 清理无穷大值（避免污染去极值和中性化计算）
+            inf_mask = np.isinf(factor_vals)
+            if inf_mask.any():
+                factor_vals = factor_vals.replace([np.inf, -np.inf], np.nan)
+
+            # 缺失值处理（横截面模式下按配置填充）
+            if factor_vals.isna().any() and self.config.handle_missing != "drop":
+                if self.config.handle_missing == "fill_median":
+                    factor_vals = factor_vals.fillna(factor_vals.median())
+                else:
+                    factor_vals = factor_vals.fillna(0)
+
             # 去极值
             if self.config.winsorize_method == WinsorizeMethod.MAD:
                 median = factor_vals.median()
-                mad = 1.4826 * (factor_vals - median).abs().median()
-                if mad == 0:
+                sigma_hat = 1.4826 * (factor_vals - median).abs().median()
+                if sigma_hat == 0:
                     # 同_winsorize方法：MAD=0时用std作为σ_hat估计
-                    mad = factor_vals.std()
-                    if mad == 0 or np.isnan(mad):
+                    sigma_hat = factor_vals.std()
+                    if sigma_hat == 0 or np.isnan(sigma_hat):
                         # 数据完全一致，无需去极值
                         pass
                     else:
                         factor_vals = factor_vals.clip(
-                            lower=median - self.config.winsorize_n_sigma * mad,
-                            upper=median + self.config.winsorize_n_sigma * mad,
+                            lower=median - self.config.winsorize_n_sigma * sigma_hat,
+                            upper=median + self.config.winsorize_n_sigma * sigma_hat,
                         )
                 else:
                     factor_vals = factor_vals.clip(
-                        lower=median - self.config.winsorize_n_sigma * mad,
-                        upper=median + self.config.winsorize_n_sigma * mad,
+                        lower=median - self.config.winsorize_n_sigma * sigma_hat,
+                        upper=median + self.config.winsorize_n_sigma * sigma_hat,
                     )
             elif self.config.winsorize_method == WinsorizeMethod.PERCENTILE:
                 winsorized = scipy_winsorize(
@@ -699,7 +723,7 @@ class FactorPreprocessingPipeline:
 
             return factor_vals
 
-        result = df.groupby(date_column, group_keys=False).apply(process_group)
+        result = df.groupby(date_column, group_keys=False).apply(process_group, include_groups=False)
         stats["dates_processed"] = df[date_column].nunique()
 
         return result, stats
@@ -768,12 +792,21 @@ class FactorPreprocessingPipeline:
             logger.warning("行业分类不足2个，跳过行业中性化")
             return factor_values
 
-        # 检查最小行业样本量（<5只股票的行业可能导致回归不稳定）
+        # 检查最小行业样本量：将小行业（<5只股票）合并为"其他"类别，
+        # 避免因个别小行业导致整个行业中性化被跳过
         industry_counts = industries.value_counts()
-        min_ind_size = industry_counts.min()
-        if min_ind_size < 5:
-            logger.warning(f"存在仅{min_ind_size}只股票的小行业，跳过行业中性化")
-            return factor_values
+        small_industries = industry_counts[industry_counts < 5].index
+        if len(small_industries) > 0:
+            industries = industries.replace(small_industries.to_list(), "Other")
+            logger.info(
+                f"将{len(small_industries)}个小行业（样本<5）合并为'Other'类别: "
+                f"{small_industries.to_list()}"
+            )
+            # 合并后重新检查行业数
+            unique_inds = sorted(industries.unique())
+            if len(unique_inds) < 2:
+                logger.warning("合并小行业后行业分类仍不足2个，跳过行业中性化")
+                return factor_values
 
         result = factor_values.copy()
         y = factor_values[valid_mask].values
@@ -919,6 +952,8 @@ class FactorPreprocessingPipeline:
         lines.append("|---------|---------|--------|---------|-----------|----------|")
 
         for factor_name, stats in stats_dict.items():
+            if not isinstance(stats, dict):
+                continue
             if "error" in stats:
                 lines.append(f"| {factor_name} | - | - | - | ❌ 错误: {stats['error']} | - |")
             else:
@@ -934,7 +969,7 @@ class FactorPreprocessingPipeline:
                 )
 
         total_factors = len(stats_dict)
-        success_count = sum(1 for s in stats_dict.values() if "error" not in s)
+        success_count = sum(1 for s in stats_dict.values() if isinstance(s, dict) and "error" not in s)
         lines.append(f"\n**总计**: {success_count}/{total_factors} 个因子处理成功")
 
         return "\n".join(lines)

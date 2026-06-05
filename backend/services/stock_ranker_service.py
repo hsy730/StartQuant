@@ -257,13 +257,26 @@ class StockRankerService:
 
         # 特征缺失值填充：仅用训练集统计量，避免数据泄漏
         train_df = df.iloc[:adjusted_split_idx]
+
+        # 缺失率警告（基于训练集）
         for feat in feature_cols:
-            missing_ratio = df[feat].isna().mean()
+            missing_ratio = train_df[feat].isna().mean()
             if missing_ratio > 0.3:
-                logger.warning(f"特征 [{feat}] 缺失率 {missing_ratio*100:.1f}% > 30%，建议检查数据质量")
-            if missing_ratio > 0:
-                train_median = train_df[feat].median()
-                df[feat] = df[feat].fillna(train_median)
+                logger.warning(f"特征 [{feat}] 训练集缺失率 {missing_ratio*100:.1f}% > 30%，建议检查数据质量")
+
+        # 使用 sklearn SimpleImputer：fit 训练集，transform 全量数据
+        from sklearn.impute import SimpleImputer
+        imputer = SimpleImputer(strategy="median", fill_value=0)
+        imputer.fit(train_df[feature_cols])
+
+        # 保存 imputer 统计量供预测时使用
+        feature_medians = {
+            feat: float(imputer.statistics_[i])
+            for i, feat in enumerate(feature_cols)
+        }
+
+        # 复用 _fill_missing_features，确保训练和预测走完全相同的代码路径
+        df[feature_cols] = self._fill_missing_features(df, feature_cols, feature_medians)
 
         # 重新提取特征矩阵（填充后）
         X = df[feature_cols].values
@@ -295,6 +308,11 @@ class StockRankerService:
             "seed": 42,
         }
 
+        # 排序特定参数（仅 rank:* 目标时生效）
+        if cfg.objective.startswith("rank:"):
+            params["lambdarank_pair_method"] = cfg.lambdarank_pair_method
+            params["ndcg_truncation"] = cfg.ndcg_truncation
+
         eval_result = {}
         model = xgb.train(
             params,
@@ -314,7 +332,7 @@ class StockRankerService:
 
         # ---- 保存模型 ----
         train_period = f"{df[date_col].min()} ~ {df[date_col].max()}"
-        model_id = self._save_model(model, model_name, cfg, tags, feature_cols, train_period=train_period)
+        model_id = self._save_model(model, model_name, cfg, tags, feature_cols, train_period=train_period, feature_medians=feature_medians)
 
         duration = time.time() - t0
 
@@ -370,6 +388,7 @@ class StockRankerService:
         metadata = self._get_model_metadata(model_id)
 
         trained_features = metadata.get("feature_cols", [])
+        feature_medians = metadata.get("feature_medians", {})
         use_cols = feature_cols or trained_features
 
         # 确保特征列一致
@@ -377,7 +396,8 @@ class StockRankerService:
         if missing:
             raise ValueError(f"缺少特征列: {missing}")
 
-        X = features[use_cols].fillna(0).values
+        # 使用训练集中位数填充缺失值（与训练时一致，避免分布漂移）
+        X = self._fill_missing_features(features, use_cols, feature_medians)
         dmatrix = xgb.DMatrix(X, feature_names=use_cols)
 
         scores = model.predict(dmatrix)
@@ -385,7 +405,21 @@ class StockRankerService:
         # 构建结果 DataFrame
         result_df = features.copy()
         result_df["rank_score"] = scores
-        result_df["rank_position"] = pd.Series(scores).rank(ascending=False, method="first").values
+
+        # 组内排名：如果有日期列则按日期分组排名，否则全局排名
+        date_col_candidates = ["date", "trade_date", "trading_date"]
+        group_col = None
+        for col in date_col_candidates:
+            if col in result_df.columns:
+                group_col = col
+                break
+        if group_col is not None:
+            result_df["rank_position"] = result_df.groupby(group_col)["rank_score"].rank(
+                ascending=False, method="first"
+            )
+        else:
+            result_df["rank_position"] = result_df["rank_score"].rank(ascending=False, method="first")
+
         result_df = result_df.sort_values("rank_score", ascending=False)
 
         top_n_df = result_df.head(top_n).copy()
@@ -398,7 +432,7 @@ class StockRankerService:
             "bottom_score": float(np.min(scores)),
             "score_range": float(np.max(scores) - np.min(scores)),
             "n_predicted": len(features),
-            "effective_ratio": float((scores > scores.mean()).sum()) / len(scores),
+            "score_cv": float(np.std(scores) / (np.abs(np.mean(scores)) + 1e-10)),  # 变异系数，衡量分数区分度
         }
 
         return RankPredictionResult(
@@ -444,6 +478,7 @@ class StockRankerService:
         model = self._load_model(model_id)
         metadata = self._get_model_metadata(model_id)
         use_cols = feature_cols or metadata.get("feature_cols", [])
+        feature_medians = metadata.get("feature_medians", {})
 
         logger.info(
             f"[StockRanker] 开始预测+回测: model_id={model_id}, "
@@ -480,7 +515,7 @@ class StockRankerService:
                 continue
 
             try:
-                X_day = day_data[use_cols].fillna(0).values
+                X_day = self._fill_missing_features(day_data, use_cols, feature_medians)
                 dm = xgb.DMatrix(X_day, feature_names=use_cols)
                 scores = model.predict(dm)
 
@@ -616,6 +651,7 @@ class StockRankerService:
         tags: Optional[List[str]],
         feature_cols: List[str],
         train_period: str = "",
+        feature_medians: Optional[Dict[str, float]] = None,
     ) -> str:
         """保存模型到注册中心或文件系统"""
         model_id = f"{model_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
@@ -631,6 +667,7 @@ class StockRankerService:
                 "n_estimators": config.n_estimators,
             },
             "feature_cols": feature_cols,
+            "feature_medians": feature_medians or {},  # 训练集各特征中位数，预测时用于填充
             "tags": tags or [],
             "framework": "xgboost_ranking",
             "version": "1.0.0",
@@ -718,6 +755,37 @@ class StockRankerService:
         if model_id in self._loaded_models:
             del self._loaded_models[model_id]
         return deleted
+
+    # ==================== 特征预处理辅助 ====================
+
+    @staticmethod
+    def _fill_missing_features(
+        df: pd.DataFrame,
+        feature_cols: List[str],
+        feature_medians: Dict[str, float],
+    ) -> np.ndarray:
+        """
+        使用训练集中位数填充缺失值，确保训练-推理预处理一致
+
+        训练和预测共用此方法，保证填充逻辑完全相同。
+        不依赖 sklearn SimpleImputer 的 transform（需要 fit 状态），
+        而是直接用 numpy 向量化操作，更轻量且无状态依赖。
+
+        Args:
+            df: 待填充的数据
+            feature_cols: 特征列名列表
+            feature_medians: 训练集各特征中位数（来自 SimpleImputer.statistics_）
+
+        Returns:
+            填充后的特征矩阵（numpy array）
+        """
+        X = df[feature_cols].values.astype(np.float64)
+        for i, col in enumerate(feature_cols):
+            fill_val = feature_medians.get(col, 0.0)
+            nan_mask = np.isnan(X[:, i])
+            if nan_mask.any():
+                X[nan_mask, i] = fill_val
+        return X
 
     # ==================== SHAP 辅助 ====================
 
