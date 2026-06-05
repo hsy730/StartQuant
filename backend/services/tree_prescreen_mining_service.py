@@ -172,6 +172,9 @@ class TreePrescreenMiningService:
         self._selected_features: Optional[List[str]] = None
 
         self.progress_callback = None
+        self._cancel_flag = False
+        self._gp_service = None
+        self._pysr_service = None
 
     # ------------------------------------------------------------------
     # 股票池设置
@@ -223,6 +226,16 @@ class TreePrescreenMiningService:
                       phase: "feature_importance" 或 "symbolic_regression"
         """
         self.progress_callback = callback
+
+    def request_cancel(self):
+        """请求取消挖掘任务"""
+        self._cancel_flag = True
+        # 同时取消下游子服务
+        if self._gp_service is not None:
+            self._gp_service.request_cancel()
+        if self._pysr_service is not None:
+            self._pysr_service.request_cancel()
+        logger.info("收到取消请求")
 
     def _report_progress(self, phase: str, current: float, total: float, message: str = ""):
         """内部进度报告（映射到 0-100% 全局进度）"""
@@ -694,6 +707,19 @@ class TreePrescreenMiningService:
         logger.info(
             f"Phase 1 完成: {len(self.base_factor_codes)} → {len(selected_factor_codes)} 个特征"
         )
+
+        # 取消检查
+        if self._cancel_flag:
+            logger.info("树模型预筛选在Phase 1后被用户取消")
+            return {
+                "success": True,
+                "best_factors": [],
+                "feature_importance": feature_importance,
+                "selected_features": selected_features,
+                "fitness_history": {"best": [], "average": []},
+                "source": "tree_prescreen",
+                "cancelled": True,
+            }
 
         # ---- Phase 2: 下游符号回归 ----
         logger.info(f"Phase 2: 启动下游 {self.downstream_algorithm} 符号回归...")

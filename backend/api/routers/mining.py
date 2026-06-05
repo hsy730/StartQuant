@@ -8,14 +8,16 @@
   - gflownet: GFlowNet增强遗传规划（实验性）
   - deep_implicit: 深度隐式因子模型（Transformer，前沿赛道）
 """
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Query
 from pydantic import BaseModel
 from typing import List, Optional, Dict
 import asyncio
 
 import numpy as np
 import math
+import json
 import logging
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -114,6 +116,8 @@ class GeneticMiningRequest(BaseModel):
 
 # ========== 任务存储（内存） ==========
 mining_tasks = {}
+# 挖掘服务实例引用（用于取消）
+mining_services = {}
 
 
 # ========== API端点 ==========
@@ -132,6 +136,32 @@ async def start_genetic_mining(request: GeneticMiningRequest, background_tasks: 
             "error": None,
             "algorithm": request.algorithm,
         }
+
+        # 持久化到数据库
+        try:
+            from backend.core.database import get_db_session
+            from backend.models.mining_task import MiningTaskModel
+            from backend.repositories.mining_task_repository import MiningTaskRepository
+
+            db = get_db_session()
+            try:
+                repo = MiningTaskRepository(db)
+                task_record = MiningTaskModel(
+                    task_id=task_id,
+                    status="pending",
+                    algorithm=request.algorithm,
+                    stock_codes=json.dumps(request.stock_codes or ([request.stock_code] if request.stock_code else [])),
+                    base_factors=json.dumps(request.base_factors or []),
+                    start_date=request.start_date,
+                    end_date=request.end_date,
+                    freq=request.freq,
+                    config=request.model_dump(),
+                )
+                repo.create(task_record)
+            finally:
+                db.close()
+        except Exception as e:
+            logger.warning(f"持久化挖掘任务失败（不影响运行）: {e}")
 
         background_tasks.add_task(
             _run_mining,
@@ -180,6 +210,9 @@ async def _run_mining(task_id: str, request: GeneticMiningRequest):
         from backend.services.data_service import data_service
 
         mining_tasks[task_id]["status"] = "running"
+
+        # 同步更新数据库状态（含started_at）
+        _sync_task_to_db(task_id, status="running", started_at=datetime.now())
 
         if request.freq.upper() != "D":
             minute_period = (request.period or request.freq).lower().replace("min", "").replace("t", "")
@@ -293,6 +326,8 @@ async def _run_mining(task_id: str, request: GeneticMiningRequest):
         logger.error(f"Task {task_id} failed: {str(e)}", exc_info=True)
         mining_tasks[task_id]["status"] = "failed"
         mining_tasks[task_id]["error"] = str(e)
+        # 同步失败状态到数据库
+        _sync_task_to_db(task_id, status="failed", error=str(e))
 
 
 async def _run_genetic_only(
@@ -330,6 +365,10 @@ async def _run_genetic_only(
         _update_progress(task_id, gen, total_gen, best_fitness, avg_fitness, "genetic", logger)
 
     mining_service.set_progress_callback(progress_callback)
+
+    # 保存服务引用（用于取消，必须在mine_factors之前）
+    mining_services[task_id] = mining_service
+
     result = mining_service.mine_factors()
     result["source"] = "genetic"
     return result
@@ -371,6 +410,10 @@ async def _run_pysr_only(
         _update_progress(task_id, iteration, total_iter, best_fitness, avg_fitness, "pysr", logger)
 
     mining_service.set_progress_callback(progress_callback)
+
+    # 保存服务引用（用于取消）
+    mining_services[task_id] = mining_service
+
     result = mining_service.mine_factors()
     result["source"] = "pysr"
     return result
@@ -460,6 +503,10 @@ async def _run_unified_mining(
         _update_progress(task_id, gen, total_gen, best_fitness, avg_fitness, algorithm, logger)
 
     mining_service.set_progress_callback(progress_callback)
+
+    # 保存服务引用（用于取消）
+    mining_services[task_id] = mining_service
+
     result = mining_service.mine_factors()
 
     # NOTE: Do NOT overwrite fitness_history from result here.
@@ -468,6 +515,114 @@ async def _run_unified_mining(
     # which would overwrite the correct callback data. _finalize_task handles this.
 
     return result
+
+
+def _sync_task_to_db(task_id: str, **kwargs):
+    """同步任务状态到数据库（静默失败，不影响挖掘流程）"""
+    try:
+        from backend.core.database import get_db_session
+        from backend.repositories.mining_task_repository import MiningTaskRepository
+
+        db = get_db_session()
+        try:
+            repo = MiningTaskRepository(db)
+            repo.update_status(task_id, **kwargs)
+        finally:
+            db.close()
+    except Exception as e:
+        logger.debug(f"同步任务状态到数据库失败（不影响运行）: {e}")
+
+
+def _collect_process_info(result: dict, request: GeneticMiningRequest) -> dict:
+    """收集算法特定的挖掘过程信息，用于前端展示"""
+    algorithm = request.algorithm
+    info = {
+        "algorithm": algorithm,
+        "algorithm_label": {
+            "genetic": "遗传规划 (DEAP)",
+            "pysr": "PySR符号回归",
+            "tree_prescreen": "树模型预筛选",
+            "gflownet": "GFlowNet增强GP",
+            "deep_implicit": "深度隐式因子 (Transformer)",
+        }.get(algorithm, algorithm),
+    }
+
+    if algorithm == "genetic":
+        info.update({
+            "population_size": request.population_size,
+            "n_generations": request.n_generations,
+            "elite_size": request.elite_size,
+            "cx_prob": request.cx_prob,
+            "mut_prob": request.mut_prob,
+            "fitness_objective": request.fitness_objective,
+            "use_nsga2": request.use_nsga2,
+            "use_extended_primitives": request.use_extended_primitives,
+            "cv_folds": request.cv_folds,
+            "parsimony_coeff": request.parsimony_coeff,
+            "diversity_penalty_coeff": request.diversity_penalty_coeff,
+            "actual_generations": result.get("generations", request.n_generations),
+        })
+    elif algorithm == "pysr":
+        info.update({
+            "niterations": request.pysr_niterations,
+            "populations": request.pysr_populations,
+            "maxsize": request.pysr_maxsize,
+            "maxdepth": request.pysr_maxdepth,
+            "parsimony": request.pysr_parsimony,
+            "procs": request.pysr_procs,
+            "population_size": request.pysr_population_size,
+            "equations_found": len(result.get("best_factors", [])),
+        })
+    elif algorithm == "tree_prescreen":
+        info.update({
+            "tree_model_type": request.tree_model_type,
+            "top_k": request.top_k,
+            "importance_threshold": request.importance_threshold,
+            "tree_n_estimators": request.tree_n_estimators,
+            "tree_max_depth": request.tree_max_depth,
+            "downstream_algorithm": request.downstream_algorithm,
+            "feature_importance": result.get("feature_importance"),
+            "selected_features": result.get("selected_features"),
+            "n_selected": len(result.get("selected_features", [])),
+        })
+    elif algorithm == "gflownet":
+        info.update({
+            "n_trajectories": request.gflownet_n_trajectories,
+            "n_iterations": request.gflownet_n_iterations,
+            "hidden_dim": request.gflownet_hidden_dim,
+            "learning_rate": request.gflownet_learning_rate,
+            "max_expression_depth": request.gflownet_max_expression_depth,
+            "temperature": request.gflownet_temperature,
+            "reward_scale": request.gflownet_reward_scale,
+            "actual_iterations": result.get("generations", request.gflownet_n_iterations),
+        })
+        if result.get("policy_loss_history"):
+            info["policy_loss_history"] = result["policy_loss_history"]
+    elif algorithm == "deep_implicit":
+        info.update({
+            "d_model": request.deep_d_model,
+            "n_heads": request.deep_n_heads,
+            "n_layers": request.deep_n_layers,
+            "d_ff": request.deep_d_ff,
+            "n_latent_factors": request.deep_n_latent_factors,
+            "dropout": request.deep_dropout,
+            "seq_length": request.deep_seq_length,
+            "learning_rate": request.deep_learning_rate,
+            "n_epochs": request.deep_n_epochs,
+            "batch_size": request.deep_batch_size,
+            "early_stopping_patience": request.deep_early_stopping_patience,
+            "actual_epochs": result.get("training_history", {}).get("train_loss", []).__len__() if result.get("training_history") else request.deep_n_epochs,
+        })
+        if result.get("training_history"):
+            info["training_history"] = result["training_history"]
+        if result.get("model_info"):
+            info["model_info"] = result["model_info"]
+
+    # 通用信息
+    info["cancelled"] = result.get("cancelled", False)
+    info["factors_found"] = len(result.get("best_factors", []))
+
+    return info
 
 
 def _update_progress(task_id, gen, total_gen, best_fitness, avg_fitness, algorithm, logger):
@@ -484,6 +639,13 @@ def _update_progress(task_id, gen, total_gen, best_fitness, avg_fitness, algorit
         mining_tasks[task_id]["fitness_history"] = {"best": [], "average": []}
     mining_tasks[task_id]["fitness_history"]["best"].append(_safe_float(best_fitness))
     mining_tasks[task_id]["fitness_history"]["average"].append(_safe_float(avg_fitness))
+
+    # 同步进度到数据库（每5代同步一次，减少IO）
+    if gen % 5 == 0 or gen == total_gen:
+        _sync_task_to_db(task_id, progress=progress, current_generation=gen,
+                         total_generations=total_gen, best_fitness=_safe_float(best_fitness),
+                         avg_fitness=_safe_float(avg_fitness),
+                         fitness_history=mining_tasks[task_id]["fitness_history"])
 
     logger.info(
         f"Progress: {progress}%, {algorithm} Gen {gen}/{total_gen}, "
@@ -750,10 +912,18 @@ def _finalize_task(task_id: str, result: dict, request: GeneticMiningRequest,
     if result.get("policy_loss_history"):
         result_data["policy_loss_history"] = result["policy_loss_history"]
 
+    # 收集算法特定的过程信息
+    process_info = _collect_process_info(result, request)
+
     mining_tasks[task_id]["status"] = "completed"
     mining_tasks[task_id]["progress"] = 100
     mining_tasks[task_id]["result"] = result_data
     mining_tasks[task_id]["fitness_history"] = fitness_history
+
+    # 持久化完成结果到数据库
+    _sync_task_to_db(task_id, status="completed", progress=100, result=result_data,
+                     fitness_history=fitness_history, best_fitness=result_data.get("best_fitness"),
+                     avg_fitness=result_data.get("avg_fitness"), process_info=process_info)
 
     logger.info(f"Task {task_id} completed successfully")
     logger.info(f"Discovered {len(discovered_factors)} factors (algorithm={request.algorithm})")
@@ -849,57 +1019,324 @@ async def get_mining_status(task_id: str):
     import logging
     logger = logging.getLogger(__name__)
 
-    if task_id not in mining_tasks:
-        logger.warning(f"Status requested for non-existent task {task_id}")
+    # 优先从内存获取
+    if task_id in mining_tasks:
+        task = mining_tasks[task_id]
+        logger.info(f"Status check for task {task_id}: {task['status']}")
+
+        # 尝试从数据库获取started_at
+        started_at = None
+        try:
+            from backend.core.database import get_db_session
+            from backend.repositories.mining_task_repository import MiningTaskRepository
+            _db = get_db_session()
+            _repo = MiningTaskRepository(_db)
+            _rec = _repo.get_by_task_id(task_id)
+            if _rec and _rec.started_at:
+                started_at = _rec.started_at.isoformat()
+            _db.close()
+        except Exception:
+            pass
+
+        response_data = {
+            "task_id": task_id,
+            "status": task["status"],
+            "progress": task.get("progress", 0),
+            "error": task.get("error"),
+            "algorithm": task.get("algorithm", "genetic"),
+            "started_at": started_at,
+        }
+
+        if task["status"] == "completed" and "result" in task:
+            result = task["result"]
+            response_data["current_generation"] = result.get("generations", 0)
+            response_data["total_generations"] = result.get("generations", 0)
+            response_data["best_fitness"] = result.get("best_fitness", 0)
+            response_data["avg_fitness"] = result.get("avg_fitness", 0)
+            response_data["fitness_history"] = result.get("fitness_history", {"best": [], "average": []})
+            response_data["algorithm"] = result.get("algorithm", task.get("algorithm", "genetic"))
+            logger.info(f"Returning completed status with fitness_history length: {len(response_data['fitness_history']['best'])}")
+        else:
+            response_data["current_generation"] = task.get("current_generation", 0)
+            response_data["total_generations"] = task.get("total_generations", 10)
+            response_data["best_fitness"] = task.get("best_fitness", 0.03)
+            response_data["avg_fitness"] = task.get("avg_fitness", 0.03)
+            response_data["fitness_history"] = task.get("fitness_history", {"best": [], "average": []})
+            response_data["current_algorithm"] = task.get("current_algorithm", "")
+            logger.info(f"Returning running status: gen {response_data['current_generation']}/{response_data['total_generations']}")
+
+        return {
+            "success": True,
+            "data": response_data
+        }
+
+    # 内存中没有，从数据库获取
+    try:
+        from backend.core.database import get_db_session
+        from backend.repositories.mining_task_repository import MiningTaskRepository
+
+        db = get_db_session()
+        repo = MiningTaskRepository(db)
+        task_record = repo.get_by_task_id(task_id)
+        db.close()
+
+        if not task_record:
+            raise HTTPException(status_code=404, detail="任务不存在")
+
+        response_data = {
+            "task_id": task_id,
+            "status": task_record.status,
+            "progress": task_record.progress or 0,
+            "error": task_record.error,
+            "algorithm": task_record.algorithm,
+            "started_at": task_record.started_at.isoformat() if task_record.started_at else None,
+        }
+
+        if task_record.status == "completed" and task_record.result:
+            result = task_record.result
+            response_data["current_generation"] = result.get("generations", task_record.current_generation or 0)
+            response_data["total_generations"] = result.get("generations", task_record.total_generations or 0)
+            response_data["best_fitness"] = result.get("best_fitness", task_record.best_fitness or 0)
+            response_data["avg_fitness"] = result.get("avg_fitness", task_record.avg_fitness or 0)
+            response_data["fitness_history"] = result.get("fitness_history", task_record.fitness_history or {"best": [], "average": []})
+            response_data["algorithm"] = result.get("algorithm", task_record.algorithm)
+        else:
+            response_data["current_generation"] = task_record.current_generation or 0
+            response_data["total_generations"] = task_record.total_generations or 0
+            response_data["best_fitness"] = task_record.best_fitness or 0
+            response_data["avg_fitness"] = task_record.avg_fitness or 0
+            response_data["fitness_history"] = task_record.fitness_history or {"best": [], "average": []}
+
+        return {
+            "success": True,
+            "data": response_data
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.warning(f"从数据库获取任务状态失败: {e}")
         raise HTTPException(status_code=404, detail="任务不存在")
-
-    task = mining_tasks[task_id]
-    logger.info(f"Status check for task {task_id}: {task['status']}")
-
-    response_data = {
-        "task_id": task_id,
-        "status": task["status"],
-        "progress": task.get("progress", 0),
-        "error": task.get("error"),
-        "algorithm": task.get("algorithm", "genetic"),
-    }
-
-    if task["status"] == "completed" and "result" in task:
-        result = task["result"]
-        response_data["current_generation"] = result.get("generations", 0)
-        response_data["total_generations"] = result.get("generations", 0)
-        response_data["best_fitness"] = result.get("best_fitness", 0)
-        response_data["avg_fitness"] = result.get("avg_fitness", 0)
-        response_data["fitness_history"] = result.get("fitness_history", {"best": [], "average": []})
-        response_data["algorithm"] = result.get("algorithm", task.get("algorithm", "genetic"))
-        logger.info(f"Returning completed status with fitness_history length: {len(response_data['fitness_history']['best'])}")
-    else:
-        response_data["current_generation"] = task.get("current_generation", 0)
-        response_data["total_generations"] = task.get("total_generations", 10)
-        response_data["best_fitness"] = task.get("best_fitness", 0.03)
-        response_data["avg_fitness"] = task.get("avg_fitness", 0.03)
-        response_data["fitness_history"] = task.get("fitness_history", {"best": [], "average": []})
-        response_data["current_algorithm"] = task.get("current_algorithm", "")
-        logger.info(f"Returning running status: gen {response_data['current_generation']}/{response_data['total_generations']}")
-
-    return {
-        "success": True,
-        "data": response_data
-    }
 
 
 @router.get("/results/{task_id}")
 async def get_mining_results(task_id: str):
     """获取挖掘结果"""
-    if task_id not in mining_tasks:
+    # 优先从内存获取
+    if task_id in mining_tasks:
+        task = mining_tasks[task_id]
+        if task["status"] != "completed":
+            raise HTTPException(status_code=400, detail=f"任务尚未完成，当前状态: {task['status']}")
+        result_data = task["result"]
+        # 补充process_info
+        try:
+            from backend.core.database import get_db_session
+            from backend.repositories.mining_task_repository import MiningTaskRepository
+            _db = get_db_session()
+            _repo = MiningTaskRepository(_db)
+            _rec = _repo.get_by_task_id(task_id)
+            if _rec and _rec.process_info:
+                result_data["process_info"] = _rec.process_info
+            _db.close()
+        except Exception:
+            pass
+        return {
+            "success": True,
+            "data": result_data
+        }
+
+    # 内存中没有，从数据库获取
+    try:
+        from backend.core.database import get_db_session
+        from backend.repositories.mining_task_repository import MiningTaskRepository
+
+        db = get_db_session()
+        repo = MiningTaskRepository(db)
+        task_record = repo.get_by_task_id(task_id)
+        db.close()
+
+        if not task_record:
+            raise HTTPException(status_code=404, detail="任务不存在")
+
+        if task_record.status != "completed":
+            raise HTTPException(status_code=400, detail=f"任务尚未完成，当前状态: {task_record.status}")
+
+        if not task_record.result:
+            raise HTTPException(status_code=404, detail="任务结果不存在")
+
+        result_data = task_record.result
+        if task_record.process_info:
+            result_data["process_info"] = task_record.process_info
+
+        return {
+            "success": True,
+            "data": result_data
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.warning(f"从数据库获取任务结果失败: {e}")
         raise HTTPException(status_code=404, detail="任务不存在")
 
-    task = mining_tasks[task_id]
 
-    if task["status"] != "completed":
-        raise HTTPException(status_code=400, detail=f"任务尚未完成，当前状态: {task['status']}")
+@router.post("/cancel/{task_id}")
+async def cancel_mining_task(task_id: str):
+    """取消正在运行的挖掘任务"""
+    # 调用服务的request_cancel方法
+    service = mining_services.get(task_id)
+    if service and hasattr(service, 'request_cancel'):
+        service.request_cancel()
+
+    # 更新内存和数据库状态
+    if task_id in mining_tasks:
+        mining_tasks[task_id]["status"] = "cancelled"
+
+    _sync_task_to_db(task_id, status="cancelled", completed_at=datetime.now())
 
     return {
         "success": True,
-        "data": task["result"]
+        "message": "取消请求已发送"
     }
+
+
+@router.get("/active")
+async def get_active_tasks():
+    """获取当前活跃的挖掘任务（pending/running），用于页面刷新后恢复状态"""
+    try:
+        from backend.core.database import get_db_session
+        from backend.repositories.mining_task_repository import MiningTaskRepository
+
+        db = get_db_session()
+        repo = MiningTaskRepository(db)
+
+        # 先检查内存中的活跃任务
+        active_in_memory = []
+        # 同时获取数据库记录以补充started_at等信息
+        db_tasks_map = {}
+        for task_record in (repo.get_active_tasks() or []):
+            db_tasks_map[task_record.task_id] = task_record
+
+        for tid, task in mining_tasks.items():
+            if task.get("status") in ("pending", "running"):
+                task_info = {
+                    "task_id": tid,
+                    "status": task["status"],
+                    "progress": task.get("progress", 0),
+                    "algorithm": task.get("algorithm", "genetic"),
+                    "current_generation": task.get("current_generation", 0),
+                    "total_generations": task.get("total_generations", 0),
+                    "best_fitness": task.get("best_fitness", 0),
+                    "avg_fitness": task.get("avg_fitness", 0),
+                    "fitness_history": task.get("fitness_history", {"best": [], "average": []}),
+                }
+                # 补充started_at
+                db_rec = db_tasks_map.get(tid)
+                if db_rec and db_rec.started_at:
+                    task_info["started_at"] = db_rec.started_at.isoformat()
+                active_in_memory.append(task_info)
+
+        # 再检查数据库中的活跃任务（服务重启后内存中没有）
+        db_active = db_tasks_map.values()
+        db.close()
+
+        # 合并去重
+        memory_task_ids = {t["task_id"] for t in active_in_memory}
+        for task_record in db_active:
+            if task_record.task_id not in memory_task_ids:
+                active_in_memory.append(repo.to_dict(task_record))
+
+        return {
+            "success": True,
+            "data": active_in_memory
+        }
+    except Exception as e:
+        logger.error(f"获取活跃任务失败: {e}")
+        return {
+            "success": True,
+            "data": []
+        }
+
+
+@router.get("/history")
+async def get_mining_history(limit: int = Query(default=20, ge=1, le=100),
+                              offset: int = Query(default=0, ge=0)):
+    """获取挖掘历史记录（分页）"""
+    try:
+        from backend.core.database import get_db_session
+        from backend.repositories.mining_task_repository import MiningTaskRepository
+
+        db = get_db_session()
+        repo = MiningTaskRepository(db)
+
+        total = repo.get_history_count()
+        tasks = repo.get_history(limit=limit, offset=offset)
+        db.close()
+
+        items = [repo.to_summary_dict(t) for t in tasks]
+
+        return {
+            "success": True,
+            "data": {
+                "items": items,
+                "total": total,
+                "limit": limit,
+                "offset": offset,
+            }
+        }
+    except Exception as e:
+        logger.error(f"获取挖掘历史失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/history/{task_id}")
+async def get_mining_history_detail(task_id: str):
+    """获取挖掘历史详情"""
+    try:
+        from backend.core.database import get_db_session
+        from backend.repositories.mining_task_repository import MiningTaskRepository
+
+        db = get_db_session()
+        repo = MiningTaskRepository(db)
+        task_record = repo.get_by_task_id(task_id)
+        db.close()
+
+        if not task_record:
+            raise HTTPException(status_code=404, detail="任务不存在")
+
+        return {
+            "success": True,
+            "data": repo.to_dict(task_record)
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"获取挖掘历史详情失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/history/{task_id}")
+async def delete_mining_history(task_id: str):
+    """删除挖掘历史记录"""
+    try:
+        from backend.core.database import get_db_session
+        from backend.repositories.mining_task_repository import MiningTaskRepository
+
+        db = get_db_session()
+        repo = MiningTaskRepository(db)
+        task_record = repo.get_by_task_id(task_id)
+
+        if not task_record:
+            db.close()
+            raise HTTPException(status_code=404, detail="任务不存在")
+
+        repo.delete(task_record.id)
+        db.close()
+
+        return {
+            "success": True,
+            "message": "删除成功"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"删除挖掘历史失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

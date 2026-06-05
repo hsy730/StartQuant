@@ -31,6 +31,7 @@ import {
   AimOutlined,
   BulbOutlined,
   ClockCircleOutlined,
+  StopOutlined,
 } from "@ant-design/icons";
 import * as echarts from "echarts";
 import { api } from "@/services/api";
@@ -63,7 +64,7 @@ interface MinedFactor {
 
 interface MiningStatus {
   task_id: string;
-  status: "pending" | "running" | "completed" | "failed";
+  status: "pending" | "running" | "completed" | "failed" | "cancelled";
   current_generation: number;
   total_generations: number;
   best_fitness: number;
@@ -72,6 +73,7 @@ interface MiningStatus {
     best: number[];
     average: number[];
   };
+  started_at?: string | null;
   error?: string;
 }
 
@@ -87,6 +89,156 @@ interface MiningResult {
 }
 
 const FactorMining: React.FC = () => {
+
+// 挖掘过程信息展示组件（适配不同算法）
+const ProcessInfoDisplay: React.FC<{ info: Record<string, any> }> = ({ info }) => {
+  const algorithm = info.algorithm || "genetic";
+
+  // 通用信息行
+  const renderCommonInfo = () => (
+    <Row gutter={[16, 8]} style={{ marginBottom: 8 }}>
+      <Col span={8}>
+        <span style={{ color: "#64748b" }}>发现因子数: </span>
+        <span style={{ fontWeight: 600 }}>{info.factors_found ?? "-"}</span>
+      </Col>
+      {info.cancelled && (
+        <Col span={8}>
+          <Tag color="warning">已取消</Tag>
+        </Col>
+      )}
+    </Row>
+  );
+
+  // 遗传规划信息
+  if (algorithm === "genetic") {
+    return (
+      <div>
+        {renderCommonInfo()}
+        <Row gutter={[16, 8]}>
+          <Col span={8}><span style={{ color: "#64748b" }}>种群大小: </span><b>{info.population_size}</b></Col>
+          <Col span={8}><span style={{ color: "#64748b" }}>总代数: </span><b>{info.n_generations}</b></Col>
+          <Col span={8}><span style={{ color: "#64748b" }}>实际代数: </span><b>{info.actual_generations ?? info.n_generations}</b></Col>
+          <Col span={8}><span style={{ color: "#64748b" }}>精英数量: </span><b>{info.elite_size}</b></Col>
+          <Col span={8}><span style={{ color: "#64748b" }}>交叉概率: </span><b>{info.cx_prob}</b></Col>
+          <Col span={8}><span style={{ color: "#64748b" }}>变异概率: </span><b>{info.mut_prob}</b></Col>
+          <Col span={8}><span style={{ color: "#64748b" }}>适应度目标: </span><b>{info.fitness_objective}</b></Col>
+          <Col span={8}><span style={{ color: "#64748b" }}>NSGA-II: </span><b>{info.use_nsga2 ? "启用" : "禁用"}</b></Col>
+          <Col span={8}><span style={{ color: "#64748b" }}>扩展原语: </span><b>{info.use_extended_primitives ? "启用" : "禁用"}</b></Col>
+          <Col span={8}><span style={{ color: "#64748b" }}>交叉验证: </span><b>{info.cv_folds > 0 ? `${info.cv_folds}折` : "禁用"}</b></Col>
+          <Col span={8}><span style={{ color: "#64748b" }}>简约性系数: </span><b>{info.parsimony_coeff}</b></Col>
+          <Col span={8}><span style={{ color: "#64748b" }}>多样性惩罚: </span><b>{info.diversity_penalty_coeff}</b></Col>
+        </Row>
+      </div>
+    );
+  }
+
+  // PySR信息
+  if (algorithm === "pysr") {
+    return (
+      <div>
+        {renderCommonInfo()}
+        <Row gutter={[16, 8]}>
+          <Col span={8}><span style={{ color: "#64748b" }}>迭代次数: </span><b>{info.niterations}</b></Col>
+          <Col span={8}><span style={{ color: "#64748b" }}>种群数: </span><b>{info.populations}</b></Col>
+          <Col span={8}><span style={{ color: "#64748b" }}>种群大小: </span><b>{info.population_size}</b></Col>
+          <Col span={8}><span style={{ color: "#64748b" }}>最大复杂度: </span><b>{info.maxsize}</b></Col>
+          <Col span={8}><span style={{ color: "#64748b" }}>最大深度: </span><b>{info.maxdepth}</b></Col>
+          <Col span={8}><span style={{ color: "#64748b" }}>简约性: </span><b>{info.parsimony}</b></Col>
+          <Col span={8}><span style={{ color: "#64748b" }}>并行进程: </span><b>{info.procs}</b></Col>
+          <Col span={8}><span style={{ color: "#64748b" }}>发现方程数: </span><b>{info.equations_found ?? "-"}</b></Col>
+        </Row>
+      </div>
+    );
+  }
+
+  // 树模型预筛选信息
+  if (algorithm === "tree_prescreen") {
+    return (
+      <div>
+        {renderCommonInfo()}
+        <Row gutter={[16, 8]}>
+          <Col span={8}><span style={{ color: "#64748b" }}>树模型: </span><b>{info.tree_model_type}</b></Col>
+          <Col span={8}><span style={{ color: "#64748b" }}>Top-K: </span><b>{info.top_k}</b></Col>
+          <Col span={8}><span style={{ color: "#64748b" }}>重要性阈值: </span><b>{info.importance_threshold}</b></Col>
+          <Col span={8}><span style={{ color: "#64748b" }}>树数量: </span><b>{info.tree_n_estimators}</b></Col>
+          <Col span={8}><span style={{ color: "#64748b" }}>树深度: </span><b>{info.tree_max_depth}</b></Col>
+          <Col span={8}><span style={{ color: "#64748b" }}>下游算法: </span><b>{info.downstream_algorithm}</b></Col>
+          <Col span={8}><span style={{ color: "#64748b" }}>筛选特征数: </span><b>{info.n_selected ?? "-"}</b></Col>
+        </Row>
+        {info.feature_importance && (
+          <div style={{ marginTop: 8 }}>
+            <span style={{ color: "#64748b" }}>特征重要性: </span>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 4 }}>
+              {Object.entries(info.feature_importance)
+                .sort(([, a]: any, [, b]: any) => b - a)
+                .slice(0, 10)
+                .map(([name, val]: any) => (
+                  <Tag key={name} style={{ fontSize: 11 }}>{name}: {typeof val === "number" ? val.toFixed(4) : val}</Tag>
+                ))}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // GFlowNet信息
+  if (algorithm === "gflownet") {
+    return (
+      <div>
+        {renderCommonInfo()}
+        <Row gutter={[16, 8]}>
+          <Col span={8}><span style={{ color: "#64748b" }}>轨迹数: </span><b>{info.n_trajectories}</b></Col>
+          <Col span={8}><span style={{ color: "#64748b" }}>总迭代: </span><b>{info.n_iterations}</b></Col>
+          <Col span={8}><span style={{ color: "#64748b" }}>实际迭代: </span><b>{info.actual_iterations ?? info.n_iterations}</b></Col>
+          <Col span={8}><span style={{ color: "#64748b" }}>隐藏维度: </span><b>{info.hidden_dim}</b></Col>
+          <Col span={8}><span style={{ color: "#64748b" }}>学习率: </span><b>{info.learning_rate}</b></Col>
+          <Col span={8}><span style={{ color: "#64748b" }}>最大深度: </span><b>{info.max_expression_depth}</b></Col>
+          <Col span={8}><span style={{ color: "#64748b" }}>温度: </span><b>{info.temperature}</b></Col>
+          <Col span={8}><span style={{ color: "#64748b" }}>奖励缩放: </span><b>{info.reward_scale}</b></Col>
+        </Row>
+      </div>
+    );
+  }
+
+  // 深度隐式因子信息
+  if (algorithm === "deep_implicit") {
+    return (
+      <div>
+        {renderCommonInfo()}
+        <Row gutter={[16, 8]}>
+          <Col span={8}><span style={{ color: "#64748b" }}>模型维度: </span><b>{info.d_model}</b></Col>
+          <Col span={8}><span style={{ color: "#64748b" }}>注意力头数: </span><b>{info.n_heads}</b></Col>
+          <Col span={8}><span style={{ color: "#64748b" }}>层数: </span><b>{info.n_layers}</b></Col>
+          <Col span={8}><span style={{ color: "#64748b" }}>隐因子数: </span><b>{info.n_latent_factors}</b></Col>
+          <Col span={8}><span style={{ color: "#64748b" }}>序列长度: </span><b>{info.seq_length}</b></Col>
+          <Col span={8}><span style={{ color: "#64748b" }}>总Epoch: </span><b>{info.n_epochs}</b></Col>
+          <Col span={8}><span style={{ color: "#64748b" }}>实际Epoch: </span><b>{info.actual_epochs ?? info.n_epochs}</b></Col>
+          <Col span={8}><span style={{ color: "#64748b" }}>早停耐心: </span><b>{info.early_stopping_patience}</b></Col>
+          <Col span={8}><span style={{ color: "#64748b" }}>学习率: </span><b>{info.learning_rate}</b></Col>
+          <Col span={8}><span style={{ color: "#64748b" }}>批次大小: </span><b>{info.batch_size}</b></Col>
+          <Col span={8}><span style={{ color: "#64748b" }}>Dropout: </span><b>{info.dropout}</b></Col>
+        </Row>
+        {info.model_info && (
+          <div style={{ marginTop: 8 }}>
+            <span style={{ color: "#64748b" }}>模型信息: </span>
+            <span style={{ fontSize: 12 }}>{JSON.stringify(info.model_info)}</span>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // 通用回退
+  return (
+    <div>
+      {renderCommonInfo()}
+      <pre style={{ fontSize: 11, maxHeight: 200, overflow: "auto" }}>
+        {JSON.stringify(info, null, 2)}
+      </pre>
+    </div>
+  );
+};
   const navigate = useNavigate();
   const [form] = Form.useForm();
   const evolutionChartRef = useRef<HTMLDivElement>(null);
@@ -137,6 +289,9 @@ const FactorMining: React.FC = () => {
   useEffect(() => {
     loadFactors();
     loadStockPools();
+
+    // 检查是否有正在进行的挖掘任务（页面刷新后恢复状态）
+    recoverActiveMiningTask();
 
     // 设置默认日期范围
     const endDate = dayjs();
@@ -210,6 +365,57 @@ const FactorMining: React.FC = () => {
       }
     };
   }, []);
+
+  // 恢复活跃的挖掘任务（页面刷新后）
+  const recoverActiveMiningTask = async () => {
+    try {
+      const response = (await api.getActiveMiningTasks()) as any;
+      if (response.success && response.data && response.data.length > 0) {
+        // 取最新的活跃任务
+        const activeTask = response.data[0];
+        const taskId = activeTask.task_id;
+
+        console.log("Recovering active mining task:", taskId, activeTask.status);
+
+        // 恢复挖掘状态
+        setMining(true);
+        setMiningStatus({
+          task_id: taskId,
+          status: activeTask.status,
+          current_generation: activeTask.current_generation || 0,
+          total_generations: activeTask.total_generations || 10,
+          best_fitness: activeTask.best_fitness || 0,
+          avg_fitness: activeTask.avg_fitness || 0,
+          fitness_history: activeTask.fitness_history || { best: [], average: [] },
+          started_at: activeTask.started_at || null,
+        });
+
+        // 恢复计时器（使用数据库的started_at计算已用时间）
+        if (activeTask.started_at) {
+          miningStartTimeRef.current = new Date(activeTask.started_at).getTime();
+        } else {
+          miningStartTimeRef.current = Date.now();
+        }
+        elapsedTimeIntervalRef.current = setInterval(() => {
+          if (miningStartTimeRef.current) {
+            const elapsed = Math.floor(
+              (Date.now() - miningStartTimeRef.current) / 1000,
+            );
+            setElapsedTime(elapsed);
+          }
+        }, 1000);
+
+        // 恢复轮询
+        window.miningInterval = setInterval(() => {
+          checkMiningProgress(taskId);
+        }, 2000);
+
+        message.info("检测到正在进行的挖掘任务，已恢复进度");
+      }
+    } catch (error) {
+      console.debug("检查活跃挖掘任务失败（可能没有进行中的任务）:", error);
+    }
+  };
 
   // 开始挖掘
   const startMining = async (values: any) => {
@@ -421,6 +627,18 @@ const FactorMining: React.FC = () => {
           miningStartTimeRef.current = null;
           setMining(false);
           message.error(`挖掘失败: ${statusData.error || "未知错误"}`);
+        } else if (statusData.status === "cancelled") {
+          console.log("Mining cancelled by user");
+          if (window.miningInterval) {
+            clearInterval(window.miningInterval);
+          }
+          if (elapsedTimeIntervalRef.current) {
+            clearInterval(elapsedTimeIntervalRef.current);
+            elapsedTimeIntervalRef.current = null;
+          }
+          miningStartTimeRef.current = null;
+          setMining(false);
+          message.warning("挖掘任务已取消");
         }
       }
     } catch (error) {
@@ -440,6 +658,18 @@ const FactorMining: React.FC = () => {
         setMining(false);
         message.error("任务不存在或已过期");
       }
+    }
+  };
+
+  // 取消挖掘任务
+  const cancelMining = async () => {
+    if (!miningStatus?.task_id) return;
+    try {
+      await api.cancelMiningTask(miningStatus.task_id);
+      message.info("正在取消挖掘任务...");
+    } catch (error) {
+      console.error("取消挖掘任务失败:", error);
+      message.error("取消挖掘任务失败");
     }
   };
 
@@ -1831,14 +2061,24 @@ const FactorMining: React.FC = () => {
                   {mining && (
                     <Alert
                       message={
-                        <Space>
-                          <SyncOutlined spin />
-                          <span>挖掘进行中...</span>
-                          <ClockCircleOutlined />
-                          <span style={{ color: "#64748b" }}>
-                            已用时: {formatElapsedTime(elapsedTime)}
-                          </span>
-                        </Space>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                          <Space>
+                            <SyncOutlined spin />
+                            <span>挖掘进行中...</span>
+                            <ClockCircleOutlined />
+                            <span style={{ color: "#64748b" }}>
+                              已用时: {formatElapsedTime(elapsedTime)}
+                            </span>
+                          </Space>
+                          <Button
+                            size="small"
+                            danger
+                            icon={<StopOutlined />}
+                            onClick={cancelMining}
+                          >
+                            取消挖掘
+                          </Button>
+                        </div>
                       }
                       type="info"
                       showIcon={false}
@@ -1943,7 +2183,7 @@ const FactorMining: React.FC = () => {
                   {/* 挖掘摘要 */}
                   <div className="result-summary" style={{ marginBottom: 24 }}>
                     <Row gutter={16}>
-                      <Col span={8}>
+                      <Col span={6}>
                         <div className="stat-item">
                           <p className="stat-label">总代数</p>
                           <p className="stat-value">
@@ -1951,7 +2191,7 @@ const FactorMining: React.FC = () => {
                           </p>
                         </div>
                       </Col>
-                      <Col span={8}>
+                      <Col span={6}>
                         <div className="stat-item">
                           <p className="stat-label">最优适应度</p>
                           <p className="stat-value stat-primary">
@@ -1959,7 +2199,7 @@ const FactorMining: React.FC = () => {
                           </p>
                         </div>
                       </Col>
-                      <Col span={8}>
+                      <Col span={6}>
                         <div className="stat-item">
                           <p className="stat-label">发现因子数</p>
                           <p className="stat-value">
@@ -1967,8 +2207,35 @@ const FactorMining: React.FC = () => {
                           </p>
                         </div>
                       </Col>
+                      <Col span={6}>
+                        <div className="stat-item">
+                          <p className="stat-label">挖掘耗时</p>
+                          <p className="stat-value">
+                            {formatElapsedTime(elapsedTime)}
+                          </p>
+                        </div>
+                      </Col>
                     </Row>
                   </div>
+
+                  {/* 挖掘过程信息 */}
+                  {miningResult.process_info && (
+                    <Card
+                      size="small"
+                      title={
+                        <Space>
+                          <InfoCircleOutlined />
+                          <span>挖掘过程详情</span>
+                          <Tag color="blue">
+                            {miningResult.process_info.algorithm_label || miningResult.process_info.algorithm}
+                          </Tag>
+                        </Space>
+                      }
+                      style={{ marginBottom: 24, borderRadius: 8 }}
+                    >
+                      <ProcessInfoDisplay info={miningResult.process_info} />
+                    </Card>
+                  )}
 
                   {/* 最终进化曲线 */}
                   <div className="chart-section" style={{ marginBottom: 24 }}>

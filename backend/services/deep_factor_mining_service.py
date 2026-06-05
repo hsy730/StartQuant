@@ -281,6 +281,7 @@ class DeepFactorMiningService:
         self._feature_std: Optional[np.ndarray] = None
 
         self.progress_callback = None
+        self._cancel_flag = False
 
     # ------------------------------------------------------------------
     # 股票池设置
@@ -337,6 +338,11 @@ class DeepFactorMiningService:
             callback: 签名为 callback(epoch, total_epochs, train_loss, val_loss)
         """
         self.progress_callback = callback
+
+    def request_cancel(self):
+        """请求取消挖掘任务"""
+        self._cancel_flag = True
+        logger.info("收到取消请求，将在当前epoch结束后停止")
 
     # ------------------------------------------------------------------
     # 基础因子预计算
@@ -527,6 +533,11 @@ class DeepFactorMiningService:
         )
 
         for epoch in range(1, self.n_epochs + 1):
+            # 取消检查
+            if self._cancel_flag:
+                logger.info(f"深度因子训练在第 {epoch} 个epoch被用户取消")
+                break
+
             # ---- 训练阶段 ----
             model.train()
             train_losses = []

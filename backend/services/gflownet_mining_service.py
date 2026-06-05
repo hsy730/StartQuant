@@ -512,6 +512,7 @@ if GFLOWNET_AVAILABLE:
 
             # 进度回调
             self.progress_callback = None
+            self._cancel_flag = False
 
             # Iterative Z-Score normalization for combined score
             # Collect raw IC/IR per iteration → compute Z-Score stats → apply next iteration
@@ -646,6 +647,11 @@ if GFLOWNET_AVAILABLE:
                 callback: 签名为 callback(iteration, total_iterations, best_fitness, avg_fitness)
             """
             self.progress_callback = callback
+
+        def request_cancel(self):
+            """请求取消挖掘任务"""
+            self._cancel_flag = True
+            logger.info("收到取消请求，将在当前迭代结束后停止")
 
         # ---------------------------------------------------------------
         # 表达式采样
@@ -1227,6 +1233,11 @@ if GFLOWNET_AVAILABLE:
             policy_loss_history = []
 
             for iteration in range(1, self.n_iterations + 1):
+                # 取消检查
+                if self._cancel_flag:
+                    logger.info(f"GFlowNet挖掘任务在第 {iteration} 次迭代被用户取消")
+                    break
+
                 # ---- Step 1: 采样轨迹 ----
                 raw_trajectories = self._sample_batch_trajectories(self.n_trajectories)
 

@@ -359,6 +359,7 @@ class GeneticFactorMiningService:
         self.stats.register("max", np.max)
 
         self.progress_callback = None
+        self._cancel_flag = False
 
     def set_progress_callback(self, callback):
         """设置进度回调函数
@@ -367,6 +368,11 @@ class GeneticFactorMiningService:
             callback: 签名为 callback(generation, total_generations, best_fitness, avg_fitness)
         """
         self.progress_callback = callback
+
+    def request_cancel(self):
+        """请求取消挖掘任务"""
+        self._cancel_flag = True
+        logger.info("收到取消请求，将在当前代结束后停止")
 
     # ------------------------------------------------------------------
     # Evaluation
@@ -907,6 +913,11 @@ class GeneticFactorMiningService:
         logbook.record(gen=0, **record)
 
         for gen in range(1, self.n_generations + 1):
+            # 取消检查
+            if self._cancel_flag:
+                logger.info(f"挖掘任务在第 {gen} 代被用户取消")
+                break
+
             self._current_generation = gen
             self._refresh_stock_sample()
 

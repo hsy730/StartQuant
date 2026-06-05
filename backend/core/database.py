@@ -33,6 +33,7 @@ def init_db() -> None:
     from backend.models.cache_metadata import CacheMetadataModel
     from backend.models.factor_version import FactorVersionModel
     from backend.models.generated_factor import GeneratedFactorModel
+    from backend.models.mining_task import MiningTaskModel
 
     Base.metadata.create_all(bind=engine)
 

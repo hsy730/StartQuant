@@ -240,6 +240,20 @@ class DualMiningService:
     def set_progress_callback(self, callback):
         self.progress_callback = callback
 
+    def request_cancel(self):
+        """请求取消挖掘任务，转发到当前活跃的子服务"""
+        if self._gp_service is not None:
+            self._gp_service.request_cancel()
+        if self._pysr_service is not None:
+            self._pysr_service.request_cancel()
+        if self._tree_prescreen_service is not None:
+            self._tree_prescreen_service.request_cancel()
+        if self._gflownet_service is not None:
+            self._gflownet_service.request_cancel()
+        if self._deep_factor_service is not None:
+            self._deep_factor_service.request_cancel()
+        logger.info("DualMiningService: 已转发取消请求到子服务")
+
     def _run_genetic(self) -> Dict:
         """Run DEAP genetic programming mining."""
         if not DEAP_AVAILABLE:

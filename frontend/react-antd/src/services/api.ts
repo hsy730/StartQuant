@@ -276,6 +276,31 @@ export const api = {
   // 获取挖掘结果
   getMiningResults(taskId: string) {
     return request.get(`/mining/results/${taskId}`, { timeout: 300000 }) // 5分钟超时
+  },
+
+  // 取消挖掘任务
+  cancelMiningTask(taskId: string) {
+    return request.post(`/mining/cancel/${taskId}`)
+  },
+
+  // 获取活跃挖掘任务（用于页面刷新后恢复状态）
+  getActiveMiningTasks() {
+    return request.get('/mining/active', { timeout: 10000 })
+  },
+
+  // 获取挖掘历史记录
+  getMiningHistory(params?: { limit?: number; offset?: number }) {
+    return request.get('/mining/history', { params, timeout: 30000 })
+  },
+
+  // 获取挖掘历史详情
+  getMiningHistoryDetail(taskId: string) {
+    return request.get(`/mining/history/${taskId}`, { timeout: 30000 })
+  },
+
+  // 删除挖掘历史记录
+  deleteMiningHistory(taskId: string) {
+    return request.delete(`/mining/history/${taskId}`)
   }
 }
 

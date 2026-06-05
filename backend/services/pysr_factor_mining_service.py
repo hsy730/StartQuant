@@ -112,6 +112,7 @@ class PySRFactorMiningService:
         self.progress_callback = None
         self._current_iteration = 0
         self._total_iterations = niterations
+        self._cancel_flag = False
 
     def set_stock_pool(self, stock_codes: List[str], start_date: str, end_date: str):
         self.stock_codes = stock_codes
@@ -182,6 +183,11 @@ class PySRFactorMiningService:
 
     def set_progress_callback(self, callback):
         self.progress_callback = callback
+
+    def request_cancel(self):
+        """请求取消挖掘任务"""
+        self._cancel_flag = True
+        logger.info("收到取消请求")
 
     def _build_feature_matrix(self) -> Tuple[np.ndarray, np.ndarray, List[str]]:
         """Build the feature matrix X and target vector y for PySR.
@@ -660,6 +666,11 @@ class PySRFactorMiningService:
 
             model.fit(X, y)
             self._current_iteration = self.niterations
+
+            # 取消检查（PySR的fit无法中断，但可以在后处理前停止）
+            if self._cancel_flag:
+                logger.info("PySR fit完成后，用户已取消，跳过结果处理")
+                return {"success": True, "best_factors": [], "equations": None, "source": "pysr", "cancelled": True}
 
             if self.progress_callback:
                 self.progress_callback(self.niterations, self.niterations, 0.0, 0.0)
