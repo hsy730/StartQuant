@@ -45,7 +45,7 @@ class MiningTaskModel(Base):
     error: Mapped[str] = mapped_column(Text, nullable=True, comment="错误信息")
 
     # 时间
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now, comment="创建时间")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(), comment="创建时间")
     started_at: Mapped[datetime] = mapped_column(DateTime, nullable=True, comment="开始执行时间")
     completed_at: Mapped[datetime] = mapped_column(DateTime, nullable=True, comment="完成时间")
 

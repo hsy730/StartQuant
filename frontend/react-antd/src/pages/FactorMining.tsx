@@ -32,6 +32,7 @@ import {
   BulbOutlined,
   ClockCircleOutlined,
   StopOutlined,
+  SearchOutlined,
 } from "@ant-design/icons";
 import * as echarts from "echarts";
 import { api } from "@/services/api";
@@ -261,6 +262,15 @@ const ProcessInfoDisplay: React.FC<{ info: Record<string, any> }> = ({ info }) =
   const [savedFactorNames, setSavedFactorNames] = useState<Set<string>>(
     new Set(),
   ); // 已保存的因子名称
+  const [savedFactorIds, setSavedFactorIds] = useState<Map<number, number>>(
+    new Map(),
+  ); // 已保存的因子ID映射 (index -> factor_id)
+  const [renameModalVisible, setRenameModalVisible] = useState(false);
+  const [renameTarget, setRenameTarget] = useState<{
+    factor: MinedFactor;
+    index: number;
+  } | null>(null);
+  const [customFactorName, setCustomFactorName] = useState("");
 
   // 加载因子列表
   const loadFactors = async () => {
@@ -918,13 +928,14 @@ const ProcessInfoDisplay: React.FC<{ info: Record<string, any> }> = ({ info }) =
     factor: MinedFactor,
     index: number,
     retryCount: number = 0,
+    customName?: string,
   ) => {
     // 验证门控：未通过验证的因子不允许保存
     if (factor.overall_passed === false) {
       message.warning(
         `因子 "${factor.name}" 未通过验证（得分: ${factor.validation_score?.toFixed(1)}），不能保存到因子库。请先通过因子验证。`
       );
-      return;
+      return null;
     }
 
     // 生成因子名称：Mined_Factor_序号_年月日时分秒_股票代码
@@ -940,7 +951,7 @@ const ProcessInfoDisplay: React.FC<{ info: Record<string, any> }> = ({ info }) =
 
     // 确保使用有效的股票代码
     const stockCode = currentStockCode || "Unknown";
-    const baseFactorName = `Mined_Factor_${index + 1}_${dateStr}_${stockCode}`;
+    const baseFactorName = customName || `Mined_Factor_${index + 1}_${dateStr}_${stockCode}`;
 
     // 根据重试次数生成名称
     let factorName: string;
@@ -1000,13 +1011,20 @@ const ProcessInfoDisplay: React.FC<{ info: Record<string, any> }> = ({ info }) =
         message.success(`因子 "${factorName}" 已保存到自定义因子库`);
         // 记录已保存的因子
         setSavedFactorNames((prev) => new Set(prev).add(factorName));
+        // 记录因子ID，用于后续"跳转分析"
+        const savedId = response.data?.id;
+        if (savedId != null) {
+          setSavedFactorIds((prev) => new Map(prev).set(index, savedId));
+        }
         // 刷新因子列表
         await loadFactors();
+        return savedId;
       } else {
         message.error(
           "保存失败: " +
             (response.data?.detail || response.message || "未知错误"),
         );
+        return null;
       }
     } catch (error: any) {
       console.error("保存因子失败:", error);
@@ -1019,7 +1037,7 @@ const ProcessInfoDisplay: React.FC<{ info: Record<string, any> }> = ({ info }) =
       // 如果是验证门控拒绝，直接提示
       if (errorMsg.includes("未通过验证")) {
         message.error("保存因子失败: " + errorMsg);
-        return;
+        return null;
       }
 
       // 如果是"已存在"错误且重试次数少于5次，使用新名称重试
@@ -1027,11 +1045,43 @@ const ProcessInfoDisplay: React.FC<{ info: Record<string, any> }> = ({ info }) =
         console.log(
           `因子名称 ${factorName} 已存在，尝试使用新名称 (重试 ${retryCount + 1}/5)`,
         );
-        await saveFactor(factor, index, retryCount + 1);
+        return await saveFactor(factor, index, retryCount + 1, customName);
       } else {
         message.error("保存因子失败: " + errorMsg);
+        return null;
       }
     }
+  };
+
+  // 跳转到因子分析页面
+  const handleAnalyzeFactor = (index: number) => {
+    const factorId = savedFactorIds.get(index);
+    if (factorId != null) {
+      navigate(`/factor-detail?id=${factorId}`);
+    } else {
+      message.warning("请先保存因子到因子库");
+    }
+  };
+
+  // 打开重命名弹窗
+  const handleOpenRename = (factor: MinedFactor, index: number) => {
+    setRenameTarget({ factor, index });
+    setCustomFactorName("");
+    setRenameModalVisible(true);
+  };
+
+  // 确认重命名并保存
+  const handleRenameSave = async () => {
+    if (!renameTarget) return;
+    const { factor, index } = renameTarget;
+    const name = customFactorName.trim();
+    if (!name) {
+      message.warning("请输入因子名称");
+      return;
+    }
+    await saveFactor(factor, index, 0, name);
+    setRenameModalVisible(false);
+    setRenameTarget(null);
   };
 
   // 保存单个因子到后端（带重试机制）
@@ -2316,6 +2366,22 @@ const ProcessInfoDisplay: React.FC<{ info: Record<string, any> }> = ({ info }) =
                             >
                               {factor.overall_passed === false ? "未通过验证" : "保存到因子库"}
                             </Button>
+                            <Button
+                              size="small"
+                              icon={<EditOutlined />}
+                              onClick={() => handleOpenRename(factor, index)}
+                              disabled={factor.overall_passed === false}
+                            >
+                              重命名保存
+                            </Button>
+                            <Button
+                              size="small"
+                              icon={<SearchOutlined />}
+                              onClick={() => handleAnalyzeFactor(index)}
+                              disabled={!savedFactorIds.has(index)}
+                            >
+                              分析
+                            </Button>
                           </div>
                         </Card>
                       ))}
@@ -2339,6 +2405,37 @@ const ProcessInfoDisplay: React.FC<{ info: Record<string, any> }> = ({ info }) =
           </Col>
         </Row>
       </div>
+
+      {/* 重命名保存弹窗 */}
+      <Modal
+        title="自定义因子名称"
+        open={renameModalVisible}
+        onOk={handleRenameSave}
+        onCancel={() => {
+          setRenameModalVisible(false);
+          setRenameTarget(null);
+        }}
+        okText="保存"
+        cancelText="取消"
+      >
+        <div style={{ marginBottom: 12 }}>
+          <p style={{ color: "#64748b", fontSize: 13 }}>
+            为因子设置一个有意义的名称，方便后续查找和管理。
+          </p>
+          {renameTarget && (
+            <div style={{ marginBottom: 8, fontSize: 12, color: "#888" }}>
+              表达式: <code style={{ fontSize: 11 }}>{renameTarget.factor.expression}</code>
+            </div>
+          )}
+        </div>
+        <Input
+          placeholder="请输入因子名称"
+          value={customFactorName}
+          onChange={(e) => setCustomFactorName(e.target.value)}
+          onPressEnter={handleRenameSave}
+          autoFocus
+        />
+      </Modal>
     </div>
   );
 };

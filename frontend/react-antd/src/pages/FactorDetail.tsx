@@ -533,7 +533,22 @@ const FactorDetail: React.FC = () => {
     const myChart = initChart(chartDom, 'distribution')
     if (!myChart) return
 
-    const data = Array.from({ length: 100 }, () => (Math.random() - 0.5) * 4)
+    // 使用加载的因子数据，若无数据则显示空状态
+    const factorValues = chartData?.factor?.values
+    if (!factorValues || factorValues.length === 0) {
+      myChart.setOption({
+        title: { text: '因子值分布直方图', left: 'center', textStyle: { fontSize: 14 } },
+        graphic: {
+          type: 'text',
+          left: 'center',
+          top: 'middle',
+          style: { text: '请先点击"分析因子"加载数据', fontSize: 14, fill: '#999' }
+        }
+      })
+      return
+    }
+
+    const data = factorValues.filter(v => v != null && !isNaN(v))
     const binCount = 20
     const min = Math.min(...data)
     const max = Math.max(...data)
@@ -594,7 +609,7 @@ const FactorDetail: React.FC = () => {
     }
 
     myChart.setOption(option)
-  }, [])
+  }, [chartData])
 
   // 绘制IC序列图
   const drawICSeriesChart = useCallback(() => {
@@ -2482,6 +2497,14 @@ const FactorDetail: React.FC = () => {
                       block
                     >
                       复制
+                    </Button>
+                    <Button
+                      icon={<LineChartOutlined />}
+                      onClick={() => navigate(`/backtesting?factor=${encodeURIComponent(factor.code)}&name=${encodeURIComponent(factor.name)}`)}
+                      block
+                      type="primary"
+                    >
+                      使用此因子回测
                     </Button>
                     {factor.source === 'user' && (
                       <>

@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useLocation } from 'react-router-dom'
 import BacktestCharts from '../components/BacktestCharts'
 import {
   Card,
@@ -95,6 +95,7 @@ interface BacktestResult {
 
 const Backtesting: React.FC = () => {
   const navigate = useNavigate()
+  const location = useLocation()
 
   // ========== 状态管理 ==========
   const [form] = Form.useForm()
@@ -146,6 +147,26 @@ const Backtesting: React.FC = () => {
       }
     }
   }, [])
+
+  // 处理URL参数：从因子详情页跳转时预填因子名称
+  useEffect(() => {
+    const params = new URLSearchParams(location.search)
+    const factorName = params.get('factor')
+    const displayName = params.get('name')
+    if (factorName && factors.length > 0) {
+      // 查找匹配的因子
+      const matchedFactor = factors.find(
+        (f) => f.name === displayName || f.code === factorName
+      )
+      if (matchedFactor) {
+        form.setFieldsValue({
+          factor_name: matchedFactor.name,
+          strategy_type: 'single_factor',
+        })
+        message.success(`已自动选择因子: ${matchedFactor.name}`)
+      }
+    }
+  }, [location.search, factors.length])
 
   // ========== 数据加载 ==========
   const loadFactors = async () => {
@@ -661,52 +682,78 @@ const Backtesting: React.FC = () => {
 
                                   {/* 因子选择提示和操作按钮 */}
                                   {isMultiFactor && (
-                                    <Form.Item noStyle shouldUpdate>
-                                      {() => {
-                                        const selectedCount = form.getFieldValue('factor_names')?.length || 0
-                                        return (
-                                          <div style={{
-                                            display: 'flex',
-                                            justifyContent: 'space-between',
-                                            alignItems: 'center',
-                                            marginBottom: 16
-                                          }}>
-                                            <span className="text-hint">
-                                              已选择 <strong style={{ color: '#3b82f6' }}>{selectedCount}</strong> 个因子
-                                            </span>
-                                            <Space size="small">
-                                              <Button
-                                                type="link"
-                                                size="small"
-                                                                onClick={() => {
-                                                                  form.setFieldsValue({
-                                                                    factor_names: factors.map((f) => f.name)
-                                                                  })
-                                                                }}
-                                                              >
-                                                全选
-                                              </Button>
-                                              <Button
-                                                type="link"
-                                                size="small"
-                                                                onClick={() => {
-                                                                  form.setFieldsValue({
-                                                                    factor_names: []
-                                                                  })
-                                                                }}
-                                                              >
-                                                清空
-                                              </Button>
-                                            </Space>
-                                          </div>
-                                        )
-                                      }}
-                                    </Form.Item>
+                                    <>
+                                      <Form.Item noStyle shouldUpdate>
+                                        {() => {
+                                          const selectedCount = form.getFieldValue('factor_names')?.length || 0
+                                          return (
+                                            <div style={{
+                                              display: 'flex',
+                                              justifyContent: 'space-between',
+                                              alignItems: 'center',
+                                              marginBottom: 16
+                                            }}>
+                                              <span className="text-hint">
+                                                已选择 <strong style={{ color: '#3b82f6' }}>{selectedCount}</strong> 个因子
+                                              </span>
+                                              <Space size="small">
+                                                <Button
+                                                  type="link"
+                                                  size="small"
+                                                  onClick={() => {
+                                                    form.setFieldsValue({
+                                                      factor_names: factors.map((f) => f.name)
+                                                    })
+                                                  }}
+                                                >
+                                                  全选
+                                                </Button>
+                                                <Button
+                                                  type="link"
+                                                  size="small"
+                                                  onClick={() => {
+                                                    form.setFieldsValue({
+                                                      factor_names: []
+                                                    })
+                                                  }}
+                                                >
+                                                  清空
+                                                </Button>
+                                              </Space>
+                                            </div>
+                                          )
+                                        }}
+                                      </Form.Item>
+                                      <Form.Item
+                                        label="因子权重方法"
+                                        name="weight_method"
+                                        initialValue="equal_weight"
+                                        tooltip="多因子合成时的权重分配方法。等权=各因子权重相同；IC加权=按近期IC值分配权重；ICIR加权=按IC/IR综合评分分配；波动率倒数=按波动率倒数分配降低风险"
+                                      >
+                                        <Select>
+                                          <Option value="equal_weight">等权</Option>
+                                          <Option value="ic_weight">IC加权</Option>
+                                          <Option value="icir_weight">ICIR加权</Option>
+                                          <Option value="inv_vol">波动率倒数</Option>
+                                        </Select>
+                                      </Form.Item>
+                                    </>
                                   )}
                                 </>
                               )
                             }}
                           </Form.Item>
+
+                          {/* 数据预处理配置 - 紧跟因子配置，确保用户可见 */}
+                          <PreprocessingConfigPanel
+                            value={preprocessingConfig}
+                            onChange={setPreprocessingConfig}
+                            stockCodes={form.getFieldValue('stock_codes') || []}
+                            factorNames={form.getFieldValue('factor_names') || [form.getFieldValue('factor_name')] || []}
+                            startDate={form.getFieldValue('dateRange')?.[0]?.format('YYYY-MM-DD')}
+                            endDate={form.getFieldValue('dateRange')?.[1]?.format('YYYY-MM-DD')}
+                            size="small"
+                          />
 
                           <Divider style={{ fontSize: '13px', fontWeight: 600, color: '#0f172a' }}>
                             回测参数
@@ -756,19 +803,6 @@ const Backtesting: React.FC = () => {
                               <Radio value="short">做空</Radio>
                             </Radio.Group>
                           </Form.Item>
-
-                          <Divider />
-
-                          {/* 数据预处理配置 */}
-                          <PreprocessingConfigPanel
-                            value={preprocessingConfig}
-                            onChange={setPreprocessingConfig}
-                            stockCodes={form.getFieldValue('stock_codes') || []}
-                            factorNames={form.getFieldValue('factor_names') || [form.getFieldValue('factor_name')] || []}
-                            startDate={form.getFieldValue('dateRange')?.[0]?.format('YYYY-MM-DD')}
-                            endDate={form.getFieldValue('dateRange')?.[1]?.format('YYYY-MM-DD')}
-                            size="small"
-                          />
 
                           <Divider />
 

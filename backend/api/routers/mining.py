@@ -19,6 +19,10 @@ import json
 import logging
 from datetime import datetime
 
+from backend.core.database import get_db_session
+from backend.models.mining_task import MiningTaskModel
+from backend.repositories.mining_task_repository import MiningTaskRepository
+
 logger = logging.getLogger(__name__)
 
 # 模块级导入：_unified_validate_factor 等模块级函数需要直接访问
@@ -139,10 +143,6 @@ async def start_genetic_mining(request: GeneticMiningRequest, background_tasks: 
 
         # 持久化到数据库
         try:
-            from backend.core.database import get_db_session
-            from backend.models.mining_task import MiningTaskModel
-            from backend.repositories.mining_task_repository import MiningTaskRepository
-
             db = get_db_session()
             try:
                 repo = MiningTaskRepository(db)
@@ -206,7 +206,6 @@ async def _run_mining(task_id: str, request: GeneticMiningRequest):
 
         from backend.services.factor_service import factor_service
         from backend.repositories.factor_repository import FactorRepository
-        from backend.core.database import get_db_session
         from backend.services.data_service import data_service
 
         mining_tasks[task_id]["status"] = "running"
@@ -520,9 +519,6 @@ async def _run_unified_mining(
 def _sync_task_to_db(task_id: str, **kwargs):
     """同步任务状态到数据库（静默失败，不影响挖掘流程）"""
     try:
-        from backend.core.database import get_db_session
-        from backend.repositories.mining_task_repository import MiningTaskRepository
-
         db = get_db_session()
         try:
             repo = MiningTaskRepository(db)
@@ -735,7 +731,6 @@ def _finalize_task(task_id: str, result: dict, request: GeneticMiningRequest,
     进行重验证，确保跨算法的 score/ic/ir/overall_passed 可比。
     各算法原始的 fitness 保留为 raw_fitness 供参考。
     """
-    from backend.core.database import get_db_session
     from backend.models.generated_factor import GeneratedFactorModel
     from backend.repositories.generated_factor_repository import GeneratedFactorRepository
 
@@ -1027,8 +1022,6 @@ async def get_mining_status(task_id: str):
         # 尝试从数据库获取started_at
         started_at = None
         try:
-            from backend.core.database import get_db_session
-            from backend.repositories.mining_task_repository import MiningTaskRepository
             _db = get_db_session()
             _repo = MiningTaskRepository(_db)
             _rec = _repo.get_by_task_id(task_id)
@@ -1072,9 +1065,6 @@ async def get_mining_status(task_id: str):
 
     # 内存中没有，从数据库获取
     try:
-        from backend.core.database import get_db_session
-        from backend.repositories.mining_task_repository import MiningTaskRepository
-
         db = get_db_session()
         repo = MiningTaskRepository(db)
         task_record = repo.get_by_task_id(task_id)
@@ -1129,8 +1119,6 @@ async def get_mining_results(task_id: str):
         result_data = task["result"]
         # 补充process_info
         try:
-            from backend.core.database import get_db_session
-            from backend.repositories.mining_task_repository import MiningTaskRepository
             _db = get_db_session()
             _repo = MiningTaskRepository(_db)
             _rec = _repo.get_by_task_id(task_id)
@@ -1146,9 +1134,6 @@ async def get_mining_results(task_id: str):
 
     # 内存中没有，从数据库获取
     try:
-        from backend.core.database import get_db_session
-        from backend.repositories.mining_task_repository import MiningTaskRepository
-
         db = get_db_session()
         repo = MiningTaskRepository(db)
         task_record = repo.get_by_task_id(task_id)
@@ -1202,9 +1187,6 @@ async def cancel_mining_task(task_id: str):
 async def get_active_tasks():
     """获取当前活跃的挖掘任务（pending/running），用于页面刷新后恢复状态"""
     try:
-        from backend.core.database import get_db_session
-        from backend.repositories.mining_task_repository import MiningTaskRepository
-
         db = get_db_session()
         repo = MiningTaskRepository(db)
 
@@ -1261,9 +1243,6 @@ async def get_mining_history(limit: int = Query(default=20, ge=1, le=100),
                               offset: int = Query(default=0, ge=0)):
     """获取挖掘历史记录（分页）"""
     try:
-        from backend.core.database import get_db_session
-        from backend.repositories.mining_task_repository import MiningTaskRepository
-
         db = get_db_session()
         repo = MiningTaskRepository(db)
 
@@ -1291,9 +1270,6 @@ async def get_mining_history(limit: int = Query(default=20, ge=1, le=100),
 async def get_mining_history_detail(task_id: str):
     """获取挖掘历史详情"""
     try:
-        from backend.core.database import get_db_session
-        from backend.repositories.mining_task_repository import MiningTaskRepository
-
         db = get_db_session()
         repo = MiningTaskRepository(db)
         task_record = repo.get_by_task_id(task_id)
@@ -1317,9 +1293,6 @@ async def get_mining_history_detail(task_id: str):
 async def delete_mining_history(task_id: str):
     """删除挖掘历史记录"""
     try:
-        from backend.core.database import get_db_session
-        from backend.repositories.mining_task_repository import MiningTaskRepository
-
         db = get_db_session()
         repo = MiningTaskRepository(db)
         task_record = repo.get_by_task_id(task_id)
