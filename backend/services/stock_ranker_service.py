@@ -210,8 +210,14 @@ class StockRankerService:
         if len(feature_cols) == 0:
             raise ValueError("没有可用的数值特征列")
 
-        # 清洗数据
-        df = df[[date_col, label_col] + feature_cols].dropna(subset=[label_col] + feature_cols)
+        # 清洗数据：先对特征列做缺失值填充（避免多因子下过度删除），再仅对标签做 dropna
+        for feat in feature_cols:
+            missing_ratio = df[feat].isna().mean()
+            if missing_ratio > 0.3:
+                logger.warning(f"特征 [{feat}] 缺失率 {missing_ratio*100:.1f}% > 30%，建议检查数据质量")
+            if missing_ratio > 0:
+                df[feat] = df[feat].fillna(df[feat].median())
+
         df[label_col] = pd.to_numeric(df[label_col], errors="coerce")
         df = df.dropna(subset=[label_col])
 
@@ -247,11 +253,17 @@ class StockRankerService:
 
         # 时间分割：后 validation_split 作为验证集
         split_idx = int(len(df) * (1 - validation_split))
-        dtrain = xgb.DMatrix(X[:split_idx], label=y[:split_idx], feature_names=feature_cols)
-        dvalid = xgb.DMatrix(X[split_idx:], label=y[split_idx:], feature_names=feature_cols)
 
-        # 将 groups 按行数分割到 train/valid
-        train_groups, valid_groups = self._split_groups(groups, len(df), split_idx)
+        # 将 groups 按行数分割到 train/valid，并获取对齐组边界的 adjusted_split_idx
+        train_groups, valid_groups, adjusted_split_idx = self._split_groups(groups, len(df), split_idx)
+
+        if adjusted_split_idx != split_idx:
+            logger.info(
+                f"[StockRanker] 分割点已调整: {split_idx} → {adjusted_split_idx}（对齐日期组边界）"
+            )
+
+        dtrain = xgb.DMatrix(X[:adjusted_split_idx], label=y[:adjusted_split_idx], feature_names=feature_cols)
+        dvalid = xgb.DMatrix(X[adjusted_split_idx:], label=y[adjusted_split_idx:], feature_names=feature_cols)
         dtrain.set_group(train_groups)
         dvalid.set_group(valid_groups)
 
@@ -294,7 +306,8 @@ class StockRankerService:
         )
 
         # ---- 保存模型 ----
-        model_id = self._save_model(model, model_name, cfg, tags, feature_cols)
+        train_period = f"{df[date_col].min()} ~ {df[date_col].max()}"
+        model_id = self._save_model(model, model_name, cfg, tags, feature_cols, train_period=train_period)
 
         duration = time.time() - t0
 
@@ -365,7 +378,7 @@ class StockRankerService:
         # 构建结果 DataFrame
         result_df = features.copy()
         result_df["rank_score"] = scores
-        result_df["rank_position"] = pd.Series(scores).rank(ascending=False).values
+        result_df["rank_position"] = pd.Series(scores).rank(ascending=False, method="first").values
         result_df = result_df.sort_values("rank_score", ascending=False)
 
         top_n_df = result_df.head(top_n).copy()
@@ -430,13 +443,32 @@ class StockRankerService:
             f"历史数据={len(feature_history)}行, top_n={top_n}"
         )
 
-        # 按日期滚动预测
-        dates = sorted(feature_history[date_col].unique())
+        # 训练期重叠校验：检测回测数据是否与训练期重叠，避免 in-sample bias
+        train_period = metadata.get("train_period", "")
+        if train_period and date_col in feature_history.columns:
+            try:
+                # 解析 train_period 格式: "2020-01-01 ~ 2023-12-31"
+                parts = train_period.split(" ~ ")
+                if len(parts) == 2:
+                    train_start = pd.Timestamp(parts[0].strip())
+                    train_end = pd.Timestamp(parts[1].strip())
+                    pred_dates = pd.to_datetime(feature_history[date_col])
+                    overlap_mask = (pred_dates >= train_start) & (pred_dates <= train_end)
+                    overlap_count = overlap_mask.sum()
+                    if overlap_count > 0:
+                        overlap_pct = overlap_count / len(feature_history) * 100
+                        logger.warning(
+                            f"[StockRanker] 回测数据与训练期重叠: {overlap_count}行 "
+                            f"({overlap_pct:.1f}%)，存在 in-sample bias 风险！"
+                            f"训练期={train_period}"
+                        )
+            except Exception:
+                pass
+
+        # 按日期滚动预测（使用 groupby 预分组，避免重复扫描）
         portfolio_weights_list = []
 
-        for i, date in enumerate(dates):
-            day_data = feature_history[feature_history[date_col] == date]
-
+        for date, day_data in feature_history.groupby(date_col):
             if len(day_data) < top_n or len(day_data) < 5:
                 continue
 
@@ -450,15 +482,16 @@ class StockRankerService:
                 day_result = day_result.sort_values("rank_score", ascending=False)
                 top_stocks = day_result.head(top_n)
 
-                # 等权分配
-                weight = 1.0 / max(len(top_stocks), 1)
-                for _, row in top_stocks.iterrows():
-                    portfolio_weights_list.append({
-                        date_col: date,
-                        stock_col: row.get(stock_col, row.get("asset", "")),
-                        "weight": weight,
-                        "rank_score": float(row["rank_score"]),
-                    })
+                # 等权分配（向量化操作替代 iterrows）
+                weight = 1.0 / len(top_stocks)
+                stock_names = top_stocks[stock_col] if stock_col in top_stocks.columns else top_stocks.get("asset", "")
+                weights_chunk = pd.DataFrame({
+                    date_col: date,
+                    stock_col: stock_names.values,
+                    "weight": weight,
+                    "rank_score": top_stocks["rank_score"].values,
+                })
+                portfolio_weights_list.append(weights_chunk)
 
             except Exception as e:
                 logger.debug(f"日期 {date} 预测失败: {e}")
@@ -467,7 +500,7 @@ class StockRankerService:
         if not portfolio_weights_list:
             return {"error": "无法在任何日期上完成预测", "success": False}
 
-        weights_df = pd.DataFrame(portfolio_weights_list)
+        weights_df = pd.concat(portfolio_weights_list, ignore_index=True)
 
         # 送入回测引擎
         try:
@@ -575,6 +608,7 @@ class StockRankerService:
         config: RankTrainingConfig,
         tags: Optional[List[str]],
         feature_cols: List[str],
+        train_period: str = "",
     ) -> str:
         """保存模型到注册中心或文件系统"""
         model_id = f"{model_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
@@ -593,6 +627,7 @@ class StockRankerService:
             "tags": tags or [],
             "framework": "xgboost_ranking",
             "version": "1.0.0",
+            "train_period": train_period,
         }
 
         if self.model_registry:
@@ -680,41 +715,51 @@ class StockRankerService:
     # ==================== SHAP 辅助 ====================
 
     @staticmethod
-    def _split_groups(groups: List[int], total_rows: int, split_idx: int) -> Tuple[List[int], List[int]]:
+    def _split_groups(groups: List[int], total_rows: int, split_idx: int) -> Tuple[List[int], List[int], int]:
         """
-        将分组列表按行数分割为训练集和验证集
+        将分组列表按行数分割为训练集和验证集，确保分割点对齐到组边界
+
+        对于 Learning-to-Rank 任务，同一日期组的数据必须完整地属于训练集或验证集，
+        不能被拆分。因此当 split_idx 落在某个组内部时，会将该组整体归入训练集，
+        并返回调整后的 split_idx 以保证 DMatrix 行数与 group 总和一致。
 
         Args:
             groups: 每个分组的样本数列表
-            split_idx: 训练/验证分割的行索引
             total_rows: 总行数
+            split_idx: 期望的训练/验证分割行索引
 
         Returns:
-            (train_groups, valid_groups) 分组后的列表
+            (train_groups, valid_groups, adjusted_split_idx) 分组后的列表和调整后的分割索引
         """
         train_groups = []
         valid_groups = []
         cumulative = 0
+        adjusted_split_idx = split_idx
 
         for g in groups:
             if cumulative + g <= split_idx:
-                # 整个组属于训练集
+                # 整个组在分割点之前 → 训练集
                 train_groups.append(g)
             elif cumulative >= split_idx:
-                # 整个组属于验证集
+                # 整个组在分割点之后 → 验证集
                 valid_groups.append(g)
             else:
-                # 组被分割：整个组归训练集（Learning-to-Rank要求同一日期组完整）
+                # 组跨越分割点：整组归训练集（Learning-to-Rank 要求同一日期组完整）
                 train_groups.append(g)
+                adjusted_split_idx = cumulative + g
             cumulative += g
 
-        # 确保总和正确（容错）
-        if sum(train_groups) == 0:
-            train_groups = [split_idx]
-        if sum(valid_groups) == 0:
-            valid_groups = [total_rows - split_idx]
+        # 容错：确保至少有一个训练组和验证组
+        if sum(train_groups) == 0 and groups:
+            train_groups = [groups[0]]
+            adjusted_split_idx = groups[0]
+        if sum(valid_groups) == 0 and len(train_groups) > 1:
+            # 从训练集末尾移出一组到验证集
+            last_train = train_groups.pop()
+            valid_groups.insert(0, last_train)
+            adjusted_split_idx -= last_train
 
-        return train_groups, valid_groups
+        return train_groups, valid_groups, adjusted_split_idx
 
     @staticmethod
     def _compute_shap_summary(

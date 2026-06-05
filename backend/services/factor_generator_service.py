@@ -366,6 +366,36 @@ class FactorGeneratorService:
         ]
 
         # 用栈解析表达式，逐层替换函数调用
+        def split_args_by_comma(args_str: str) -> list:
+            """按逗号分割参数列表，尊重括号嵌套"""
+            parts = []
+            depth = 0
+            current = []
+            for ch in args_str:
+                if ch == '(':
+                    depth += 1
+                    current.append(ch)
+                elif ch == ')':
+                    depth -= 1
+                    current.append(ch)
+                elif ch == ',' and depth == 0:
+                    parts.append(''.join(current).strip())
+                    current = []
+                else:
+                    current.append(ch)
+            if current:
+                parts.append(''.join(current).strip())
+            return parts
+
+        # 已知的非列名标识符（Python 关键字、内置函数、模块名等）
+        _non_col_identifiers = {
+            'True', 'False', 'None', 'and', 'or', 'not', 'in', 'is',
+            'if', 'else', 'elif', 'for', 'while', 'with', 'as', 'def',
+            'class', 'return', 'import', 'from', 'try', 'except', 'finally',
+            'raise', 'pass', 'break', 'continue', 'lambda', 'yield', 'del',
+            'global', 'nonlocal', 'assert',
+        }
+
         def parse_and_replace(expr: str) -> str:
             """递归解析表达式并替换函数调用"""
             expr = expr.strip()
@@ -405,7 +435,35 @@ class FactorGeneratorService:
                         for fname, template in func_map:
                             if fname == func_name and template is not None:
                                 if '{col}' in template:
-                                    replacement = template.replace('{col}', data_column).replace('{args}', parsed_args)
+                                    # 含 {col} 的模板：第一个参数是数据源，其余参数是函数参数
+                                    arg_list = split_args_by_comma(parsed_args)
+                                    # 确定数据源：第一个参数
+                                    if arg_list:
+                                        first_arg = arg_list[0].strip()
+                                        # 判断是否为简单列名（纯标识符）
+                                        is_simple_col = first_arg.isidentifier() and not first_arg.startswith('np.') and not first_arg.startswith('df[')
+                                        if is_simple_col:
+                                            data_source = f"df['{first_arg}']"
+                                        else:
+                                            data_source = f"({first_arg})"
+                                    else:
+                                        data_source = f"df['{data_column}']"
+                                    # 剩余参数（除第一个外的所有参数）
+                                    remaining_args = ', '.join(arg_list[1:]) if len(arg_list) > 1 else ''
+                                    # 确定窗口大小：第二个参数（如果存在且为数字），用于 rolling 函数
+                                    window = 252
+                                    if len(arg_list) >= 2:
+                                        try:
+                                            window = int(arg_list[1].strip())
+                                        except (ValueError, TypeError):
+                                            pass
+                                    # 构建替换：先替换 df['{col}'] 整体为 data_source，再替换其余占位符
+                                    # 必须先替换 df['{col}'] 再替换 {col}，避免展开后无法匹配多引用场景
+                                    replacement = template.replace("df['{col}']", data_source)
+                                    replacement = replacement.replace('{col}', data_column)
+                                    replacement = replacement.replace('{args}', remaining_args)
+                                    if 'window=252' in replacement and window != 252:
+                                        replacement = replacement.replace('window=252', f'window={window}', 1)
                                 else:
                                     replacement = template.replace('{args}', parsed_args)
                                 replaced = True
@@ -415,6 +473,14 @@ class FactorGeneratorService:
                             replacement = f"{func_name}({parsed_args})"
                         return prefix + replacement + parse_and_replace(suffix)
                     else:
+                        # 标识符后面没有 '('，不是函数调用
+                        # 如果是裸列名（非关键字、非已替换表达式），转为 df['...'] 引用
+                        if (func_name not in _non_col_identifiers
+                                and not func_name.startswith('np.')
+                                and not func_name.startswith('df[')
+                                and not func_name.startswith('talib.')):
+                            col_ref = f"df['{func_name}']"
+                            return expr[:i] + col_ref + parse_and_replace(expr[j:])
                         i = j
                 else:
                     i += 1
