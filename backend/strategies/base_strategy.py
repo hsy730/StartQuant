@@ -100,9 +100,11 @@ class BaseStrategy(ABC):
         portfolio_returns = weights * df["next_return"]
 
         # 5. 扣除手续费（简化版：假设每次调仓产生手续费）
-        # 权重变化时产生手续费，基于初始资金简化计算
+        # portfolio_returns 是比例收益率，手续费也必须保持比例
+        # weight_change 是权重变化比例，commission_rate 是费率
+        # 比例手续费 = 权重变化 * 费率
         weight_change = weights.diff().abs()
-        commission = weight_change * self.initial_capital * self.commission_rate
+        commission = weight_change * self.commission_rate
         portfolio_returns = portfolio_returns - commission
 
         # 6. 计算净值曲线

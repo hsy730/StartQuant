@@ -909,12 +909,13 @@ class VectorBTBacktestService:
             ic_weight_frames = []
             for factor_name in factor_names:
                 norm_factor = f"{factor_name}_normalized"
-                # 滚动IC：当前期因子值与下期收益的相关系数，仅用历史窗口
-                # shift(1) forward_return确保滚动IC不包含当期前视信息
+                # 滚动IC：因子值（滞后1期，避免前视偏差）与未来收益的相关系数
+                # 使用历史窗口内的数据，确保t日的IC权重只用到t-1日及之前的信息
                 rolling_ic = (
                     df[norm_factor]
+                    .shift(1)
                     .rolling(ic_window, min_periods=10)
-                    .corr(df["forward_return"].shift(1))
+                    .corr(df["forward_return"])
                 )
                 ic_abs = rolling_ic.abs()
                 ic_weight_frames.append(ic_abs)

@@ -38,23 +38,29 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 def safe_div(a, b):
-    """x / y  with y=0 mapped to NaN."""
+    """x / y with y=0 mapped to NaN."""
     if hasattr(b, 'replace'):
         b = b.replace(0, np.nan)
     else:
         b = np.where(b == 0, np.nan, b)
-    return a / (b + 1e-8)
+    return a / b
 
 
 def safe_log(a):
-    """log(x)  with x <= 0 mapped to NaN."""
-    a = np.clip(a, 1e-10, None) if isinstance(a, np.ndarray) else a.clip(lower=1e-10)
+    """log(x) with x <= 0 mapped to NaN."""
+    if hasattr(a, 'mask'):
+        a = a.mask(a <= 0, np.nan)
+    else:
+        a = np.where(a > 0, a, np.nan)
     return np.log(a)
 
 
 def safe_sqrt(a):
-    """sqrt(x)  with x < 0 mapped to NaN."""
-    a = np.clip(a, 0, None) if isinstance(a, np.ndarray) else a.clip(lower=0)
+    """sqrt(x) with x < 0 mapped to NaN."""
+    if hasattr(a, 'mask'):
+        a = a.mask(a < 0, np.nan)
+    else:
+        a = np.where(a >= 0, a, np.nan)
     return np.sqrt(a)
 
 

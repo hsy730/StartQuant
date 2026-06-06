@@ -136,7 +136,7 @@ class FormulaCompilerService:
                 elif func_name == "MACD":
                     return f"MACD({compiled_args[0]}, fastperiod=12, slowperiod=26, signalperiod=9)[0]"
                 elif func_name == "BBANDS":
-                    return f"BBANDS({compiled_args[0]}, timeperiod=20)[2]"  # 返回中轨
+                    return f"BBANDS({compiled_args[0]}, timeperiod=20)[1]"  # 返回中轨(middleband)
                 elif func_name == "ATR":
                     return f"ATR({compiled_args[0]}, timeperiod={compiled_args[1]})"
                 elif func_name == "OBV":
@@ -150,7 +150,7 @@ class FormulaCompilerService:
             elif func_name == "zscore":
                 # 使用滚动窗口zscore避免前视偏差，默认窗口20
                 window = compiled_args[1] if len(compiled_args) > 1 else 20
-                return f'(df["{compiled_args[0]}"] - df["{compiled_args[0]}"].rolling({window}).mean()) / df["{compiled_args[0]}"].rolling({window}).std()'
+                return f'(df["{compiled_args[0]}"] - df["{compiled_args[0]}"].rolling({window}).mean()) / df["{compiled_args[0]}"].rolling({window}).std().replace(0, np.nan)'
             else:
                 return f"{func_name}({', '.join(compiled_args)})"
 

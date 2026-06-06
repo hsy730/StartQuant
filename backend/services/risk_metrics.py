@@ -54,8 +54,9 @@ def calculate_risk_metrics(
         )),
         "win_rate": float((returns_arr > 0).mean()),
         "var_95": float(np.percentile(returns_arr, 5)),
-        "cvar_95": float(returns_arr[returns_arr <= np.percentile(returns_arr, 5)].mean())
-            if len(returns_arr) > 0 else 0.0,
+        "cvar_95": float(
+            returns_arr[returns_arr <= np.percentile(returns_arr, 5)].mean()
+        ) if (returns_arr <= np.percentile(returns_arr, 5)).any() else 0.0,
     }
 
 

@@ -389,22 +389,29 @@ class PortfolioAnalysisService:
 
         # 3. 风险平价
         elif method == "risk_parity":
-            # 计算每个因子的波动率
-            volatilities = factor_returns.std()
-
-            # 风险平价权重与波动率成反比
-            inv_vol = 1.0 / volatilities
-            weights = inv_vol / inv_vol.sum()
+            # 计算每个因子的波动率，处理std=0的边界情况
+            volatilities = factor_returns.std().replace(0, np.nan)
+            if volatilities.isna().all():
+                weights = pd.Series(1.0 / n_factors, index=factor_returns.columns)
+            else:
+                volatilities = volatilities.fillna(volatilities.min())
+                inv_vol = 1.0 / volatilities
+                weights = inv_vol / inv_vol.sum()
 
         # 4. 最大夏普比率（使用PyPortfolioOpt实现均值-方差优化）
         elif method == "max_sharpe":
             if n_factors >= 2:
-                mu = expected_returns.mean_historical_return(factor_returns, frequency=252)
-                S = risk_models.sample_cov(factor_returns, frequency=252)
-                ef = EfficientFrontier(mu, S)
-                ef.max_sharpe(risk_free_rate=risk_free_rate)
-                weights = pd.Series(ef.clean_weights(), index=factor_returns.columns)
-                extra_info["optimization_status"] = "success"
+                try:
+                    mu = expected_returns.mean_historical_return(factor_returns, frequency=252)
+                    S = risk_models.sample_cov(factor_returns, frequency=252)
+                    ef = EfficientFrontier(mu, S)
+                    ef.max_sharpe(risk_free_rate=risk_free_rate)
+                    weights = pd.Series(ef.clean_weights(), index=factor_returns.columns)
+                    extra_info["optimization_status"] = "success"
+                except Exception as e:
+                    logger.warning(f"PyPortfolioOpt max_sharpe失败: {e}，回退到等权重")
+                    weights = pd.Series(1.0 / n_factors, index=factor_returns.columns)
+                    extra_info["optimization_status"] = f"fallback: {str(e)}"
             else:
                 weights = pd.Series(1.0, index=factor_returns.columns)
                 extra_info["optimization_status"] = "skipped: only one factor"
@@ -412,12 +419,17 @@ class PortfolioAnalysisService:
         # 5. 最小方差（使用PyPortfolioOpt实现最小方差优化）
         elif method == "min_variance":
             if n_factors >= 2:
-                mu = expected_returns.mean_historical_return(factor_returns, frequency=252)
-                S = risk_models.sample_cov(factor_returns, frequency=252)
-                ef = EfficientFrontier(mu, S)
-                ef.min_volatility()
-                weights = pd.Series(ef.clean_weights(), index=factor_returns.columns)
-                extra_info["optimization_status"] = "success"
+                try:
+                    mu = expected_returns.mean_historical_return(factor_returns, frequency=252)
+                    S = risk_models.sample_cov(factor_returns, frequency=252)
+                    ef = EfficientFrontier(mu, S)
+                    ef.min_volatility()
+                    weights = pd.Series(ef.clean_weights(), index=factor_returns.columns)
+                    extra_info["optimization_status"] = "success"
+                except Exception as e:
+                    logger.warning(f"PyPortfolioOpt min_variance失败: {e}，回退到等权重")
+                    weights = pd.Series(1.0 / n_factors, index=factor_returns.columns)
+                    extra_info["optimization_status"] = f"fallback: {str(e)}"
             else:
                 weights = pd.Series(1.0, index=factor_returns.columns)
                 extra_info["optimization_status"] = "skipped: only one factor"

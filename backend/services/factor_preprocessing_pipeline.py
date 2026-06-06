@@ -864,16 +864,24 @@ class FactorPreprocessingPipeline:
         ])
         
         # 使用statsmodels OLS：自动输出R²、p值、F统计量等诊断信息
-        X_with_const = sm.add_constant(X)
-        ols_model = sm.OLS(y, X_with_const).fit()
-        residuals = y - ols_model.fittedvalues
-        result.loc[valid_mask] = residuals
-        
-        logger.debug(
-            f"联合回归完成(statsmodels): 市值系数={ols_model.params[1]:.6f}, "
-            f"行业数={len(unique_inds)}, R²={ols_model.rsquared:.4f}, "
-            f"F-stat={ols_model.fvalue:.2f}(p={ols_model.f_pvalue:.4f})"
-        )
+        # 检查共线性：如果设计矩阵秩亏，回退到sklearn（对共线性更鲁棒）
+        try:
+            X_with_const = sm.add_constant(X)
+            # 使用伪逆处理共线性（rank-deficient）
+            ols_model = sm.OLS(y, X_with_const).fit(method='qr')
+            residuals = y - ols_model.fittedvalues
+            result.loc[valid_mask] = residuals
+            logger.debug(
+                f"联合回归完成(statsmodels): 市值系数={ols_model.params[1]:.6f}, "
+                f"行业数={len(unique_inds)}, R²={ols_model.rsquared:.4f}, "
+                f"F-stat={ols_model.fvalue:.2f}(p={ols_model.f_pvalue:.4f})"
+            )
+        except Exception as e:
+            logger.warning(f"statsmodels OLS失败（共线性或奇异矩阵），回退到sklearn: {e}")
+            model = LinearRegression()
+            model.fit(X, y)
+            residuals = y - model.predict(X)
+            result.loc[valid_mask] = residuals
         
         return result
 
