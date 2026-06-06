@@ -9,17 +9,8 @@ from datetime import datetime
 import logging
 import gc
 
-try:
-    import vectorbt as vbt
-    VECTORBT_AVAILABLE = True
-except ImportError:
-    VECTORBT_AVAILABLE = False
-
-try:
-    import empyrical
-    EMPYRICAL_AVAILABLE = True
-except ImportError:
-    EMPYRICAL_AVAILABLE = False
+import vectorbt as vbt
+import empyrical
 
 from backend.services.smart_slippage_detector import smart_slippage_detector, SlippageRecommendation
 
@@ -92,9 +83,6 @@ class VectorBTBacktestService:
                          - "smart": 使用智能检测器自动推荐
                          - "custom": 使用用户指定的滑点值
         """
-        if not VECTORBT_AVAILABLE:
-            raise ImportError("vectorbt未安装，请运行: pip install vectorbt")
-
         self.initial_capital = initial_capital
         self.commission_rate = commission_rate
         self.slippage = slippage
@@ -545,11 +533,11 @@ class VectorBTBacktestService:
             if "Entry Timestamp" in trades_df.columns and "Exit Timestamp" in trades_df.columns:
                 trades_df = trades_df.drop_duplicates(subset=["Entry Timestamp", "Exit Timestamp"])
 
-        # 指标计算（优先使用empyrical，回退到手动计算）
+        # 指标计算（委托empyrical）
         n_bars = len(returns)
         returns_arr = returns.values if isinstance(returns, pd.Series) else returns
 
-        if EMPYRICAL_AVAILABLE and n_bars > 0:
+        if n_bars > 0:
             total_return = float(empyrical.cum_returns_final(returns_arr))
             annual_return = float(empyrical.annual_return(returns_arr, period='daily', annualization=fc["annual_bars"]))
             volatility = float(empyrical.annual_volatility(returns_arr, period='daily', annualization=fc["annual_bars"]))
@@ -558,27 +546,13 @@ class VectorBTBacktestService:
             max_drawdown = float(empyrical.max_drawdown(returns_arr))
             calmar_ratio = float(empyrical.calmar_ratio(returns_arr, period='daily', annualization=fc["annual_bars"]))
         else:
-            total_return = float((1 + returns).prod() - 1) if n_bars > 0 else 0.0
-            # 处理本金亏光的情况，避免负数的幂运算产生nan
-            if total_return <= -1.0:
-                annual_return = -1.0
-            else:
-                annual_return = float((1 + total_return) ** (fc["annual_bars"] / n_bars) - 1) if n_bars > 0 else 0.0
-            volatility = float(returns.std() * np.sqrt(fc["annual_bars"])) if n_bars > 0 else 0.0
-            daily_rf = risk_free_rate / fc["annual_bars"]
-            excess_returns = returns - daily_rf
-            sharpe_ratio = float(excess_returns.mean() / excess_returns.std() * np.sqrt(fc["annual_bars"])) if excess_returns.std() > 0 else 0.0
-
-            # 最大回撤
-            peak = equity_curve.cummax()
-            drawdown = (peak - equity_curve) / peak
-            max_drawdown = float(drawdown.max()) if len(drawdown) > 0 else 0.0
-            calmar_ratio = float(annual_return / max_drawdown) if max_drawdown > 0.0001 else 0.0
-
-            # Sortino（标准下行偏差公式，扣除无风险利率）
-            downside_diff = (returns - daily_rf).clip(upper=0)
-            downside_std = float(np.sqrt((downside_diff ** 2).mean()) * np.sqrt(fc["annual_bars"]))
-            sortino_ratio = float(excess_returns.mean() * fc["annual_bars"] / downside_std) if downside_std > 0 else 0.0
+            total_return = 0.0
+            annual_return = 0.0
+            volatility = 0.0
+            sharpe_ratio = 0.0
+            sortino_ratio = 0.0
+            max_drawdown = 0.0
+            calmar_ratio = 0.0
 
         win_rate = float((returns > 0).mean()) if n_bars > 0 else 0.0
         var_95 = float(returns.quantile(0.05)) if n_bars > 0 else 0.0
@@ -1276,9 +1250,6 @@ class VectorBTBacktestService:
         Returns:
             Dict: 回测结果
         """
-        if not VECTORBT_AVAILABLE:
-            return {"error": "VectorBT不可用"}
-
         try:
             # 构建价格透视表
             price_pivot = price_data.pivot(index=date_col, columns=ticker_col, values="close")
@@ -1479,4 +1450,4 @@ class VectorBTBacktestService:
 
 def check_vectorbt_available() -> bool:
     """检查vectorbt是否可用"""
-    return VECTORBT_AVAILABLE
+    return True

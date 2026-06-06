@@ -10,12 +10,7 @@ from scipy import stats as scipy_stats
 
 logger = logging.getLogger(__name__)
 
-try:
-    import alphalens
-    ALPHALENS_AVAILABLE = True
-except ImportError:
-    ALPHALENS_AVAILABLE = False
-    logger.warning("alphalens-reloaded未安装，Alphalens因子分析功能不可用。请执行: pip install alphalens-reloaded")
+import alphalens
 
 
 def _to_python_float(value) -> Optional[float]:
@@ -42,8 +37,7 @@ class AlphalensAnalysisService:
     """Alphalens因子分析服务类"""
 
     def __init__(self):
-        if not ALPHALENS_AVAILABLE:
-            logger.warning("alphalens-reloaded未安装，AlphalensAnalysisService功能受限")
+        pass
 
     def prepare_factor_data(
         self,
@@ -68,10 +62,6 @@ class AlphalensAnalysisService:
         Returns:
             alphalens格式的factor_data (MultiIndex: date, asset)，失败返回None
         """
-        if not ALPHALENS_AVAILABLE:
-            logger.error("alphalens-reloaded未安装，无法准备因子数据")
-            return None
-
         if len(factor_values_dict) < 1:
             logger.error("factor_values_dict为空，无法准备因子数据")
             return None
@@ -146,10 +136,6 @@ class AlphalensAnalysisService:
         Returns:
             IC分析结果字典，包含Pearson IC和Spearman Rank IC
         """
-        if not ALPHALENS_AVAILABLE:
-            logger.error("alphalens-reloaded未安装，无法执行IC分析")
-            return {"error": "alphalens-reloaded未安装"}
-
         if factor_data is None or factor_data.empty:
             logger.error("factor_data为空，无法执行IC分析")
             return {"error": "因子数据为空"}
@@ -318,10 +304,6 @@ class AlphalensAnalysisService:
         Returns:
             收益分析结果字典
         """
-        if not ALPHALENS_AVAILABLE:
-            logger.error("alphalens-reloaded未安装，无法执行收益分析")
-            return {"error": "alphalens-reloaded未安装"}
-
         if factor_data is None or factor_data.empty:
             logger.error("factor_data为空，无法执行收益分析")
             return {"error": "因子数据为空"}
@@ -503,10 +485,6 @@ class AlphalensAnalysisService:
         Returns:
             换手率分析结果字典
         """
-        if not ALPHALENS_AVAILABLE:
-            logger.error("alphalens-reloaded未安装，无法执行换手率分析")
-            return {"error": "alphalens-reloaded未安装"}
-
         if factor_data is None or factor_data.empty:
             logger.error("factor_data为空，无法执行换手率分析")
             return {"error": "因子数据为空"}
@@ -678,10 +656,6 @@ class AlphalensAnalysisService:
         Returns:
             包含所有分析结果的字典
         """
-        if not ALPHALENS_AVAILABLE:
-            logger.error("alphalens-reloaded未安装，无法执行完整分析")
-            return {"error": "alphalens-reloaded未安装，请执行: pip install alphalens-reloaded"}
-
         results: Dict[str, Any] = {
             "metadata": {
                 "num_stocks": len(factor_values_dict),

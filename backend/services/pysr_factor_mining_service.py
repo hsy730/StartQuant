@@ -25,7 +25,7 @@ except ImportError:
     logger.warning("PySR库未安装，符号回归功能将不可用。请运行: pip install pysr")
 
 from backend.services.factor_validation_service import factor_validation_service
-from backend.services.alphalens_analysis_service import alphalens_analysis_service, ALPHALENS_AVAILABLE
+from backend.services.alphalens_analysis_service import alphalens_analysis_service
 from backend.services.data_service import data_service
 
 
@@ -414,18 +414,6 @@ class PySRFactorMiningService:
             logger.info(f"[PySR Eval] best_fv={'available' if best_fv is not None else 'None'}, best_ret={'available' if best_ret is not None else 'None'}")
 
             if best_fv is not None and best_ret is not None and self.return_values is not None:
-                if not ALPHALENS_AVAILABLE:
-                    all_ic = []
-                    for code, fv in factor_values_dict.items():
-                        ret = self.stock_pool_return_values.get(code)
-                        if ret is not None:
-                            aligned = pd.DataFrame({"factor": fv, "return": ret}).dropna()
-                            if len(aligned) >= 10:
-                                ic = abs(aligned["factor"].corr(aligned["return"]))
-                                all_ic.append(ic)
-                    if all_ic:
-                        fitness = max(all_ic)
-
                 try:
                     validation = factor_validation_service.validate_factor(
                         factor_values=best_fv,

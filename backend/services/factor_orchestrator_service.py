@@ -536,16 +536,7 @@ class FactorOrchestrator:
         try:
             from backend.services.alphalens_analysis_service import (
                 alphalens_analysis_service,
-                ALPHALENS_AVAILABLE,
             )
-
-            if not ALPHALENS_AVAILABLE:
-                return PipelineStageResult(
-                    stage_name="alphalens_analysis",
-                    status=PipelineStatus.SKIPPED,
-                    duration_seconds=time.time() - t0,
-                    error="alphalens-reloaded 未安装",
-                )
 
             factor_data = shared_data["factor_data"]
             factor_name = shared_data["factor_name"]

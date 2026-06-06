@@ -7,7 +7,7 @@ import numpy as np
 from scipy import stats
 from scipy import stats as scipy_stats
 from sklearn.metrics import pairwise_distances
-from backend.services.alphalens_analysis_service import alphalens_analysis_service, ALPHALENS_AVAILABLE
+from backend.services.alphalens_analysis_service import alphalens_analysis_service
 from backend.services.lookahead_bias_detector import (
     LookaheadBiasDetector,
     lookahead_bias_detector,

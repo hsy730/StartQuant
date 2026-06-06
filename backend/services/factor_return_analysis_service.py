@@ -21,11 +21,7 @@ from enum import Enum
 import logging
 from scipy import stats as scipy_stats
 
-try:
-    from empyrical import max_drawdown as empyrical_max_drawdown
-    EMPYRICAL_AVAILABLE = True
-except ImportError:
-    EMPYRICAL_AVAILABLE = False
+from empyrical import max_drawdown as empyrical_max_drawdown
 
 logger = logging.getLogger(__name__)
 
@@ -617,14 +613,11 @@ class FactorReturnAnalysisService:
         daily_returns = pd.Series([(returns[i+1] + 1) / (returns[i] + 1) - 1
                                    for i in range(len(returns) - 1)])
 
-        if EMPYRICAL_AVAILABLE and len(daily_returns) >= 2:
-            try:
-                dd = empyrical_max_drawdown(daily_returns)
-                return abs(float(dd)) if not np.isnan(dd) else 0.0
-            except Exception:
-                pass
+        if len(daily_returns) >= 2:
+            dd = empyrical_max_drawdown(daily_returns)
+            return abs(float(dd)) if not np.isnan(dd) else 0.0
 
-        # fallback: 手动计算基于财富指数的最大回撤
+        # 数据不足，手动计算
         wealth_index = pd.Series(returns).add(1).cumprod()
         peak = wealth_index.expanding().max()
         drawdown = (wealth_index - peak) / peak

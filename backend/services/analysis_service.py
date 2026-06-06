@@ -27,7 +27,7 @@ from backend.core.database import get_db_session
 from backend.repositories.factor_repository import AnalysisCacheRepository
 from backend.models.factor import AnalysisCacheModel
 from backend.services.factor_service import factor_service
-from backend.services.alphalens_analysis_service import alphalens_analysis_service, ALPHALENS_AVAILABLE
+from backend.services.alphalens_analysis_service import alphalens_analysis_service
 from backend.services.data_service import data_service
 from backend.services.factor_preprocessing_pipeline import (
     FactorPreprocessingPipeline,
@@ -259,7 +259,7 @@ class AnalysisService:
             factor_data_for_detection, factor_names, stock_codes
         )
 
-        if ALPHALENS_AVAILABLE and len(stock_codes) >= 2:
+        if len(stock_codes) >= 2:
             skip_industry = len(stock_codes) > 30
             alphalens_results = self._run_alphalens_analysis(
                 factor_data, factor_names, stock_codes, skip_industry=skip_industry
@@ -392,25 +392,23 @@ class AnalysisService:
             result["warning"] = "时序IC仅评估择时能力，不能回答选股问题。建议使用多只股票进行横截面IC分析。"
             return result
 
-        # 多股票模式：统一使用Alphalens（业界金标准）
-        if ALPHALENS_AVAILABLE:
-            try:
-                result = self._calculate_multi_stock_ic_alphalens(factor_data_copy, factor_names, stock_codes)
-                if result.get("ic_stats"):
-                    logger.info("Alphalens多股票IC计算成功")
-                    return result
-                else:
-                    logger.warning("Alphalens返回空结果")
-            except Exception as e:
-                logger.error(f"Alphalens多股票IC计算失败: {e}", exc_info=True)
+        # 多股票模式：使用Alphalens（业界金标准）
+        try:
+            result = self._calculate_multi_stock_ic_alphalens(factor_data_copy, factor_names, stock_codes)
+            if result.get("ic_stats"):
+                logger.info("Alphalens多股票IC计算成功")
+                return result
+            else:
+                logger.warning("Alphalens返回空结果")
+        except Exception as e:
+            logger.error(f"Alphalens多股票IC计算失败: {e}", exc_info=True)
 
-        # Alphalens不可用或失败时返回错误（不再使用手动计算）
-        logger.error("Alphalens不可用或计算失败，无法进行横截面IC分析。请安装alphalens-reloaded。")
+        logger.error("Alphalens计算失败，无法进行横截面IC分析")
         return {
             "ic_stats": {},
             "monthly_ic": {},
             "rolling_ir": {},
-            "error": "Alphalens不可用，横截面IC分析需要alphalens-reloaded库",
+            "error": "Alphalens计算失败",
         }
 
     def _calculate_multi_stock_ic_manual(
@@ -969,58 +967,50 @@ class AnalysisService:
                 continue
 
             try:
-                from backend.services.alphalens_analysis_service import alphalens_analysis_service, ALPHALENS_AVAILABLE
-            except ImportError:
-                ALPHALENS_AVAILABLE = False
+                al_result = alphalens_analysis_service.full_analysis(
+                    factor_values_dict=factor_values_dict,
+                    pricing_df=prices,
+                    periods=(1,),
+                )
+                ic_analysis = al_result.get("ic_analysis", {})
+                for ic_type_key in ["spearman_ic", "pearson_ic"]:
+                    ic_data = ic_analysis.get(ic_type_key, {})
+                    for period_label, period_stats in ic_data.items():
+                        if not isinstance(period_stats, dict) or "error" in period_stats:
+                            continue
+                        ic_series_data = period_stats.get("ic_series", {})
+                        dates = ic_series_data.get("dates", [])
+                        values = ic_series_data.get("values", [])
+                        valid_values = [v for v in values if v is not None]
+                        if not valid_values:
+                            continue
+                        ic_s = pd.Series(
+                            [v if v is not None else np.nan for v in values],
+                            index=pd.to_datetime(dates) if dates else range(len(values)),
+                        ).dropna()
 
-            if ALPHALENS_AVAILABLE:
-                try:
-                    al_result = alphalens_analysis_service.full_analysis(
-                        factor_values_dict=factor_values_dict,
-                        pricing_df=prices,
-                        periods=(1,),
-                    )
-                    ic_analysis = al_result.get("ic_analysis", {})
-                    for ic_type_key in ["spearman_ic", "pearson_ic"]:
-                        ic_data = ic_analysis.get(ic_type_key, {})
-                        for period_label, period_stats in ic_data.items():
-                            if not isinstance(period_stats, dict) or "error" in period_stats:
-                                continue
-                            ic_series_data = period_stats.get("ic_series", {})
-                            dates = ic_series_data.get("dates", [])
-                            values = ic_series_data.get("values", [])
-                            valid_values = [v for v in values if v is not None]
-                            if not valid_values:
-                                continue
-                            ic_s = pd.Series(
-                                [v if v is not None else np.nan for v in values],
-                                index=pd.to_datetime(dates) if dates else range(len(values)),
-                            ).dropna()
+                        ic_type_name = period_stats.get("ic_type", ic_type_key)
+                        factor_key = f"{factor_name}_{ic_type_key}_weighted_{weight_type}"
 
-                            ic_type_name = period_stats.get("ic_type", ic_type_key)
-                            factor_key = f"{factor_name}_{ic_type_key}_weighted_{weight_type}"
+                        weighted_mean = self._compute_weighted_ic_mean(ic_s, factor_values_dict, weight_map, weight_type)
 
-                            weighted_mean = self._compute_weighted_ic_mean(ic_s, factor_values_dict, weight_map, weight_type)
-
-                            all_ic_stats[factor_key] = {
-                                "IC均值": float(weighted_mean),
-                                "IC标准差": float(period_stats.get("std_ic", ic_s.std())),
-                                "IR": float(weighted_mean / (period_stats.get("std_ic", ic_s.std()) + 1e-10)),
-                                "IC>0占比": float((ic_s > 0).mean()),
-                                "IC绝对值均值": float(abs(ic_s).mean()),
-                                "IC序列": ic_s.to_dict(),
-                                "IC类型": f"横截面{ic_type_name}（{weight_type}加权）",
-                                "t统计量": float(period_stats.get("t_statistic", 0)),
-                                "p值": float(period_stats.get("p_value", 1)),
-                                "weight_type": weight_type,
-                            }
-                            if len(ic_s) > 0:
-                                all_monthly_ic[factor_key] = self._calculate_monthly_ic({factor_key: ic_s})[factor_key]
-                                all_rolling_ir[factor_key] = self._calculate_rolling_ir({factor_key: ic_s})[factor_key]
-                except Exception as e:
-                    logger.warning(f"加权IC Alphalens失败({factor_name}): {e}")
-            else:
-                logger.warning("Alphalens不可用，加权IC使用简化计算")
+                        all_ic_stats[factor_key] = {
+                            "IC均值": float(weighted_mean),
+                            "IC标准差": float(period_stats.get("std_ic", ic_s.std())),
+                            "IR": float(weighted_mean / (period_stats.get("std_ic", ic_s.std()) + 1e-10)),
+                            "IC>0占比": float((ic_s > 0).mean()),
+                            "IC绝对值均值": float(abs(ic_s).mean()),
+                            "IC序列": ic_s.to_dict(),
+                            "IC类型": f"横截面{ic_type_name}（{weight_type}加权）",
+                            "t统计量": float(period_stats.get("t_statistic", 0)),
+                            "p值": float(period_stats.get("p_value", 1)),
+                            "weight_type": weight_type,
+                        }
+                        if len(ic_s) > 0:
+                            all_monthly_ic[factor_key] = self._calculate_monthly_ic({factor_key: ic_s})[factor_key]
+                            all_rolling_ir[factor_key] = self._calculate_rolling_ir({factor_key: ic_s})[factor_key]
+            except Exception as e:
+                logger.warning(f"加权IC Alphalens失败({factor_name}): {e}")
 
         return {
             "ic_stats": all_ic_stats,

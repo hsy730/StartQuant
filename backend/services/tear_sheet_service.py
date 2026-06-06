@@ -237,11 +237,7 @@ class TearSheetService:
     ) -> Optional[Dict[str, Any]]:
         """提取IC/IR分析的摘要信息（委托Alphalens）"""
         try:
-            from backend.services.alphalens_analysis_service import alphalens_analysis_service, ALPHALENS_AVAILABLE
-            
-            if not ALPHALENS_AVAILABLE:
-                logger.warning("Alphalens不可用，无法提取IC/IR摘要")
-                return None
+            from backend.services.alphalens_analysis_service import alphalens_analysis_service
             
             # 构建alphalens所需的输入格式
             factor_values_dict = {}

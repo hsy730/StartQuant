@@ -6,11 +6,7 @@ from typing import Dict, Optional
 import pandas as pd
 import numpy as np
 
-try:
-    import empyrical
-    EMPYRICAL_AVAILABLE = True
-except ImportError:
-    EMPYRICAL_AVAILABLE = False
+import empyrical
 
 
 class BaseStrategy(ABC):
@@ -157,53 +153,14 @@ class BaseStrategy(ABC):
 
         returns_arr = returns_clean.values
 
-        if EMPYRICAL_AVAILABLE:
-            # 使用empyrical计算标准风险指标
-            total_return = float(empyrical.cum_returns_final(returns_arr))
-            annual_return = float(empyrical.annual_return(returns_arr, period='daily', annualization=annual_trading_days))
-            volatility = float(empyrical.annual_volatility(returns_arr, period='daily', annualization=annual_trading_days))
-            sharpe_ratio = float(empyrical.sharpe_ratio(returns_arr, risk_free=risk_free_rate, period='daily', annualization=annual_trading_days))
-            sortino_ratio = float(empyrical.sortino_ratio(returns_arr, required_return=risk_free_rate, period='daily', annualization=annual_trading_days))
-            max_drawdown = float(empyrical.max_drawdown(returns_arr))
-            calmar_ratio = float(empyrical.calmar_ratio(returns_arr, period='daily', annualization=annual_trading_days))
-        else:
-            # 总收益率
-            total_return = (1 + returns_clean).prod() - 1
-
-            # 年化收益率
-            n_days = len(returns_clean)
-            annual_return = (1 + total_return) ** (annual_trading_days / n_days) - 1
-
-            # 波动率
-            volatility = returns_clean.std() * np.sqrt(annual_trading_days)
-
-            # 夏普比率
-            daily_rf = risk_free_rate / annual_trading_days
-            excess_returns = returns_clean - daily_rf
-            sharpe_ratio = (
-                excess_returns.mean() * annual_trading_days / volatility
-                if volatility > 0
-                else 0.0
-            )
-
-            # 最大回撤
-            equity = (1 + returns_clean).cumprod()
-            peak = equity.cummax()
-            drawdown = (peak - equity) / peak
-            max_drawdown = drawdown.max()
-
-            # 卡玛比率
-            calmar_ratio = annual_return / max_drawdown if max_drawdown > 0 else 0.0
-
-            # 索提诺比率（标准下行偏差公式）
-            daily_rf = risk_free_rate / annual_trading_days
-            excess_returns = returns_clean - daily_rf
-            downside_diff = np.minimum(excess_returns, 0)
-            downside_std = np.sqrt((downside_diff ** 2).mean()) * np.sqrt(annual_trading_days)
-            if downside_std > 0:
-                sortino_ratio = (excess_returns.mean() * annual_trading_days) / downside_std
-            else:
-                sortino_ratio = 0.0
+        # 委托empyrical计算标准风险指标
+        total_return = float(empyrical.cum_returns_final(returns_arr))
+        annual_return = float(empyrical.annual_return(returns_arr, period='daily', annualization=annual_trading_days))
+        volatility = float(empyrical.annual_volatility(returns_arr, period='daily', annualization=annual_trading_days))
+        sharpe_ratio = float(empyrical.sharpe_ratio(returns_arr, risk_free=risk_free_rate, period='daily', annualization=annual_trading_days))
+        sortino_ratio = float(empyrical.sortino_ratio(returns_arr, required_return=risk_free_rate, period='daily', annualization=annual_trading_days))
+        max_drawdown = float(empyrical.max_drawdown(returns_arr))
+        calmar_ratio = float(empyrical.calmar_ratio(returns_arr, period='daily', annualization=annual_trading_days))
 
         # 胜率
         win_rate = (returns_clean > 0).mean()

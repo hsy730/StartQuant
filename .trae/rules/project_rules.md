@@ -78,6 +78,83 @@ factor_neutralized = (factor - industry_mean) / industry_std
 
 ## 🏗️ 架构设计原则
 
+### 0. 开源库优先原则（最重要）
+
+> **"非核心竞争力的通用基础功能，必须使用成熟稳定的开源库，禁止手搓代码"**
+
+量化系统的核心竞争力在于**业务逻辑和策略研究**，而非重新实现通用计算。手搓通用代码会导致：边界条件遗漏、长期维护负担、与业界标准不一致。
+
+#### 必须使用开源库的功能领域
+
+| 功能领域 | 推荐开源库 | 禁止自实现 |
+|---------|-----------|-----------|
+| 风险指标（Sharpe/Sortino/MaxDD/Calmar/VaR/CVaR） | `empyrical-reloaded` | ❌ 手动计算年化收益/夏普/索提诺 |
+| 因子分析（IC/IR/分层收益/换手率） | `alphalens-reloaded` | ❌ 自实现横截面IC计算 |
+| 投资组合优化（均值-方差/风险平价/最大夏普） | `pyportfolioopt` | ❌ 自实现权重优化 |
+| 回测引擎 | `vectorbt` | ❌ 自建回测循环 |
+| 技术指标（MA/MACD/RSI/布林带） | `TA-Lib` / `pandas-ta` | ❌ 手动实现技术指标公式 |
+| 统计检验（t检验/正态性/相关性） | `scipy.stats` / `statsmodels` | ❌ 自实现统计检验 |
+| 遗传编程/因子挖掘 | `DEAP` / `PySR` | ❌ 自实现进化算法 |
+| 数据预处理（去极值/标准化） | `scipy.stats.mstats.winsorize` / `sklearn.preprocessing` | ❌ 自实现MAD/百分位截断的底层计算 |
+
+#### 判断标准：什么时候用开源库 vs 自实现
+
+```
+是否属于项目核心竞争力（因子定义、策略逻辑、A股特有规则）？
+├── 是 → 自实现（如涨跌停Mask-First设计、A股板块自适应参数）
+└── 否 → 是否有成熟稳定的开源库？
+    ├── 是 → 必须使用开源库（如empyrical计算Sharpe）
+    └── 否 → 自实现，但必须：
+        1. 在代码注释中说明"无合适开源库"
+        2. 编写充分的单元测试覆盖边界条件
+        3. 在代码审查时重点检查
+```
+
+#### 正确的封装模式
+
+```python
+# ✅ 正确：直接使用开源库，不做fallback
+import empyrical
+
+def calculate_sharpe(returns, risk_free_rate=0.03):
+    """风险指标统一入口，底层委托empyrical"""
+    return empyrical.sharpe_ratio(returns, risk_free=risk_free_rate)
+```
+
+```python
+# ❌ 错误：try/except + 手动fallback（开源库是本地依赖，不存在不可用的情况）
+try:
+    import empyrical
+    EMPYRICAL_AVAILABLE = True
+except ImportError:
+    EMPYRICAL_AVAILABLE = False
+
+def calculate_sharpe(returns, risk_free_rate=0.03):
+    if EMPYRICAL_AVAILABLE:
+        return empyrical.sharpe_ratio(returns, risk_free=risk_free_rate)
+    else:
+        # 手动fallback → 维护负担，边界条件遗漏
+        daily_rf = risk_free_rate / 252
+        excess = returns - daily_rf
+        return excess.mean() / excess.std() * np.sqrt(252)
+```
+
+```python
+# ❌ 错误：直接手搓，不使用开源库
+def calculate_sharpe(returns, risk_free_rate=0.03):
+    daily_rf = risk_free_rate / 252
+    excess = returns - daily_rf
+    return excess.mean() / excess.std() * np.sqrt(252)  # 边界条件未处理
+```
+
+#### 代码审查强制检查项
+
+- [ ] 新增的统计/数学/金融计算是否使用了对应的开源库？
+- [ ] 如果自实现，是否在注释中说明了"无合适开源库"的理由？
+- [ ] 自实现的代码是否有充分的边界条件测试（除零、NaN、空数据）？
+- [ ] 风险指标计算是否通过 `risk_metrics.py` 统一入口？
+- [ ] IC计算是否通过 `alphalens_analysis_service` 统一入口？
+
 ### 1. 代码复用优先级
 
 ```
@@ -309,6 +386,6 @@ def validate_preprocessing_config(config: Dict):
 
 ---
 
-**最后更新**: 2026-06-01  
+**最后更新**: 2026-06-06  
 **维护者**: FactorHub Core Team  
 **适用版本**: v1.0.0+

@@ -30,7 +30,7 @@ except ImportError:
 
 from backend.services.factor_generator_service import factor_generator_service
 from backend.services.factor_validation_service import factor_validation_service
-from backend.services.alphalens_analysis_service import alphalens_analysis_service, ALPHALENS_AVAILABLE
+from backend.services.alphalens_analysis_service import alphalens_analysis_service
 from backend.services.data_service import data_service
 from backend.services.factor_primitives import (
     create_pset,
@@ -724,10 +724,6 @@ class GeneticFactorMiningService:
 
         if len(factor_values_dict) < 2:
             return (0.0,)
-
-        if not ALPHALENS_AVAILABLE:
-            logger.warning("alphalens not available, falling back to time-series IC")
-            return self._evaluate_single_stock_ic(tree)
 
         try:
             all_dates = set()

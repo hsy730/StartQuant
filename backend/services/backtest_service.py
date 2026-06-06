@@ -27,14 +27,10 @@ from backend.services.factor_preprocessing_pipeline import (
     PreprocessingConfig,
 )
 
-try:
-    from backend.services.vectorbt_backtest_service import (
-        VectorBTBacktestService,
-        check_vectorbt_available,
-    )
-    VECTORBT_AVAILABLE = True
-except ImportError:
-    VECTORBT_AVAILABLE = False
+from backend.services.vectorbt_backtest_service import (
+    VectorBTBacktestService,
+    check_vectorbt_available,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -48,16 +44,11 @@ class BacktestService:
         self._vbt = None
 
     def _get_vbt(self) -> VectorBTBacktestService:
-        """获取VectorBT实例，不可用时抛出明确错误"""
-        if self._vbt is None and VECTORBT_AVAILABLE:
+        """获取VectorBT实例"""
+        if self._vbt is None:
             self._vbt = VectorBTBacktestService(
                 initial_capital=self.initial_capital,
                 commission_rate=self.commission_rate,
-            )
-        if self._vbt is None:
-            raise ImportError(
-                "VectorBT不可用，请安装: pip install vectorbt。"
-                "自建回测引擎已移除（存在已知Bug），VectorBT是唯一支持的回测引擎。"
             )
         return self._vbt
 
@@ -204,9 +195,4 @@ class BacktestService:
 
 def check_backtest_engine() -> str:
     """检查当前使用的回测引擎"""
-    if VECTORBT_AVAILABLE:
-        return "vectorbt"
-    raise ImportError(
-        "VectorBT不可用，请安装: pip install vectorbt。"
-        "自建回测引擎已移除（存在已知Bug），VectorBT是唯一支持的回测引擎。"
-    )
+    return "vectorbt"

@@ -9,10 +9,7 @@ from scipy.stats import pearsonr, spearmanr
 
 logger = logging.getLogger(__name__)
 
-try:
-    from backend.services.alphalens_analysis_service import alphalens_analysis_service, ALPHALENS_AVAILABLE
-except ImportError:
-    ALPHALENS_AVAILABLE = False
+from backend.services.alphalens_analysis_service import alphalens_analysis_service
 
 
 class FactorEffectivenessService:
@@ -100,10 +97,10 @@ class FactorEffectivenessService:
         factor_name: str,
         window: int = 20
     ) -> Dict[str, Any]:
-        """计算IC时序分析（优先使用Alphalens，fallback到自建）"""
+        """计算IC时序分析（使用Alphalens）"""
         num_stocks = len(factor_data)
 
-        if ALPHALENS_AVAILABLE and num_stocks >= 2:
+        if num_stocks >= 2:
             al_result = self._calc_ic_via_alphalens(factor_data, factor_name)
             if al_result and "error" not in al_result:
                 return al_result
@@ -344,7 +341,7 @@ class FactorEffectivenessService:
         """
         因子衰减分析 - 计算不同持有期的IC（优先使用Alphalens多周期IC）
         """
-        if ALPHALENS_AVAILABLE and len(factor_data) >= 2:
+        if len(factor_data) >= 2:
             al_decay = self._calc_decay_via_alphalens(factor_data, factor_name, periods)
             if al_decay and "error" not in al_decay:
                 return al_decay

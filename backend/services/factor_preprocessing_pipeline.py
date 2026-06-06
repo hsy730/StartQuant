@@ -25,11 +25,7 @@ from sklearn.linear_model import LinearRegression
 from sklearn.preprocessing import StandardScaler, RobustScaler
 from scipy.stats.mstats import winsorize as scipy_winsorize
 
-try:
-    import statsmodels.api as sm
-    STATSMODELS_AVAILABLE = True
-except ImportError:
-    STATSMODELS_AVAILABLE = False
+import statsmodels.api as sm
 
 logger = logging.getLogger(__name__)
 
@@ -867,29 +863,17 @@ class FactorPreprocessingPipeline:
             industry_dummies.values
         ])
         
-        if STATSMODELS_AVAILABLE:
-            # 使用statsmodels OLS：自动输出R²、p值、F统计量等诊断信息
-            X_with_const = sm.add_constant(X)
-            ols_model = sm.OLS(y, X_with_const).fit()
-            residuals = y - ols_model.fittedvalues
-            result.loc[valid_mask] = residuals
-            
-            logger.debug(
-                f"联合回归完成(statsmodels): 市值系数={ols_model.params[1]:.6f}, "
-                f"行业数={len(unique_inds)}, R²={ols_model.rsquared:.4f}, "
-                f"F-stat={ols_model.fvalue:.2f}(p={ols_model.f_pvalue:.4f})"
-            )
-        else:
-            # 回退到sklearn
-            model = LinearRegression()
-            model.fit(X, y)
-            residuals = y - model.predict(X)
-            result.loc[valid_mask] = residuals
-            
-            logger.debug(
-                f"联合回归完成(sklearn): 市值系数={model.coef_[0]:.6f}, "
-                f"行业数={len(unique_inds)}, R²={model.score(X, y):.4f}"
-            )
+        # 使用statsmodels OLS：自动输出R²、p值、F统计量等诊断信息
+        X_with_const = sm.add_constant(X)
+        ols_model = sm.OLS(y, X_with_const).fit()
+        residuals = y - ols_model.fittedvalues
+        result.loc[valid_mask] = residuals
+        
+        logger.debug(
+            f"联合回归完成(statsmodels): 市值系数={ols_model.params[1]:.6f}, "
+            f"行业数={len(unique_inds)}, R²={ols_model.rsquared:.4f}, "
+            f"F-stat={ols_model.fvalue:.2f}(p={ols_model.f_pvalue:.4f})"
+        )
         
         return result
 

@@ -5,18 +5,9 @@ from typing import Dict, List, Optional
 import pandas as pd
 import numpy as np
 
-try:
-    import empyrical
-    EMPYRICAL_AVAILABLE = True
-except ImportError:
-    EMPYRICAL_AVAILABLE = False
-
-try:
-    from pypfopt import EfficientFrontier, risk_models, expected_returns
-    from pypfopt import HRPOpt
-    PYPFOPT_AVAILABLE = True
-except ImportError:
-    PYPFOPT_AVAILABLE = False
+import empyrical
+from pypfopt import EfficientFrontier, risk_models, expected_returns
+from pypfopt import HRPOpt
 
 
 class PortfolioAnalysisService:
@@ -405,71 +396,31 @@ class PortfolioAnalysisService:
             inv_vol = 1.0 / volatilities
             weights = inv_vol / inv_vol.sum()
 
-        # 4. 最大夏普比率（使用PyPortfolioOpt实现真正的均值-方差优化）
+        # 4. 最大夏普比率（使用PyPortfolioOpt实现均值-方差优化）
         elif method == "max_sharpe":
-            if PYPFOPT_AVAILABLE and n_factors >= 2:
-                try:
-                    mu = expected_returns.mean_historical_return(factor_returns, frequency=252)
-                    S = risk_models.sample_cov(factor_returns, frequency=252)
-                    ef = EfficientFrontier(mu, S)
-                    ef.max_sharpe(risk_free_rate=risk_free_rate)
-                    weights = pd.Series(ef.clean_weights(), index=factor_returns.columns)
-                    extra_info["optimization_status"] = "success"
-                except Exception as e:
-                    # 回退到简化版夏普加权
-                    mean_returns = factor_returns.mean()
-                    std_returns = factor_returns.std()
-                    daily_rf = risk_free_rate / 252
-                    sharpe_ratios = (mean_returns - daily_rf) / std_returns * np.sqrt(252)
-                    positive_sharpe = sharpe_ratios[sharpe_ratios > 0]
-                    if len(positive_sharpe) == 0:
-                        weights = pd.Series(1.0 / n_factors, index=factor_returns.columns)
-                    else:
-                        sharpe_weights = positive_sharpe / positive_sharpe.sum()
-                        weights = pd.Series(0.0, index=factor_returns.columns)
-                        weights.update(sharpe_weights)
-                    extra_info["optimization_status"] = f"fallback: {str(e)}"
-                    extra_info["sharpe_ratios"] = sharpe_ratios.to_dict()
+            if n_factors >= 2:
+                mu = expected_returns.mean_historical_return(factor_returns, frequency=252)
+                S = risk_models.sample_cov(factor_returns, frequency=252)
+                ef = EfficientFrontier(mu, S)
+                ef.max_sharpe(risk_free_rate=risk_free_rate)
+                weights = pd.Series(ef.clean_weights(), index=factor_returns.columns)
+                extra_info["optimization_status"] = "success"
             else:
-                # PyPortfolioOpt不可用或因子不足，使用简化版
-                mean_returns = factor_returns.mean()
-                std_returns = factor_returns.std()
-                daily_rf = risk_free_rate / 252
-                sharpe_ratios = (mean_returns - daily_rf) / std_returns * np.sqrt(252)
-                positive_sharpe = sharpe_ratios[sharpe_ratios > 0]
-                if len(positive_sharpe) == 0:
-                    weights = pd.Series(1.0 / n_factors, index=factor_returns.columns)
-                else:
-                    sharpe_weights = positive_sharpe / positive_sharpe.sum()
-                    weights = pd.Series(0.0, index=factor_returns.columns)
-                    weights.update(sharpe_weights)
-                extra_info["sharpe_ratios"] = sharpe_ratios.to_dict()
+                weights = pd.Series(1.0, index=factor_returns.columns)
+                extra_info["optimization_status"] = "skipped: only one factor"
 
-        # 5. 最小方差（使用PyPortfolioOpt实现真正的最小方差优化）
+        # 5. 最小方差（使用PyPortfolioOpt实现最小方差优化）
         elif method == "min_variance":
-            if PYPFOPT_AVAILABLE and n_factors >= 2:
-                try:
-                    mu = expected_returns.mean_historical_return(factor_returns, frequency=252)
-                    S = risk_models.sample_cov(factor_returns, frequency=252)
-                    ef = EfficientFrontier(mu, S)
-                    ef.min_volatility()
-                    weights = pd.Series(ef.clean_weights(), index=factor_returns.columns)
-                    extra_info["optimization_status"] = "success"
-                except Exception as e:
-                    # 回退到逆方差加权
-                    cov_matrix = factor_returns.cov()
-                    variances = pd.Series(np.diag(cov_matrix), index=cov_matrix.index)
-                    inv_var = 1.0 / (variances + 1e-8)
-                    weights = inv_var / inv_var.sum()
-                    extra_info["optimization_status"] = f"fallback: {str(e)}"
-                    extra_info["note"] = "逆方差加权（Inverse Variance），非严格最小方差优化"
+            if n_factors >= 2:
+                mu = expected_returns.mean_historical_return(factor_returns, frequency=252)
+                S = risk_models.sample_cov(factor_returns, frequency=252)
+                ef = EfficientFrontier(mu, S)
+                ef.min_volatility()
+                weights = pd.Series(ef.clean_weights(), index=factor_returns.columns)
+                extra_info["optimization_status"] = "success"
             else:
-                # PyPortfolioOpt不可用，使用逆方差加权
-                cov_matrix = factor_returns.cov()
-                variances = pd.Series(np.diag(cov_matrix), index=cov_matrix.index)
-                inv_var = 1.0 / (variances + 1e-8)
-                weights = inv_var / inv_var.sum()
-                extra_info["note"] = "逆方差加权（Inverse Variance），非严格最小方差优化"
+                weights = pd.Series(1.0, index=factor_returns.columns)
+                extra_info["optimization_status"] = "skipped: only one factor"
 
         else:
             return {

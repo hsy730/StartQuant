@@ -18,12 +18,7 @@ from scipy import stats as scipy_stats
 
 logger = logging.getLogger(__name__)
 
-try:
-    import alphalens
-    ALPHALENS_AVAILABLE = True
-except ImportError:
-    ALPHALENS_AVAILABLE = False
-    logger.warning("alphalens-reloaded未安装，部分功能受限")
+import alphalens
 
 try:
     import phik
@@ -44,7 +39,7 @@ class FactorCorrelationService:
     
     def __init__(self):
         self.mode = "standard"
-        logger.info(f"因子相关性服务初始化 (Alphalens: {'✅' if ALPHALENS_AVAILABLE else '❌'}, Phik: {'✅' if PHIK_AVAILABLE else '❌ (可选)'})")
+        logger.info(f"因子相关性服务初始化 (Alphalens: ✅, Phik: {'✅' if PHIK_AVAILABLE else '❌ (可选)'})")
     
     def analyze(
         self,
