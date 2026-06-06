@@ -375,7 +375,8 @@ class StatisticsService:
     # ==================== 因子分层收益分析 ====================
 
     def analyze_quantile_returns(
-        self, quantile_returns: Dict[str, pd.Series], annual_trading_days: int = 252
+        self, quantile_returns: Dict[str, pd.Series], annual_trading_days: int = 252,
+        risk_free_rate: float = 0.03
     ) -> Dict:
         """
         分析各分层收益的统计特性
@@ -383,11 +384,13 @@ class StatisticsService:
         Args:
             quantile_returns: 各分层收益字典
             annual_trading_days: 年化交易日数
+            risk_free_rate: 无风险利率（年化）
 
         Returns:
             Dict: 各分层收益统计
         """
         results = {}
+        daily_rf = risk_free_rate / annual_trading_days
 
         for quantile_name, returns in quantile_returns.items():
             returns_clean = returns.dropna()
@@ -405,7 +408,7 @@ class StatisticsService:
             mean = returns_clean.mean()
             std = returns_clean.std()
             annual_return = (1 + mean) ** annual_trading_days - 1
-            sharpe = (mean / std) * np.sqrt(annual_trading_days) if std > 0 else 0.0
+            sharpe = ((mean - daily_rf) / std) * np.sqrt(annual_trading_days) if std > 0 else 0.0
             win_rate = (returns_clean > 0).mean()
 
             results[quantile_name] = {

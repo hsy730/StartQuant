@@ -69,7 +69,8 @@ class EqualWeightStrategy(BaseStrategy):
 
         # 有信号时，等权配置（1/N）
         mask = signals == 1
-        # 单股票场景：满仓
-        weights[mask] = 1.0
+        n_stocks = mask.sum()
+        if n_stocks > 0:
+            weights[mask] = 1.0 / n_stocks
 
         return weights

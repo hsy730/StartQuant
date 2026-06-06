@@ -424,6 +424,7 @@ class VectorBTBacktestService:
         freq: str = "D",
         chunk_size: Optional[int] = None,
         overlap_size: Optional[int] = None,
+        risk_free_rate: float = 0.03,
     ) -> Dict:
         """
         分块回测：将大数据集切分为重叠块，逐块计算后拼接结果，大幅降低内存峰值。
@@ -543,7 +544,7 @@ class VectorBTBacktestService:
         total_return = float((1 + returns).prod() - 1) if n_bars > 0 else 0.0
         annual_return = float((1 + total_return) ** (fc["annual_bars"] / n_bars) - 1) if n_bars > 0 else 0.0
         volatility = float(returns.std() * np.sqrt(fc["annual_bars"])) if n_bars > 0 else 0.0
-        daily_rf = 0.03 / fc["annual_bars"]  # 无风险利率3%，年化转日频
+        daily_rf = risk_free_rate / fc["annual_bars"]
         excess_returns = returns - daily_rf
         sharpe_ratio = float(excess_returns.mean() / excess_returns.std() * np.sqrt(fc["annual_bars"])) if excess_returns.std() > 0 else 0.0
 

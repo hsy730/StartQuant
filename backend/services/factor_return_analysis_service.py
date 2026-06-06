@@ -630,12 +630,13 @@ class FactorReturnAnalysisService:
         drawdown = (wealth_index - peak) / peak
         return abs(float(drawdown.min())) if len(drawdown) > 0 else 0.0
 
-    def _calculate_sharpe_ratio(self, returns: pd.Series) -> float:
-        """计算夏普比率"""
+    def _calculate_sharpe_ratio(self, returns: pd.Series, risk_free_rate: float = 0.03) -> float:
+        """计算夏普比率（年化，扣除无风险利率）"""
         if len(returns) < 2 or returns.std() == 0:
             return 0.0
         
-        return returns.mean() / returns.std() * np.sqrt(252)
+        daily_rf = risk_free_rate / 252
+        return (returns.mean() - daily_rf) / returns.std() * np.sqrt(252)
 
     def _interpret_turnover(self, turnover: float) -> str:
         """解读换手率"""

@@ -393,8 +393,9 @@ class PortfolioAnalysisService:
             mean_returns = factor_returns.mean()
             std_returns = factor_returns.std()
 
-            # 计算夏普比率（假设日频，年化）
-            sharpe_ratios = mean_returns / std_returns * np.sqrt(252)
+            # 计算夏普比率（假设日频，年化，扣除无风险利率）
+            daily_rf = risk_free_rate / 252
+            sharpe_ratios = (mean_returns - daily_rf) / std_returns * np.sqrt(252)
 
             # 只投资夏普比率为正的因子
             positive_sharpe = sharpe_ratios[sharpe_ratios > 0]

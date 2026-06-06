@@ -100,16 +100,13 @@ class BaseStrategy(ABC):
         commission = weight_change * self.commission_rate
         portfolio_returns = portfolio_returns - commission
 
-        # 6. 过滤异常值
-        portfolio_returns = portfolio_returns.clip(lower=-0.5, upper=0.5)
-
-        # 7. 计算净值曲线
+        # 6. 计算净值曲线
         equity = (1 + portfolio_returns.fillna(0)).cumprod() * self.initial_capital
 
-        # 8. 计算交易次数
+        # 7. 计算交易次数
         trades_count = (weights.diff().fillna(0) != 0).sum()
 
-        # 9. 计算持仓历史
+        # 8. 计算持仓历史
         positions = weights.copy()
         positions.name = "position"
 
@@ -182,7 +179,8 @@ class BaseStrategy(ABC):
 
         # 索提诺比率（标准下行偏差公式）
         daily_rf = risk_free_rate / annual_trading_days
-        downside_diff = np.minimum(returns_clean - daily_rf, 0)
+        excess_returns = returns_clean - daily_rf
+        downside_diff = np.minimum(excess_returns, 0)
         downside_std = np.sqrt((downside_diff ** 2).mean()) * np.sqrt(annual_trading_days)
         if downside_std > 0:
             sortino_ratio = (excess_returns.mean() * annual_trading_days) / downside_std
