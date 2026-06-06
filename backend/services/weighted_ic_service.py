@@ -420,15 +420,19 @@ class WeightedICService:
                             "reason": f"与{name_j}高度相关({corr_value:.2f})",
                         }
         
+        # 在归一化之前计算缩减量
+        pre_norm_total = sum(adjusted_weights.values())
+        original_total = sum(weights.values())
+        adjustment_info["total_reduction"] = float(
+            1.0 - pre_norm_total / original_total
+            if original_total > 0 else 0.0
+        )
+
         total = sum(adjusted_weights.values())
         if total > 0:
             adjusted_weights = {k: v / total for k, v in adjusted_weights.items()}
-        
+
         adjustment_info["adjusted_weights"] = dict(adjusted_weights)
-        adjustment_info["total_reduction"] = float(
-            1.0 - sum(adjusted_weights.values()) / sum(weights.values())
-            if sum(weights.values()) > 0 else 0.0
-        )
         
         return adjusted_weights, adjustment_info
 

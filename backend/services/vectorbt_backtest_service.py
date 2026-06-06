@@ -253,8 +253,8 @@ class VectorBTBacktestService:
         if use_tradable_mask and "tradable_mask" in df.columns:
             tradable_mask = df["tradable_mask"]
 
-        # 计算收益率
-        df["returns"] = df["close"].pct_change()
+        # 计算前向收益率（t→t+1），避免前视偏差
+        df["forward_return"] = df["close"].shift(-1) / df["close"] - 1
 
         # 因子分位数排名
         factor_raw = df[factor_name]
@@ -287,7 +287,7 @@ class VectorBTBacktestService:
                 layer_mask = (factor_rank >= q_min) & (factor_rank <= q_max)
             else:
                 layer_mask = (factor_rank >= q_min) & (factor_rank < q_max)
-            layer_returns = df.loc[layer_mask, "returns"]
+            layer_returns = df.loc[layer_mask, "forward_return"]
             quantile_returns[f"Q{q + 1}"] = layer_returns
 
         # VectorBT 回测
@@ -706,7 +706,7 @@ class VectorBTBacktestService:
 
         # 使用统一的calculate_metrics计算Sharpe/Sortino（扣除无风险利率3%）
         # VectorBT默认rf=0，此处统一为rf=3%以保持与分块回测一致
-        metrics = self.calculate_metrics(returns_clean, equity_curve=(1 + returns_clean).cumprod())
+        metrics = self.calculate_metrics(returns_clean, equity_curve=(1 + returns_clean).cumprod(), annual_trading_days=fc["annual_bars"])
         sharpe_ratio = metrics["sharpe_ratio"]
         sortino_ratio = metrics["sortino_ratio"]
         max_drawdown = stats.get('Max Drawdown [%]', 0) / 100.0
@@ -915,13 +915,13 @@ class VectorBTBacktestService:
             for factor_name in factor_names:
                 norm_factor = f"{factor_name}_normalized"
                 # 滚动IC：当前期因子值与下期收益的相关系数，仅用历史窗口
+                # shift(1) forward_return确保滚动IC不包含当期前视信息
                 rolling_ic = (
                     df[norm_factor]
                     .rolling(ic_window, min_periods=10)
-                    .corr(df["forward_return"])
+                    .corr(df["forward_return"].shift(1))
                 )
-                # shift(1)确保不包含当前期信息
-                ic_abs = rolling_ic.shift(1).abs()
+                ic_abs = rolling_ic.abs()
                 ic_weight_frames.append(ic_abs)
 
             # 逐行计算归一化权重和复合得分
@@ -931,6 +931,8 @@ class VectorBTBacktestService:
                 safe_weight = ic_wf / ic_weight_sum.replace(0, 1.0 / len(normalized_factors))
                 composite_parts.append(df[nf] * safe_weight.fillna(1.0 / len(normalized_factors)))
             df["composite_score"] = sum(composite_parts)
+            # 清理临时列，避免污染DataFrame
+            df.drop(columns=["forward_return"], inplace=True)
 
         elif method == "risk_parity":
             # 风险平价：使用滚动波动率，避免前视偏差
@@ -1068,7 +1070,7 @@ class VectorBTBacktestService:
             exits=exits,
             init_cash=self.initial_capital,
             freq=fc["vbt_freq"],
-            cash_sharing=False,
+            cash_sharing=True,
             fees=self.commission_rate,
             slippage=self.slippage,
         )
@@ -1099,7 +1101,7 @@ class VectorBTBacktestService:
 
         # 使用统一的calculate_metrics计算Sharpe/Sortino（扣除无风险利率3%）
         # VectorBT默认rf=0，此处统一为rf=3%以保持与分块回测一致
-        metrics = self.calculate_metrics(returns_clean, equity_curve=(1 + returns_clean).cumprod())
+        metrics = self.calculate_metrics(returns_clean, equity_curve=(1 + returns_clean).cumprod(), annual_trading_days=fc["annual_bars"])
         sharpe_ratio = metrics["sharpe_ratio"]
         sortino_ratio = metrics["sortino_ratio"]
         max_drawdown = stats.get('Max Drawdown [%]', 0) / 100.0
@@ -1282,7 +1284,7 @@ class VectorBTBacktestService:
 
             # 计算指标
             returns = pf.returns()
-            equity_curve = pf.value
+            equity_curve = pf.value()
 
             metrics = self.calculate_metrics(returns, equity_curve)
 

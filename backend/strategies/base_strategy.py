@@ -107,7 +107,7 @@ class BaseStrategy(ABC):
         equity = (1 + portfolio_returns.fillna(0)).cumprod() * self.initial_capital
 
         # 8. 计算交易次数
-        trades_count = (weights.diff() != 0).sum()
+        trades_count = (weights.diff().fillna(0) != 0).sum()
 
         # 9. 计算持仓历史
         positions = weights.copy()
@@ -180,15 +180,12 @@ class BaseStrategy(ABC):
         # 胜率
         win_rate = (returns_clean > 0).mean()
 
-        # 索提诺比率
-        downside_returns = returns_clean[returns_clean < 0]
-        if len(downside_returns) > 0:
-            downside_std = downside_returns.std() * np.sqrt(annual_trading_days)
-            sortino_ratio = (
-                (returns_clean.mean() * annual_trading_days - risk_free_rate) / downside_std
-                if downside_std > 0
-                else 0.0
-            )
+        # 索提诺比率（标准下行偏差公式）
+        daily_rf = risk_free_rate / annual_trading_days
+        downside_diff = np.minimum(returns_clean - daily_rf, 0)
+        downside_std = np.sqrt((downside_diff ** 2).mean()) * np.sqrt(annual_trading_days)
+        if downside_std > 0:
+            sortino_ratio = (excess_returns.mean() * annual_trading_days) / downside_std
         else:
             sortino_ratio = 0.0
 

@@ -64,12 +64,12 @@ class DataService:
                 "description": "科创板市场",
             },
             MarketBoard.CHINEXT: {
-                "code_pattern": r"^3\d{5}",  # 创业板 (300xxx)
+                "code_pattern": r"^3\d{5}$",  # 创业板 (300xxx)
                 "price_limit": 0.20,      # ±20%
                 "description": "创业板市场",
             },
             MarketBoard.BEIJING: {
-                "code_pattern": r"^(8\d{5}|4\d{5})",  # 北交所 (6位代码: 8xxxxx, 4xxxxx)
+                "code_pattern": r"^(8\d{5}|4\d{5})$",  # 北交所 (6位代码: 8xxxxx, 4xxxxx)
                 "price_limit": 0.30,      # ±30%
                 "description": "北交所市场",
             },
@@ -440,8 +440,10 @@ class DataService:
             df["is_suspended"] = False
 
         # 7. 检测新股（可选：上市不足N天）
+        # TODO: 当前实现假设数据框第一行即为上市日，这对于非完整历史数据是不准确的。
+        # 应通过akshare获取真实上市日期（如 ak.stock_ipo_info()）来计算距上市日的天数。
         if config.check_new_stock and len(df) > 0:
-            # 假设第一行就是上市日（简化处理）
+            # 假设第一行就是上市日（简化处理，存在局限性）
             days_since_listing = (df.index - df.index[0]).days
             df["is_new_stock"] = days_since_listing < config.new_stock_threshold
         else:
@@ -546,7 +548,10 @@ class DataService:
                 if col not in df.columns:
                     continue
                 rolling_median = df[col].rolling(window=window, min_periods=1).median()
-                # MAD = median(|x - median(x)|)，1.4826为正态分布修正因子
+                # TODO: 滚动MAD的当前实现是近似值——每个偏差值使用的是不同滚动窗口的中位数，
+                # 而非同一个窗口中位数。严格MAD应为：对同一窗口计算median，
+                # 再计算 |x - median| 的median。向量化实现标准滚动MAD较复杂，
+                # 当前近似在大多数场景下误差可接受，后续应考虑使用更精确的实现。
                 mad = (df[col] - rolling_median).abs().rolling(window=window, min_periods=1).median() * 1.4826
                 mad = mad.replace(0, float("nan")).ffill().bfill()
                 lower_bound = rolling_median - n_sigma * mad

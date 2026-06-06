@@ -130,7 +130,7 @@ class FactorSummaryService:
 
         # IC均值得分（0-40分）
         ic_summary = summary.get("ic_summary", {})
-        if ic_summary and not isinstance(ic_summary, dict) or ic_summary:
+        if ic_summary and isinstance(ic_summary, dict):
             # 简化处理：假设第一个因子的IC数据
             first_factor = list(ic_summary.values())[0] if ic_summary else {}
             ic_mean = abs(first_factor.get("ic_mean", 0))

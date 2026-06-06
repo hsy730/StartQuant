@@ -192,7 +192,7 @@ class FactorCorrelationService:
         
         for col in factor_cols:
             median = df[col].median()
-            mad = (df[col] - median).abs().median()
+            mad = (df[col] - median).abs().median() * 1.4826
             lower, upper = median - n_sigma * mad, median + n_sigma * mad
             n_clip = ((df[col] < lower) | (df[col] > upper)).sum()
             df[col] = df[col].clip(lower, upper)
@@ -230,7 +230,8 @@ class FactorCorrelationService:
             month_ends = dates.groupby([dates.year, dates.month]).last()
             df = df.loc[df.index.isin(month_ends, level=0)]
         elif lowest == 'weekly':
-            week_ends = dates.groupby(dates.isocalendar().week).last()
+            iso_cal = dates.isocalendar()
+            week_ends = dates.groupby([iso_cal['year'], iso_cal['week']]).last()
             df = df.loc[df.index.isin(week_ends, level=0)]
         elif lowest == 'quarterly':
             quarter_ends = dates.groupby([dates.year, dates.quarter]).last()
@@ -351,25 +352,28 @@ class FactorCorrelationService:
         }
     
     def _significance_tests(self, cs, ts=None) -> Dict:
-        """显著性检验（横截面相关性t检验，ts参数预留时间序列检验扩展）"""
+        """显著性检验（横截面相关性Fisher z变换检验，ts参数预留时间序列检验扩展）"""
         tests = []
         
         if 'avg_pearson' in cs and 'n_days' in cs:
-            n = cs['n_days']
+            n_days = cs['n_days']
             sig_pairs = []
             
             for f1, f2_dict in cs['avg_pearson'].items():
                 for f2, val in f2_dict.items():
                     if f1 != f2 and isinstance(val, (int, float)):
-                        if abs(val) < 1 and n > 2:
-                            t = val * np.sqrt(n-2) / np.sqrt(1-val**2)
-                            p = 2 * (1 - scipy_stats.t.cdf(abs(t), df=n-2))
+                        if abs(val) < 1 and n_days > 3:
+                            # Fisher z变换：对平均相关系数进行显著性检验
+                            z_values = np.arctanh(pd.Series([val]))
+                            z_mean = z_values.mean()
+                            z_se = 1 / np.sqrt(n_days - 3)
+                            p_value = 2 * (1 - scipy_stats.norm.cdf(abs(z_mean) / z_se))
                             
-                            if p < 0.05:
+                            if p_value < 0.05:
                                 sig_pairs.append({
                                     'pair': f"{f1}-{f2}",
                                     'corr': round(val, 4),
-                                    'p_value': round(p, 6)
+                                    'p_value': round(p_value, 6)
                                 })
             
             tests.append({'type': 't_test', 'significant': sig_pairs[:20]})
@@ -404,10 +408,11 @@ class FactorCorrelationService:
                 'max_vif': max(vs) if vs else np.nan,
                 'has_issue': max(vs) > 5 if vs else False,
                 'warnings': (
-                    [f"严重共线性(VIF>10): {[x['factor'] for x in vif_data if x['vif'] > 10]}" 
-                     if any(x['vif'] > 10 for x in vif_data) else []] +
+                    [f"严重共线性(VIF>10): {[x['factor'] for x in vif_data if x['vif'] > 10]}"]
+                    if any(x['vif'] > 10 for x in vif_data) else []
+                ) + (
                     [f"高度共线性(5<VIF≤10): {[x['factor'] for x in vif_data if 5 < x['vif'] <= 10]}"]
-                     if any(5 < x['vif'] <= 10 for x in vif_data) else []
+                    if any(5 < x['vif'] <= 10 for x in vif_data) else []
                 )
             }
         except ImportError:

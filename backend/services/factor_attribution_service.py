@@ -367,7 +367,9 @@ class FactorAttributionService:
         all_returns_series = pd.Series(all_returns)
         overall_avg = float(all_returns_series.mean())
         overall_vol = float(all_returns_series.std())
-        overall_cum = float((1 + all_returns_series).prod() - 1)
+        # 先计算每只股票的累计收益再取均值，而非跨股票连乘
+        stock_cum_returns = [v["cumulative_return"] for v in returns_by_stock.values()]
+        overall_cum = float(np.mean(stock_cum_returns)) if stock_cum_returns else 0.0
 
         return {
             "overall_stats": {

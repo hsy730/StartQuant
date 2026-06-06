@@ -404,8 +404,8 @@ class StatisticsService:
 
             mean = returns_clean.mean()
             std = returns_clean.std()
-            annual_return = mean * annual_trading_days
-            sharpe = mean / std if std > 0 else 0.0
+            annual_return = (1 + mean) ** annual_trading_days - 1
+            sharpe = (mean / std) * np.sqrt(annual_trading_days) if std > 0 else 0.0
             win_rate = (returns_clean > 0).mean()
 
             results[quantile_name] = {

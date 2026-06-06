@@ -351,28 +351,46 @@ class FactorEffectivenessService:
 
         decay_data = []
         for period in periods:
-            all_factor_values = []
-            all_returns = []
+            # 合并所有股票数据，按日期分组计算横截面IC
+            daily_ics = []
+            combined_frames = []
             for stock_code, df in factor_data.items():
                 if factor_name not in df.columns or "close" not in df.columns:
                     continue
                 future_returns = df["close"].shift(-period) / df["close"] - 1
-                factor_series = df[factor_name]
-                valid_mask = factor_series.notna() & future_returns.notna()
-                if valid_mask.sum() >= 5:
-                    all_factor_values.extend(factor_series[valid_mask].tolist())
-                    all_returns.extend(future_returns[valid_mask].tolist())
+                temp_df = pd.DataFrame({
+                    "factor": df[factor_name],
+                    "return": future_returns,
+                })
+                # 保留日期索引
+                if isinstance(df.index, pd.DatetimeIndex):
+                    temp_df["date"] = df.index
+                elif "date" in df.columns:
+                    temp_df["date"] = df["date"]
+                else:
+                    temp_df["date"] = df.index
+                combined_frames.append(temp_df)
 
-            if len(all_factor_values) >= 10:
+            if combined_frames:
+                combined = pd.concat(combined_frames, ignore_index=True)
+                combined = combined.dropna(subset=["factor", "return"])
+
+                for date, group in combined.groupby("date"):
+                    if len(group) >= 5:  # 最少5只股票
+                        ic = group["factor"].corr(group["return"], method="spearman")
+                        if not np.isnan(ic) and not np.isinf(ic):
+                            daily_ics.append(ic)
+
+            mean_ic = np.mean(daily_ics) if daily_ics else 0
+
+            if len(daily_ics) >= 1:
                 try:
-                    ic, _ = pearsonr(all_factor_values, all_returns)
-                    if not np.isnan(ic) and not np.isinf(ic):
-                        decay_data.append({
-                            "period": f"{period}日",
-                            "period_days": period,
-                            "ic": float(ic),
-                            "abs_ic": abs(float(ic))
-                        })
+                    decay_data.append({
+                        "period": f"{period}日",
+                        "period_days": period,
+                        "ic": float(mean_ic),
+                        "abs_ic": abs(float(mean_ic))
+                    })
                 except Exception:
                     pass
 

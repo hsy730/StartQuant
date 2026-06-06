@@ -61,7 +61,7 @@ class ComprehensiveScoringService:
 
         # 2. IR得分 (0-100)
         ir = factor_metrics.get("ir", 0)
-        ir_score = min(ir * 40, 100)  # IR=2.5时满分
+        ir_score = min(abs(ir) * 40, 100)  # IR=2.5时满分
         total_score += weights["ir"] * ir_score
         details["ir_score"] = float(ir_score)
 
@@ -321,7 +321,7 @@ class ComprehensiveScoringService:
         # 3. 效率得分 (0-100)
         sharpe_ratio = strategy_metrics.get("sharpe_ratio", 0)
         # 夏普比率目标为2.0
-        sharpe_score = min(sharpe_ratio / 2.0 * 100, 100)
+        sharpe_score = max(min(sharpe_ratio / 2.0 * 100, 100), 0)
         total_score += weights["efficiency"] * sharpe_score
         details["efficiency_score"] = float(sharpe_score)
 

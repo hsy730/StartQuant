@@ -21,6 +21,12 @@ from enum import Enum
 import logging
 from scipy import stats as scipy_stats
 
+try:
+    from empyrical import max_drawdown as empyrical_max_drawdown
+    EMPYRICAL_AVAILABLE = True
+except ImportError:
+    EMPYRICAL_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 
@@ -568,8 +574,8 @@ class FactorReturnAnalysisService:
                 if len(group) > 0:
                     bootstrapped_returns[f"Q{q+1}"].append(group[return_col].mean())
             
-            if self.config.n_quantiles in bootstrapped_returns and \
-               0 in bootstrapped_returns and \
+            if f"Q{self.config.n_quantiles}" in bootstrapped_returns and \
+               "Q1" in bootstrapped_returns and \
                len(bootstrapped_returns[f"Q{self.config.n_quantiles}"]) > 0 and \
                len(bootstrapped_returns["Q1"]) > 0:
                 spread = (bootstrapped_returns[f"Q{self.config.n_quantiles}"][-1] - 
@@ -603,21 +609,26 @@ class FactorReturnAnalysisService:
         return result
 
     def _calculate_max_drawdown(self, returns: List[float]) -> float:
-        """计算最大回撤"""
+        """计算最大回撤（优先使用empyrical库）"""
         if not returns:
             return 0.0
-        
-        peak = returns[0]
-        max_dd = 0.0
-        
-        for r in returns:
-            if r > peak:
-                peak = r
-            dd = (peak - r) / peak if peak != 0 else 0
-            if dd > max_dd:
-                max_dd = dd
-        
-        return max_dd
+
+        # 将累计收益转换为日收益率
+        daily_returns = pd.Series([(returns[i+1] + 1) / (returns[i] + 1) - 1
+                                   for i in range(len(returns) - 1)])
+
+        if EMPYRICAL_AVAILABLE and len(daily_returns) >= 2:
+            try:
+                dd = empyrical_max_drawdown(daily_returns)
+                return abs(float(dd)) if not np.isnan(dd) else 0.0
+            except Exception:
+                pass
+
+        # fallback: 手动计算基于财富指数的最大回撤
+        wealth_index = pd.Series(returns).add(1).cumprod()
+        peak = wealth_index.expanding().max()
+        drawdown = (wealth_index - peak) / peak
+        return abs(float(drawdown.min())) if len(drawdown) > 0 else 0.0
 
     def _calculate_sharpe_ratio(self, returns: pd.Series) -> float:
         """计算夏普比率"""

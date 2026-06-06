@@ -267,35 +267,26 @@ class FactorStabilityService:
         regime_start = 0
 
         for i in range(len(factor_data)):
-            if i == 0:
+            if i < 20:
                 continue
 
-            # 简单的滚动判断：过去20天的累计收益率
-            if i >= 20:
-                recent_return = factor_data['market_return'].iloc[i-20:i].sum()
+            recent_return = factor_data['market_return'].iloc[i-20:i].sum()
+            if recent_return > bull_threshold:
+                new_regime = "bull"
+            elif recent_return < bear_threshold:
+                new_regime = "bear"
+            else:
+                new_regime = "flat"
 
-                if recent_return > bull_threshold:
-                    current_regime = "bull"
-                elif recent_return < bear_threshold:
-                    current_regime = "bear"
-                else:
-                    current_regime = "flat"
+            if new_regime != current_regime:
+                if current_regime != "unknown":
+                    regimes.append({"start": regime_start, "end": i - 1, "regime": current_regime})
+                current_regime = new_regime
+                regime_start = i
 
-                # 记录环境变化
-                if i == len(factor_data) - 1:
-                    regimes.append({
-                        "start": regime_start,
-                        "end": i,
-                        "regime": current_regime
-                    })
-                elif len(regimes) > 0 and regimes[-1]["regime"] != current_regime:
-                    regimes[-1]["end"] = regime_start
-                    regimes.append({
-                        "start": regime_start,
-                        "end": i,
-                        "regime": current_regime
-                    })
-                    regime_start = i
+        # 记录最后一个regime
+        if current_regime != "unknown":
+            regimes.append({"start": regime_start, "end": len(factor_data) - 1, "regime": current_regime})
 
         # 计算各环境下的IC
         regime_performance = {}
@@ -454,9 +445,20 @@ class FactorStabilityService:
 
             # 5. 合并所有IC序列（跨股票平均）
             combined_ic = pd.concat(all_ic_series, axis=1).mean(axis=1)
-            combined_factor = pd.concat([
-                d['factor_series'] for d in all_factor_data
-            ], axis=0).dropna()
+
+            # 横截面方式分析：在每个日期截面上对多只股票计算统计量
+            # 构建横截面因子值面板（date × stock_code）
+            cross_section_frames = []
+            for item in all_factor_data:
+                stock_df = item['data'][['factor']].copy()
+                stock_df.columns = [item['stock_code']]
+                cross_section_frames.append(stock_df)
+            cross_section_panel = pd.concat(cross_section_frames, axis=1)
+
+            # 横截面统计量的时间序列（均值和标准差）
+            cs_mean = cross_section_panel.mean(axis=1)
+            cs_std = cross_section_panel.std(axis=1)
+            combined_factor = cs_mean.dropna()
 
             # 6. 执行多维度稳定性分析
             results = {}
@@ -529,10 +531,14 @@ class FactorStabilityService:
 
             # 6.4 滚动窗口稳定性分析
             try:
-                # 合并所有股票的数据用于滚动分析
-                all_rolling_data = pd.concat([d['data'] for d in all_factor_data])
+                # 使用横截面均值的时序数据进行滚动分析
+                rolling_data = pd.DataFrame({
+                    'factor': cs_mean,
+                    'future_return': all_factor_data[0]['data']['future_return'].reindex(cs_mean.index)
+                    if len(all_factor_data) > 0 else pd.Series(dtype=float)
+                }).dropna()
                 rolling_result = self.calculate_rolling_stability(
-                    all_rolling_data, 
+                    rolling_data,
                     factor_name='factor',
                     return_col='future_return',
                     windows=[20, 60, 120]
@@ -563,9 +569,16 @@ class FactorStabilityService:
 
             # 6.5 市场环境适应性分析
             try:
-                all_market_data = pd.concat([d['data'] for d in all_factor_data])
+                # 使用横截面均值构建市场环境分析数据
+                market_data = pd.DataFrame({
+                    'factor': cs_mean,
+                    'future_return': all_factor_data[0]['data']['future_return'].reindex(cs_mean.index)
+                    if len(all_factor_data) > 0 else pd.Series(dtype=float),
+                    'close': all_factor_data[0]['data']['close'].reindex(cs_mean.index)
+                    if len(all_factor_data) > 0 else pd.Series(dtype=float)
+                }).dropna()
                 regime_result = self.calculate_market_regime_performance(
-                    all_market_data,
+                    market_data,
                     factor_name='factor',
                     return_col='future_return',
                     price_col='close'

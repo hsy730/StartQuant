@@ -212,8 +212,15 @@ class FactorNeutralizationService:
                     X_list.append(industry_dummies.values)
 
         if has_mc:
-            log_mc = np.log(valid_data[market_cap_column].replace(0, np.nan))
-            log_mc = log_mc.fillna(log_mc.mean())
+            # 排除市值<=0的记录，与 neutralize_market_cap 保持一致
+            valid_data = valid_data[valid_data[market_cap_column] > 0]
+            if len(valid_data) < self.MIN_SAMPLES:
+                raise ValueError("有效数据不足（市值>0），无法进行联合中性化")
+            # 重新获取 y 和 industries（valid_data 可能已变化）
+            y = valid_data[factor_name].values
+            if has_industry:
+                industries = valid_data[industry_column].astype(str)
+            log_mc = np.log(valid_data[market_cap_column])
             X_list.append(log_mc.values.reshape(-1, 1))
 
         if not X_list:
@@ -247,7 +254,8 @@ class FactorNeutralizationService:
         result = df.copy()
 
         if "stock_code" in df.columns:
-            result["industry"] = result["stock_code"].map(industry_map)
+            pure_codes = result["stock_code"].str.replace(r'\.(SH|SZ|BJ)$', '', regex=True)
+            result["industry"] = pure_codes.map(industry_map)
         else:
             result["industry"] = "unknown"
 
