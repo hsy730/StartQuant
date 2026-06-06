@@ -165,6 +165,8 @@ class StockRankerService:
         model_name: str = "stock_ranker",
         tags: Optional[List[str]] = None,
         enable_bias_check: bool = True,
+        enable_preprocessing: bool = True,
+        preprocessing_config: Optional[Any] = None,
     ) -> RankTrainingResult:
         """
         训练排序模型
@@ -180,6 +182,8 @@ class StockRankerService:
             model_name: 模型名称
             tags: 模型标签
             enable_bias_check: 是否启用特征的未来函数检测
+            enable_preprocessing: 是否启用因子预处理（去极值+中性化+标准化）
+            preprocessing_config: 预处理配置（None=使用默认配置）
 
         Returns:
             RankTrainingResult: 训练结果
@@ -216,6 +220,30 @@ class StockRankerService:
 
         if len(df) < 100:
             raise ValueError(f"清洗后样本数({len(df)})不足100，无法训练排序模型")
+
+        # ---- 因子预处理（去极值 → 中性化 → 标准化）----
+        preprocessing_stats = {}
+        if enable_preprocessing:
+            try:
+                from backend.services.factor_preprocessing_pipeline import (
+                    FactorPreprocessingPipeline,
+                    PreprocessingConfig,
+                )
+                pp_config = preprocessing_config or PreprocessingConfig()
+                pipeline = FactorPreprocessingPipeline(pp_config)
+                for feat in feature_cols:
+                    result = pipeline.process_single_factor(df[feat], factor_name=feat)
+                    df[feat] = result.values
+                preprocessing_stats = {"applied": True, "config": str(pp_config)}
+                logger.info(f"[StockRanker] 因子预处理已完成: {len(feature_cols)}个特征")
+            except ImportError:
+                logger.warning("[StockRanker] FactorPreprocessingPipeline 不可用，跳过预处理")
+                preprocessing_stats = {"applied": False, "reason": "pipeline_unavailable"}
+            except Exception as e:
+                logger.warning(f"[StockRanker] 因子预处理失败，跳过: {e}")
+                preprocessing_stats = {"applied": False, "reason": str(e)}
+        else:
+            preprocessing_stats = {"applied": False, "reason": "disabled"}
 
         # ---- 未来函数检测（对每个特征列）----
         bias_warnings = []
@@ -264,16 +292,10 @@ class StockRankerService:
             if missing_ratio > 0.3:
                 logger.warning(f"特征 [{feat}] 训练集缺失率 {missing_ratio*100:.1f}% > 30%，建议检查数据质量")
 
-        # 使用 sklearn SimpleImputer：fit 训练集，transform 全量数据
-        from sklearn.impute import SimpleImputer
-        imputer = SimpleImputer(strategy="median", fill_value=0)
-        imputer.fit(train_df[feature_cols])
-
-        # 保存 imputer 统计量供预测时使用
-        feature_medians = {
-            feat: float(imputer.statistics_[i])
-            for i, feat in enumerate(feature_cols)
-        }
+        # 使用训练集中位数填充缺失值（仅用训练集统计量，避免数据泄漏）
+        feature_medians = train_df[feature_cols].median().to_dict()
+        # 将 NaN 中位数（整列缺失时）回退为 0.0
+        feature_medians = {k: (v if not pd.isna(v) else 0.0) for k, v in feature_medians.items()}
 
         # 复用 _fill_missing_features，确保训练和预测走完全相同的代码路径
         df[feature_cols] = self._fill_missing_features(df, feature_cols, feature_medians)
@@ -304,6 +326,7 @@ class StockRankerService:
             "reg_alpha": cfg.reg_alpha,
             "reg_lambda": cfg.reg_lambda,
             "eval_metric": eval_metric,
+            "early_stopping_rounds": cfg.early_stopping_rounds,
             "verbosity": 1,
             "seed": 42,
         }
@@ -319,7 +342,6 @@ class StockRankerService:
             dtrain,
             num_boost_round=cfg.n_estimators,
             evals=[(dtrain, "train"), (dvalid, "valid")],
-            early_stopping_rounds=cfg.early_stopping_rounds,
             evals_result=eval_result,
             verbose_eval=False,
         )
@@ -332,7 +354,7 @@ class StockRankerService:
 
         # ---- 保存模型 ----
         train_period = f"{df[date_col].min()} ~ {df[date_col].max()}"
-        model_id = self._save_model(model, model_name, cfg, tags, feature_cols, train_period=train_period, feature_medians=feature_medians)
+        model_id = self._save_model(model, model_name, cfg, tags, feature_cols, train_period=train_period, feature_medians=feature_medians, preprocessing_stats=preprocessing_stats)
 
         duration = time.time() - t0
 
@@ -427,12 +449,12 @@ class StockRankerService:
         # 预测质量指标
         metrics = {
             "mean_score": float(np.mean(scores)),
-            "std_score": float(np.std(scores)),
+            "std_score": float(np.std(scores, ddof=1)),
             "top_score": float(np.max(scores)),
             "bottom_score": float(np.min(scores)),
             "score_range": float(np.max(scores) - np.min(scores)),
             "n_predicted": len(features),
-            "score_cv": float(np.std(scores) / (np.abs(np.mean(scores)) + 1e-10)),  # 变异系数，衡量分数区分度
+            "score_cv": float(np.std(scores, ddof=1) / (np.abs(np.mean(scores)) + 1e-10)),  # 变异系数，衡量分数区分度
         }
 
         return RankPredictionResult(
@@ -526,10 +548,15 @@ class StockRankerService:
 
                 # 等权分配（向量化操作替代 iterrows）
                 weight = 1.0 / len(top_stocks)
-                stock_names = top_stocks[stock_col] if stock_col in top_stocks.columns else top_stocks.get("asset", "")
+                if stock_col in top_stocks.columns:
+                    stock_names = top_stocks[stock_col].values
+                elif "asset" in top_stocks.columns:
+                    stock_names = top_stocks["asset"].values
+                else:
+                    raise ValueError(f"数据中缺少股票标识列 '{stock_col}' 或 'asset'")
                 weights_chunk = pd.DataFrame({
                     date_col: date,
-                    stock_col: stock_names.values,
+                    stock_col: stock_names,
                     "weight": weight,
                     "rank_score": top_stocks["rank_score"].values,
                 })
@@ -614,12 +641,12 @@ class StockRankerService:
         # SHAP 分析
         if feature_sample is not None:
             try:
+                # 使用训练集中位数填充缺失值，与训练路径保持一致
+                feature_medians = metadata.get("feature_medians", {})
+                shap_data = self._fill_missing_features(feature_sample, feature_cols, feature_medians)
                 shap_summary = self._compute_shap_summary(
                     model,
-                    xgb.DMatrix(
-                        feature_sample[feature_cols].fillna(0).values,
-                        feature_names=feature_cols,
-                    ),
+                    xgb.DMatrix(shap_data, feature_names=feature_cols),
                     feature_cols,
                 )
                 result["shap_summary"] = shap_summary
@@ -652,6 +679,7 @@ class StockRankerService:
         feature_cols: List[str],
         train_period: str = "",
         feature_medians: Optional[Dict[str, float]] = None,
+        preprocessing_stats: Optional[Dict] = None,
     ) -> str:
         """保存模型到注册中心或文件系统"""
         model_id = f"{model_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
@@ -672,6 +700,7 @@ class StockRankerService:
             "framework": "xgboost_ranking",
             "version": "1.0.0",
             "train_period": train_period,
+            "preprocessing_stats": preprocessing_stats if preprocessing_stats is not None else {},
         }
 
         if self.model_registry:
@@ -768,23 +797,21 @@ class StockRankerService:
         使用训练集中位数填充缺失值，确保训练-推理预处理一致
 
         训练和预测共用此方法，保证填充逻辑完全相同。
-        不依赖 sklearn SimpleImputer 的 transform（需要 fit 状态），
-        而是直接用 numpy 向量化操作，更轻量且无状态依赖。
+        使用 numpy 向量化操作，避免 Python 循环。
 
         Args:
             df: 待填充的数据
             feature_cols: 特征列名列表
-            feature_medians: 训练集各特征中位数（来自 SimpleImputer.statistics_）
+            feature_medians: 训练集各特征中位数
 
         Returns:
             填充后的特征矩阵（numpy array）
         """
         X = df[feature_cols].values.astype(np.float64)
-        for i, col in enumerate(feature_cols):
-            fill_val = feature_medians.get(col, 0.0)
-            nan_mask = np.isnan(X[:, i])
-            if nan_mask.any():
-                X[nan_mask, i] = fill_val
+        fill_values = np.array([feature_medians.get(col, 0.0) for col in feature_cols])
+        nan_mask = np.isnan(X)
+        if nan_mask.any():
+            X[nan_mask] = np.take(fill_values, np.where(nan_mask)[1])
         return X
 
     # ==================== SHAP 辅助 ====================
@@ -828,11 +855,17 @@ class StockRankerService:
         if sum(train_groups) == 0 and groups:
             train_groups = [groups[0]]
             adjusted_split_idx = groups[0]
-        if sum(valid_groups) == 0 and len(train_groups) > 1:
-            # 从训练集末尾移出一组到验证集
-            last_train = train_groups.pop()
-            valid_groups.insert(0, last_train)
-            adjusted_split_idx -= last_train
+        if sum(valid_groups) == 0:
+            if len(train_groups) > 1:
+                # 从训练集末尾移出一组到验证集
+                last_train = train_groups.pop()
+                valid_groups.insert(0, last_train)
+                adjusted_split_idx -= last_train
+            elif train_groups:
+                # 仅有一个日期组：无法按组分割，发出警告并使用空验证集
+                logger.warning(
+                    "[StockRanker] 仅有一个日期组，无法创建验证集，early stopping 将失效"
+                )
 
         return train_groups, valid_groups, adjusted_split_idx
 

@@ -478,11 +478,7 @@ class FactorPreprocessingPipeline:
         series: pd.Series,
     ) -> Tuple[pd.Series, Dict]:
         """
-        高性能去极值实现（全局模式）
-
-        使用pandas向量化操作，比循环快100倍以上。
-        注意：此方法始终执行全局去极值，不按日期分组。
-        横截面去极值在 _process_cross_sectional 的 process_group 中实现。
+        去极值（全局模式，横截面去极值见 _process_cross_sectional）
         """
         method = self.config.winsorize_method
         original = series.copy()
