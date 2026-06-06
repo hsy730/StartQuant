@@ -27,6 +27,8 @@ dependencies = [
     "uvicorn>=0.41.0",
     # 因子相关性分析 - 仅保留核心依赖
     "alphalens-reloaded>=0.4.0",  # 单因子分析行业标准（必须）
+    "empyrical-reloaded>=0.5.0",  # Quantopian风险指标（Sharpe/Sortino/MaxDD等）
+    "pyportfolioopt>=1.5.0",  # 投资组合优化（均值-方差/风险平价等）
 ]
 
 [project.optional-dependencies]

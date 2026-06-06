@@ -211,7 +211,7 @@ class StatisticsService:
             min_periods = max(1, window // 4)
             rolling_mean = ic_series.rolling(window=window, min_periods=min_periods).mean()
             rolling_std = ic_series.rolling(window=window, min_periods=min_periods).std()
-            rolling_ir = rolling_mean / rolling_std
+            rolling_ir = rolling_mean / rolling_std.replace(0, np.nan)
 
             results[f"window_{window}"] = {
                 "mean_ic": rolling_mean.iloc[-1] if len(rolling_mean) > 0 else np.nan,
@@ -407,7 +407,8 @@ class StatisticsService:
 
             mean = returns_clean.mean()
             std = returns_clean.std()
-            annual_return = (1 + mean) ** annual_trading_days - 1
+            # 使用单利近似避免(1+negative)^252产生nan
+            annual_return = mean * annual_trading_days if mean > -1 else -1.0
             sharpe = ((mean - daily_rf) / std) * np.sqrt(annual_trading_days) if std > 0 else 0.0
             win_rate = (returns_clean > 0).mean()
 

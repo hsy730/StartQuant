@@ -235,57 +235,75 @@ class TearSheetService:
         factor_data: Dict[str, pd.DataFrame],
         factor_name: str,
     ) -> Optional[Dict[str, Any]]:
-        """提取IC/IR分析的摘要信息"""
+        """提取IC/IR分析的摘要信息（委托Alphalens）"""
         try:
-            all_ics = []
+            from backend.services.alphalens_analysis_service import alphalens_analysis_service, ALPHALENS_AVAILABLE
             
-            # 横截面IC：每个日期计算因子值与未来收益的Spearman秩相关
-            from scipy.stats import spearmanr
-            
-            # 构建日期-股票面板
-            date_factors = {}
-            date_returns = {}
-            for stock_code, df in factor_data.items():
-                if factor_name in df.columns and "close" in df.columns:
-                    df_copy = df.copy()
-                    df_copy["future_return"] = df_copy["close"].pct_change(1).shift(-1)
-                    valid_mask = df_copy[factor_name].notna() & df_copy["future_return"].notna()
-                    for date, row in df_copy[valid_mask].iterrows():
-                        if date not in date_factors:
-                            date_factors[date] = []
-                            date_returns[date] = []
-                        date_factors[date].append(row[factor_name])
-                        date_returns[date].append(row["future_return"])
-            
-            # 每日横截面Rank IC
-            for date in sorted(date_factors.keys()):
-                fv = date_factors[date]
-                rv = date_returns[date]
-                if len(fv) >= 5 and np.std(fv) > 1e-12:
-                    ic, _ = spearmanr(fv, rv)
-                    if not np.isnan(ic):
-                        all_ics.append(ic)
-            
-            if not all_ics:
+            if not ALPHALENS_AVAILABLE:
+                logger.warning("Alphalens不可用，无法提取IC/IR摘要")
                 return None
             
-            ic_series = pd.Series(all_ics)
+            # 构建alphalens所需的输入格式
+            factor_values_dict = {}
+            all_dates = set()
+            for stock_code, df in factor_data.items():
+                if factor_name in df.columns:
+                    series = df[factor_name].dropna()
+                    if len(series) > 0:
+                        factor_values_dict[stock_code] = series
+                        all_dates.update(series.index)
             
-            return {
-                "mean_ic": float(ic_series.mean()),
-                "std_ic": float(ic_series.std()) if ic_series.std() > 0 else 0.0,
-                "ir": float(
-                    ic_series.mean() / ic_series.std()
-                ) if ic_series.std() > 0 else 0.0,
-                "ic_positive_ratio": float((ic_series > 0).mean()),
-                "n_observations": len(ic_series),
-                "median_ic": float(ic_series.median()),
-                "skewness": float(ic_series.skew()),
-                "kurtosis": float(ic_series.kurtosis()),
-            }
+            if len(factor_values_dict) < 2:
+                logger.warning("有效股票数不足2只，无法进行横截面IC分析")
+                return None
+            
+            # 构建pricing_df
+            combined_dates = sorted(all_dates)
+            for stock_code, df in factor_data.items():
+                if "close" in df.columns:
+                    combined_dates = sorted(set(combined_dates) | set(df.index))
+            
+            prices = pd.DataFrame(index=combined_dates)
+            for stock_code, df in factor_data.items():
+                if "close" in df.columns:
+                    prices[stock_code] = df["close"]
+            prices = prices.dropna(how="all")
+            
+            if prices.empty:
+                return None
+            
+            al_result = alphalens_analysis_service.full_analysis(
+                factor_values_dict=factor_values_dict,
+                pricing_df=prices,
+                max_loss=1.0,
+            )
+            
+            if "error" in al_result:
+                logger.warning(f"Alphalens分析失败: {al_result['error']}")
+                return None
+            
+            # 从alphalens结果中提取IC摘要
+            ic_analysis = al_result.get("ic_analysis", {})
+            spearman_data = ic_analysis.get("spearman_ic", {})
+            
+            for period_label, period_stats in spearman_data.items():
+                if not isinstance(period_stats, dict) or "error" in period_stats:
+                    continue
+                return {
+                    "mean_ic": period_stats.get("mean_ic", 0),
+                    "std_ic": period_stats.get("std_ic", 0),
+                    "ir": period_stats.get("ir", 0),
+                    "ic_positive_ratio": period_stats.get("ic_positive_ratio", 0),
+                    "n_observations": period_stats.get("n_periods", 0),
+                    "median_ic": period_stats.get("median_ic", 0),
+                    "skewness": period_stats.get("skewness", 0),
+                    "kurtosis": period_stats.get("kurtosis", 0),
+                }
+            
+            return None
             
         except Exception as e:
-            logger.debug(f"IC/IR摘要提取异常: {e}")
+            logger.warning(f"IC/IR摘要提取异常: {e}")
             return None
 
     def _calculate_overall_score(

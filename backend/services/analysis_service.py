@@ -392,21 +392,26 @@ class AnalysisService:
             result["warning"] = "时序IC仅评估择时能力，不能回答选股问题。建议使用多只股票进行横截面IC分析。"
             return result
 
+        # 多股票模式：统一使用Alphalens（业界金标准）
         if ALPHALENS_AVAILABLE:
-            # 尝试使用Alphalens（业界金标准）
             try:
                 result = self._calculate_multi_stock_ic_alphalens(factor_data_copy, factor_names, stock_codes)
                 if result.get("ic_stats"):
                     logger.info("Alphalens多股票IC计算成功")
                     return result
                 else:
-                    logger.warning("Alphalens返回空结果，回退到手动计算")
+                    logger.warning("Alphalens返回空结果")
             except Exception as e:
-                logger.warning(f"Alphalens多股票IC计算失败，回退到手动计算: {e}")
+                logger.error(f"Alphalens多股票IC计算失败: {e}", exc_info=True)
 
-        # 回退：使用手动横截面IC计算
-        logger.info("使用手动横截面IC计算（Alphalens不可用或失败）")
-        return self._calculate_multi_stock_ic_manual(factor_data_copy, factor_names, stock_codes)
+        # Alphalens不可用或失败时返回错误（不再使用手动计算）
+        logger.error("Alphalens不可用或计算失败，无法进行横截面IC分析。请安装alphalens-reloaded。")
+        return {
+            "ic_stats": {},
+            "monthly_ic": {},
+            "rolling_ir": {},
+            "error": "Alphalens不可用，横截面IC分析需要alphalens-reloaded库",
+        }
 
     def _calculate_multi_stock_ic_manual(
         self, factor_data: Dict[str, pd.DataFrame], factor_names: List[str],

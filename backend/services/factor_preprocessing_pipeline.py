@@ -507,7 +507,9 @@ class FactorPreprocessingPipeline:
 
         elif method == WinsorizeMethod.PERCENTILE:
             lower_pct, upper_pct = self.config.winsorize_limits
-            # 使用scipy标准winsorize实现（原生C，更快更可靠）
+            # scipy.winsorize的limits参数：(低端截断比例, 高端截断比例)
+            # 例如1%-99%分位 → limits=(0.01, 0.01)，即两端各截1%
+            # lower_pct=0.01, upper_pct=0.99 → 高端截断比例=1-0.99=0.01
             winsorized = scipy_winsorize(
                 series.values, limits=(lower_pct, 1 - upper_pct), nan_policy="omit"
             )

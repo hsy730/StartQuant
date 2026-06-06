@@ -6,6 +6,12 @@ from typing import Dict, Optional
 import pandas as pd
 import numpy as np
 
+try:
+    import empyrical
+    EMPYRICAL_AVAILABLE = True
+except ImportError:
+    EMPYRICAL_AVAILABLE = False
+
 
 class BaseStrategy(ABC):
     """策略抽象基类"""
@@ -89,15 +95,18 @@ class BaseStrategy(ABC):
         weights = self.calculate_weights(df, signals)
 
         # 3. 计算下一期收益率
+        # pct_change(1) = (close[t] - close[t-1]) / close[t-1]，即当日收益率
+        # shift(-1) 取下一日的收益率，用于与当日权重配对
+        # 这样在t日决策（权重），t+1日获得收益，无前视偏差
         df["next_return"] = df["close"].pct_change(1).shift(-1)
 
-        # 4. 计算组合收益（权重 * 收益率）
+        # 4. 计算组合收益（权重 * 下一期收益率）
         portfolio_returns = weights * df["next_return"]
 
         # 5. 扣除手续费（简化版：假设每次调仓产生手续费）
-        # 权重变化时产生手续费
+        # 权重变化时产生手续费，基于初始资金简化计算
         weight_change = weights.diff().abs()
-        commission = weight_change * self.commission_rate
+        commission = weight_change * self.initial_capital * self.commission_rate
         portfolio_returns = portfolio_returns - commission
 
         # 6. 计算净值曲线
@@ -146,46 +155,58 @@ class BaseStrategy(ABC):
         if len(returns_clean) == 0:
             return self._empty_metrics()
 
-        # 总收益率
-        total_return = (1 + returns_clean).prod() - 1
+        returns_arr = returns_clean.values
 
-        # 年化收益率
-        n_days = len(returns_clean)
-        annual_return = (1 + total_return) ** (annual_trading_days / n_days) - 1
+        if EMPYRICAL_AVAILABLE:
+            # 使用empyrical计算标准风险指标
+            total_return = float(empyrical.cum_returns_final(returns_arr))
+            annual_return = float(empyrical.annual_return(returns_arr, period='daily', annualization=annual_trading_days))
+            volatility = float(empyrical.annual_volatility(returns_arr, period='daily', annualization=annual_trading_days))
+            sharpe_ratio = float(empyrical.sharpe_ratio(returns_arr, risk_free=risk_free_rate, period='daily', annualization=annual_trading_days))
+            sortino_ratio = float(empyrical.sortino_ratio(returns_arr, required_return=risk_free_rate, period='daily', annualization=annual_trading_days))
+            max_drawdown = float(empyrical.max_drawdown(returns_arr))
+            calmar_ratio = float(empyrical.calmar_ratio(returns_arr, period='daily', annualization=annual_trading_days))
+        else:
+            # 总收益率
+            total_return = (1 + returns_clean).prod() - 1
 
-        # 波动率
-        volatility = returns_clean.std() * np.sqrt(annual_trading_days)
+            # 年化收益率
+            n_days = len(returns_clean)
+            annual_return = (1 + total_return) ** (annual_trading_days / n_days) - 1
 
-        # 夏普比率
-        daily_rf = risk_free_rate / annual_trading_days
-        excess_returns = returns_clean - daily_rf
-        sharpe_ratio = (
-            excess_returns.mean() * annual_trading_days / volatility
-            if volatility > 0
-            else 0.0
-        )
+            # 波动率
+            volatility = returns_clean.std() * np.sqrt(annual_trading_days)
 
-        # 最大回撤
-        equity = (1 + returns_clean).cumprod()
-        peak = equity.cummax()
-        drawdown = (peak - equity) / peak
-        max_drawdown = drawdown.max()
+            # 夏普比率
+            daily_rf = risk_free_rate / annual_trading_days
+            excess_returns = returns_clean - daily_rf
+            sharpe_ratio = (
+                excess_returns.mean() * annual_trading_days / volatility
+                if volatility > 0
+                else 0.0
+            )
 
-        # 卡玛比率
-        calmar_ratio = annual_return / max_drawdown if max_drawdown > 0 else 0.0
+            # 最大回撤
+            equity = (1 + returns_clean).cumprod()
+            peak = equity.cummax()
+            drawdown = (peak - equity) / peak
+            max_drawdown = drawdown.max()
+
+            # 卡玛比率
+            calmar_ratio = annual_return / max_drawdown if max_drawdown > 0 else 0.0
+
+            # 索提诺比率（标准下行偏差公式）
+            daily_rf = risk_free_rate / annual_trading_days
+            excess_returns = returns_clean - daily_rf
+            downside_diff = np.minimum(excess_returns, 0)
+            downside_std = np.sqrt((downside_diff ** 2).mean()) * np.sqrt(annual_trading_days)
+            if downside_std > 0:
+                sortino_ratio = (excess_returns.mean() * annual_trading_days) / downside_std
+            else:
+                sortino_ratio = 0.0
 
         # 胜率
         win_rate = (returns_clean > 0).mean()
-
-        # 索提诺比率（标准下行偏差公式）
-        daily_rf = risk_free_rate / annual_trading_days
-        excess_returns = returns_clean - daily_rf
-        downside_diff = np.minimum(excess_returns, 0)
-        downside_std = np.sqrt((downside_diff ** 2).mean()) * np.sqrt(annual_trading_days)
-        if downside_std > 0:
-            sortino_ratio = (excess_returns.mean() * annual_trading_days) / downside_std
-        else:
-            sortino_ratio = 0.0
 
         return {
             "total_return": float(total_return),

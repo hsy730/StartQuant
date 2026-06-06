@@ -148,7 +148,9 @@ class FormulaCompilerService:
             elif func_name == "rank":
                 return f'df["{compiled_args[0]}"].rank()'
             elif func_name == "zscore":
-                return f'(df["{compiled_args[0]}"] - df["{compiled_args[0]}"].mean()) / df["{compiled_args[0]}"].std()'
+                # 使用滚动窗口zscore避免前视偏差，默认窗口20
+                window = compiled_args[1] if len(compiled_args) > 1 else 20
+                return f'(df["{compiled_args[0]}"] - df["{compiled_args[0]}"].rolling({window}).mean()) / df["{compiled_args[0]}"].rolling({window}).std()'
             else:
                 return f"{func_name}({', '.join(compiled_args)})"
 

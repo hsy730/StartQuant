@@ -5,6 +5,19 @@ from typing import Dict, List, Optional
 import pandas as pd
 import numpy as np
 
+try:
+    import empyrical
+    EMPYRICAL_AVAILABLE = True
+except ImportError:
+    EMPYRICAL_AVAILABLE = False
+
+try:
+    from pypfopt import EfficientFrontier, risk_models, expected_returns
+    from pypfopt import HRPOpt
+    PYPFOPT_AVAILABLE = True
+except ImportError:
+    PYPFOPT_AVAILABLE = False
+
 
 class PortfolioAnalysisService:
     """组合分析服务"""
@@ -168,6 +181,8 @@ class PortfolioAnalysisService:
         sorted_values = np.sort(values)
         n = len(values)
         cumsum = np.cumsum(sorted_values)
+        if cumsum[-1] == 0:
+            return 0.0
         return (n + 1 - 2 * np.sum(cumsum) / cumsum[-1]) / n
 
     def calculate_risk_metrics(
@@ -175,6 +190,7 @@ class PortfolioAnalysisService:
         returns: pd.Series,
         benchmark_returns: Optional[pd.Series] = None,
         annual_trading_days: int = 252,
+        risk_free_rate: float = 0.03,
     ) -> Dict:
         """
         计算组合风险指标
@@ -183,6 +199,7 @@ class PortfolioAnalysisService:
             returns: 组合收益率序列
             benchmark_returns: 基准收益率序列（可选）
             annual_trading_days: 年化交易日数
+            risk_free_rate: 无风险利率（年化）
 
         Returns:
             风险指标字典
@@ -195,8 +212,9 @@ class PortfolioAnalysisService:
         # 波动率
         volatility = returns_clean.std() * np.sqrt(annual_trading_days)
 
-        # 下行波动率
-        downside_returns = returns_clean[returns_clean < 0]
+        # 下行波动率（Sortino标准：低于无风险利率的偏差）
+        daily_rf = risk_free_rate / annual_trading_days
+        downside_returns = returns_clean[returns_clean < daily_rf] - daily_rf
         downside_volatility = (
             downside_returns.std() * np.sqrt(annual_trading_days)
             if len(downside_returns) > 0
@@ -238,7 +256,7 @@ class PortfolioAnalysisService:
                 # Beta
                 covariance = aligned_data["portfolio"].cov(aligned_data["benchmark"])
                 benchmark_variance = aligned_data["benchmark"].var()
-                beta = covariance / benchmark_variance if benchmark_variance > 0 else 1.0
+                beta = covariance / benchmark_variance if benchmark_variance > 0 else np.nan
 
                 result["tracking_error"] = float(tracking_error)
                 result["beta"] = float(beta)
@@ -387,41 +405,71 @@ class PortfolioAnalysisService:
             inv_vol = 1.0 / volatilities
             weights = inv_vol / inv_vol.sum()
 
-        # 4. 最大夏普比率（简化版：基于历史数据）
+        # 4. 最大夏普比率（使用PyPortfolioOpt实现真正的均值-方差优化）
         elif method == "max_sharpe":
-            # 简化方法：使用历史收益率和波动率
-            mean_returns = factor_returns.mean()
-            std_returns = factor_returns.std()
-
-            # 计算夏普比率（假设日频，年化，扣除无风险利率）
-            daily_rf = risk_free_rate / 252
-            sharpe_ratios = (mean_returns - daily_rf) / std_returns * np.sqrt(252)
-
-            # 只投资夏普比率为正的因子
-            positive_sharpe = sharpe_ratios[sharpe_ratios > 0]
-
-            if len(positive_sharpe) == 0:
-                # 如果没有正夏普因子，回退到等权重
-                weights = pd.Series(1.0 / n_factors, index=factor_returns.columns)
+            if PYPFOPT_AVAILABLE and n_factors >= 2:
+                try:
+                    mu = expected_returns.mean_historical_return(factor_returns, frequency=252)
+                    S = risk_models.sample_cov(factor_returns, frequency=252)
+                    ef = EfficientFrontier(mu, S)
+                    ef.max_sharpe(risk_free_rate=risk_free_rate)
+                    weights = pd.Series(ef.clean_weights(), index=factor_returns.columns)
+                    extra_info["optimization_status"] = "success"
+                except Exception as e:
+                    # 回退到简化版夏普加权
+                    mean_returns = factor_returns.mean()
+                    std_returns = factor_returns.std()
+                    daily_rf = risk_free_rate / 252
+                    sharpe_ratios = (mean_returns - daily_rf) / std_returns * np.sqrt(252)
+                    positive_sharpe = sharpe_ratios[sharpe_ratios > 0]
+                    if len(positive_sharpe) == 0:
+                        weights = pd.Series(1.0 / n_factors, index=factor_returns.columns)
+                    else:
+                        sharpe_weights = positive_sharpe / positive_sharpe.sum()
+                        weights = pd.Series(0.0, index=factor_returns.columns)
+                        weights.update(sharpe_weights)
+                    extra_info["optimization_status"] = f"fallback: {str(e)}"
+                    extra_info["sharpe_ratios"] = sharpe_ratios.to_dict()
             else:
-                # 按夏普比率加权
-                sharpe_weights = positive_sharpe / positive_sharpe.sum()
-                weights = pd.Series(0.0, index=factor_returns.columns)
-                weights.update(sharpe_weights)
+                # PyPortfolioOpt不可用或因子不足，使用简化版
+                mean_returns = factor_returns.mean()
+                std_returns = factor_returns.std()
+                daily_rf = risk_free_rate / 252
+                sharpe_ratios = (mean_returns - daily_rf) / std_returns * np.sqrt(252)
+                positive_sharpe = sharpe_ratios[sharpe_ratios > 0]
+                if len(positive_sharpe) == 0:
+                    weights = pd.Series(1.0 / n_factors, index=factor_returns.columns)
+                else:
+                    sharpe_weights = positive_sharpe / positive_sharpe.sum()
+                    weights = pd.Series(0.0, index=factor_returns.columns)
+                    weights.update(sharpe_weights)
+                extra_info["sharpe_ratios"] = sharpe_ratios.to_dict()
 
-            extra_info["sharpe_ratios"] = sharpe_ratios.to_dict()
-
-        # 5. 逆方差权重（Inverse Variance）
+        # 5. 最小方差（使用PyPortfolioOpt实现真正的最小方差优化）
         elif method == "min_variance":
-            # 计算协方差矩阵
-            cov_matrix = factor_returns.cov()
-
-            # 逆方差加权：方差越小权重越大
-            variances = pd.Series(np.diag(cov_matrix), index=cov_matrix.index)
-            inv_var = 1.0 / (variances + 1e-8)  # 添加小值避免除零
-            weights = inv_var / inv_var.sum()
-
-            extra_info["note"] = "逆方差加权（Inverse Variance），非严格最小方差优化"
+            if PYPFOPT_AVAILABLE and n_factors >= 2:
+                try:
+                    mu = expected_returns.mean_historical_return(factor_returns, frequency=252)
+                    S = risk_models.sample_cov(factor_returns, frequency=252)
+                    ef = EfficientFrontier(mu, S)
+                    ef.min_volatility()
+                    weights = pd.Series(ef.clean_weights(), index=factor_returns.columns)
+                    extra_info["optimization_status"] = "success"
+                except Exception as e:
+                    # 回退到逆方差加权
+                    cov_matrix = factor_returns.cov()
+                    variances = pd.Series(np.diag(cov_matrix), index=cov_matrix.index)
+                    inv_var = 1.0 / (variances + 1e-8)
+                    weights = inv_var / inv_var.sum()
+                    extra_info["optimization_status"] = f"fallback: {str(e)}"
+                    extra_info["note"] = "逆方差加权（Inverse Variance），非严格最小方差优化"
+            else:
+                # PyPortfolioOpt不可用，使用逆方差加权
+                cov_matrix = factor_returns.cov()
+                variances = pd.Series(np.diag(cov_matrix), index=cov_matrix.index)
+                inv_var = 1.0 / (variances + 1e-8)
+                weights = inv_var / inv_var.sum()
+                extra_info["note"] = "逆方差加权（Inverse Variance），非严格最小方差优化"
 
         else:
             return {
