@@ -5,7 +5,7 @@
 """
 import numpy as np
 import pandas as pd
-from typing import Dict
+from typing import Dict, Optional
 
 import empyrical
 
@@ -61,24 +61,24 @@ def calculate_risk_metrics(
         "cvar_95": float(empyrical.conditional_value_at_risk(returns_arr, cutoff=0.05)),
     }
 
-    # empyrical 在某些边界条件下可能返回非有限值，截断为 0
+    # empyrical 在某些边界条件下可能返回非有限值，统一转为 None（符合规则6）
     for key in ["sharpe_ratio", "sortino_ratio", "calmar_ratio"]:
         if not np.isfinite(result[key]):
-            result[key] = 0.0
+            result[key] = None
 
     return result
 
 
-def _empty_metrics() -> Dict[str, float]:
+def _empty_metrics() -> Dict[str, Optional[float]]:
     """返回空的风险指标"""
     return {
         "total_return": 0.0,
         "annual_return": 0.0,
         "volatility": 0.0,
-        "sharpe_ratio": 0.0,
-        "sortino_ratio": 0.0,
+        "sharpe_ratio": None,
+        "sortino_ratio": None,
         "max_drawdown": 0.0,
-        "calmar_ratio": 0.0,
+        "calmar_ratio": None,
         "win_rate": 0.0,
         "var_95": 0.0,
         "cvar_95": 0.0,

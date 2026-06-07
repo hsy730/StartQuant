@@ -159,7 +159,8 @@ class TestCompileBBANDS:
             ],
         }
         code = compiler.compile_formula(tree)
-        assert code == 'BBANDS(df["close"], timeperiod=20)[1]'
+        # 返回值顺序注释已标注（规则4）：TA-Lib返回(upper,middle,lower)
+        assert 'BBANDS(df["close"], timeperiod=20)[1]' in code
 
 
 class TestCompileStatFunctions:

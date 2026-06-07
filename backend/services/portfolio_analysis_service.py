@@ -399,6 +399,11 @@ class PortfolioAnalysisService:
 
         # ========== 统一计算基于权重的组合指标 ==========
 
+        # 确保权重归一化（和为1），避免收益被错误缩放
+        weight_sum = weights.sum()
+        if abs(weight_sum - 1.0) > 1e-6 and weight_sum != 0:
+            weights = weights / weight_sum
+
         # 计算加权期望收益（年化）
         mean_returns = factor_returns.mean()  # 每个因子的平均收益
         weighted_return = (weights * mean_returns).sum() * 252  # 年化

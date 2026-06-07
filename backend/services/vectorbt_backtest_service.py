@@ -230,7 +230,7 @@ class VectorBTBacktestService:
         避免两处维护相同逻辑导致漂移。
 
         Args:
-            df: 已确保 DatetimeIndex 的 DataFrame（会被原地修改）
+            df: 已确保 DatetimeIndex 的 DataFrame（内部会copy，不污染调用方数据）
             factor_name, percentile, direction, n_quantiles, shares_per_trade, use_tradable_mask, fc: 同上
 
         Returns:
@@ -244,6 +244,9 @@ class VectorBTBacktestService:
                 equity (Series): 净值曲线
                 returns (Series): 收益率序列
         """
+        # 规则5：禁止就地修改传入的DataFrame，必须先copy
+        df = df.copy()
+
         # Mask-First
         tradable_mask = None
         if use_tradable_mask and "tradable_mask" in df.columns:
@@ -828,10 +831,19 @@ class VectorBTBacktestService:
 
             # 逐行计算归一化权重和复合得分
             ic_weight_sum = sum(ic_weight_frames)
+            # 除零+NaN保护：权重和为0或NaN时回退到等权
+            equal_w = 1.0 / len(normalized_factors)
+            # 标记权重和无效的行（0或NaN）
+            invalid_mask = (ic_weight_sum == 0) | ic_weight_sum.isna()
+            # 有效行：用 ic_wf / ic_weight_sum 归一化；无效行：直接用等权
+            safe_ic_weight_sum = ic_weight_sum.copy()
+            safe_ic_weight_sum[invalid_mask] = np.nan  # 无效行标记为NaN，后续fillna处理
             composite_parts = []
             for nf, ic_wf in zip(normalized_factors, ic_weight_frames):
-                safe_weight = ic_wf / ic_weight_sum.replace(0, 1.0 / len(normalized_factors))
-                composite_parts.append(df[nf] * safe_weight.fillna(1.0 / len(normalized_factors)))
+                safe_weight = ic_wf / safe_ic_weight_sum
+                # 无效行回退到等权
+                safe_weight[invalid_mask] = equal_w
+                composite_parts.append(df[nf] * safe_weight)
             df["composite_score"] = sum(composite_parts)
             # 清理临时列，避免污染DataFrame
             df.drop(columns=["forward_return"], inplace=True)

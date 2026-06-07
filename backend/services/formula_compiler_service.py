@@ -144,7 +144,9 @@ class FormulaCompilerService:
                     macd_idx = compiled_args[1] if len(compiled_args) > 1 else "0"
                     return f"MACD({compiled_args[0]}, fastperiod=12, slowperiod=26, signalperiod=9)[{macd_idx}]"
                 elif func_name == "BBANDS":
-                    return f"BBANDS({compiled_args[0]}, timeperiod=20)[1]"  # 返回中轨(middleband)
+                    # TA-Lib BBANDS返回(upperband, middleband, lowerband)
+                    # [1] = middleband（中轨），返回值顺序已在注释中明确标注（规则4）
+                    return f"BBANDS({compiled_args[0]}, timeperiod=20)[1]  # TA-Lib返回(upper,middle,lower), [1]=middleband"
                 elif func_name == "ATR":
                     return f"ATR({compiled_args[0]}, timeperiod={compiled_args[1]})"
                 elif func_name == "OBV":

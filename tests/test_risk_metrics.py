@@ -81,7 +81,7 @@ class TestCalculateRiskMetrics:
         result = calculate_risk_metrics(returns)
         expected = _empty_metrics()
         for key in expected:
-            assert result[key] == 0.0
+            assert result[key] == expected[key]
 
     def test_all_nan_series_should_return_empty_metrics(self):
         """全NaN序列应返回空指标"""
@@ -89,7 +89,7 @@ class TestCalculateRiskMetrics:
         result = calculate_risk_metrics(returns)
         expected = _empty_metrics()
         for key in expected:
-            assert result[key] == 0.0
+            assert result[key] == expected[key]
 
     def test_single_value_should_not_crash(self):
         """单值序列不应崩溃"""
@@ -102,9 +102,9 @@ class TestCalculateRiskMetrics:
         returns = pd.Series([0.01] * 50)
         result = calculate_risk_metrics(returns)
         assert isinstance(result, dict)
-        # std=0 时 empyrical 可能返回 NaN，应转为 float
+        # std=0 时 empyrical 可能返回 NaN，比率指标应转为 None（规则6）
         for key, val in result.items():
-            assert isinstance(val, float), f"{key} 应为 float，实际为 {type(val)}"
+            assert val is None or isinstance(val, float), f"{key} 应为 float 或 None，实际为 {type(val)}"
 
     def test_extreme_returns_should_not_produce_inf(self):
         """极端收益率不应产生inf"""
@@ -134,10 +134,15 @@ class TestCalculateRiskMetrics:
 class TestEmptyMetrics:
     """_empty_metrics 测试"""
 
-    def test_empty_metrics_all_zero(self):
-        """空指标应全为0"""
+    def test_empty_metrics_all_zero_or_none(self):
+        """空指标中比率类应为None，其余为0"""
         result = _empty_metrics()
-        assert all(v == 0.0 for v in result.values())
+        none_keys = {"sharpe_ratio", "sortino_ratio", "calmar_ratio"}
+        for key, val in result.items():
+            if key in none_keys:
+                assert val is None, f"{key} 应为 None"
+            else:
+                assert val == 0.0, f"{key} 应为 0.0"
 
     def test_empty_metrics_has_all_keys(self):
         """空指标应包含所有键"""
@@ -150,11 +155,11 @@ class TestEmptyMetrics:
         for key in expected_keys:
             assert key in result
 
-    def test_empty_metrics_values_are_float(self):
-        """空指标值应为float"""
+    def test_empty_metrics_values_are_valid(self):
+        """空指标值应为float或None"""
         result = _empty_metrics()
         for key, val in result.items():
-            assert isinstance(val, float)
+            assert isinstance(val, float) or val is None, f"{key} 应为 float 或 None"
 
 
 if __name__ == "__main__":

@@ -323,7 +323,7 @@ class FactorCorrelationService:
                             np.triu_indices_from(daily.corr(), k=1)
                         ]
                         corrs.extend(c.tolist())
-                except Exception:
+                except (KeyError, ValueError):
                     continue
             
             if corrs:
@@ -393,7 +393,7 @@ class FactorCorrelationService:
                         'vif': round(v, 2),
                         'level': ('severe' if v > 10 else ('high' if v > 5 else ('moderate' if v > 2.5 else 'low')))
                     })
-                except Exception:
+                except (ValueError, np.linalg.LinAlgError):
                     vif_data.append({'factor': col, 'vif': np.nan, 'level': 'error'})
             
             vs = [x['vif'] for x in vif_data if not np.isnan(x.get('vif'))]
@@ -638,7 +638,7 @@ class FactorCorrelationService:
                         'p_value': float(p_val),
                         'significant': p_val < 0.05
                     }
-                except Exception:
+                except (ValueError, TypeError):
                     continue
         
         return {

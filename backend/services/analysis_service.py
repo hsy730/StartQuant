@@ -520,7 +520,7 @@ class AnalysisService:
         for factor_name, ic_s in ic_series.items():
             ic_mean = float(ic_s.mean())
             ic_std = float(ic_s.std()) if len(ic_s) > 1 else 0.0
-            ir = ic_mean / ic_std if ic_std != 0 else 0.0
+            ir = ic_mean / ic_std if ic_std != 0 and not np.isnan(ic_std) else 0.0
 
             n = len(ic_s)
             t_stat = ic_mean / (ic_std / np.sqrt(n)) if n > 1 and ic_std > 0 else 0.0
@@ -612,7 +612,7 @@ class AnalysisService:
         for factor_name, ic_s in ic_series.items():
             ic_mean = ic_s.mean()
             ic_std = ic_s.std()
-            ir = ic_mean / ic_std if ic_std != 0 else 0
+            ir = ic_mean / ic_std if ic_std != 0 and not np.isnan(ic_std) else 0
             stats = {
                 "IC均值": ic_mean, "IC标准差": ic_std, "IR": ir,
                 "IC>0占比": (ic_s > 0).mean(), "IC绝对值均值": abs(ic_s).mean(),
