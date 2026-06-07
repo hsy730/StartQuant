@@ -413,8 +413,9 @@ class StatisticsService:
             # 使用单利近似避免(1+negative)^252产生nan
             annual_return = mean * annual_trading_days if mean > -1 else -1.0
             # 委托empyrical计算Sharpe（复利年化，与risk_metrics保持一致）
+            # empyrical的risk_free参数是日频利率，需除以年化天数
             sharpe = float(empyrical.sharpe_ratio(
-                returns_clean.values, risk_free=risk_free_rate,
+                returns_clean.values, risk_free=risk_free_rate / annual_trading_days,
                 period='daily', annualization=annual_trading_days
             )) if std > 0 else 0.0
             win_rate = (returns_clean > 0).mean()

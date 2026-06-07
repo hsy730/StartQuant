@@ -205,7 +205,7 @@ class PortfolioAnalysisService:
                 try:
                     alpha, beta = empyrical.alpha_beta_aligned(
                         aligned_data["portfolio"], aligned_data["benchmark"],
-                        risk_free=risk_free_rate, period='daily', annualization=annual_trading_days
+                        risk_free=risk_free_rate / annual_trading_days, period='daily', annualization=annual_trading_days
                     )
                 except Exception:
                     beta = np.nan
