@@ -56,6 +56,22 @@ class AnalysisService:
             "lookahead_bias": results.get("lookahead_bias", {}),
         }
 
+        # 序列化 factor_data（缓存命中时避免重新计算因子）
+        if "factor_data" in results:
+            serialized_factor_data = {}
+            for stock_code, df in results["factor_data"].items():
+                serialized_factor_data[stock_code] = df.to_dict(orient="list")
+                # 保留索引信息以便反序列化恢复
+                if hasattr(df.index, 'to_list'):
+                    index_list = df.index.to_list()
+                    serialized_factor_data[stock_code]["__index__"] = [
+                        str(idx) if hasattr(idx, 'isoformat') else idx
+                        for idx in index_list
+                    ]
+                    # 记录索引类型，避免整数索引被误解析为日期
+                    serialized_factor_data[stock_code]["__index_type__"] = type(df.index).__name__
+            serialized["factor_data"] = serialized_factor_data
+
         # 序列化 IC/IR 结果
         if "ic_ir" in results:
             ic_ir = results["ic_ir"]
@@ -93,9 +109,33 @@ class AnalysisService:
 
         return serialized
 
-    def _deserialize_from_cache(self, cached_data: Dict[str, Any], factor_data: Dict[str, pd.DataFrame]) -> Dict[str, Any]:
+    def _deserialize_from_cache(self, cached_data: Dict[str, Any]) -> Dict[str, Any]:
         """从缓存数据反序列化"""
-        # 将 factor_data 添加到结果中
+        # 从缓存中恢复 factor_data
+        factor_data = {}
+        if "factor_data" in cached_data:
+            for stock_code, data in cached_data["factor_data"].items():
+                data = dict(data)  # 复制，避免修改缓存原始数据
+                index_data = data.pop("__index__", None)
+                index_type = data.pop("__index_type__", None)
+                df = pd.DataFrame(data)
+                if index_data:
+                    if index_type == "DatetimeIndex":
+                        try:
+                            df.index = pd.to_datetime(index_data)
+                        except (ValueError, TypeError):
+                            df.index = index_data
+                    elif index_type == "RangeIndex":
+                        # RangeIndex 自动生成，无需手动设置
+                        pass
+                    else:
+                        # 其他类型（如 Int64Index）直接赋值
+                        try:
+                            df.index = [int(x) if str(x).isdigit() else x for x in index_data]
+                        except (ValueError, TypeError):
+                            df.index = index_data
+                factor_data[stock_code] = df
+
         result = {
             "metadata": cached_data["metadata"],
             "factor_data": factor_data,
@@ -206,13 +246,8 @@ class AnalysisService:
             cached = repo.get_by_key(cache_key)
             if cached:
                 db.close()
-                # 缓存命中：仍需获取factor_data用于反序列化，但跳过预处理和分析计算
-                factor_data = factor_service.calculate_factors_for_stocks(
-                    stock_codes, factor_names, start_date, end_date, rolling_window
-                )
-                if factor_data:
-                    return self._deserialize_from_cache(cached.result_data, factor_data)
-                # factor_data获取失败时继续走完整流程
+                # 缓存命中：直接从缓存反序列化，无需重新计算因子
+                return self._deserialize_from_cache(cached.result_data)
             db.close()
 
         factor_data = factor_service.calculate_factors_for_stocks(

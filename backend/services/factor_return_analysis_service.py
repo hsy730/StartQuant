@@ -631,8 +631,15 @@ class FactorReturnAnalysisService:
         """计算夏普比率（年化，扣除无风险利率），委托empyrical"""
         if len(returns) < 2:
             return 0.0
+        # 标准差为零时直接返回0，避免empyrical产生极大值
+        if returns.std() == 0:
+            return 0.0
         try:
-            return float(empyrical.sharpe_ratio(returns, risk_free=risk_free_rate, period='daily', annualization=252))
+            result = float(empyrical.sharpe_ratio(returns, risk_free=risk_free_rate / 252, period='daily', annualization=252))
+            # empyrical在某些边界条件下可能返回极大值，截断到合理范围
+            if not np.isfinite(result):
+                return 0.0
+            return result
         except Exception:
             return 0.0
 

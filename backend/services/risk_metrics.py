@@ -32,7 +32,11 @@ def calculate_risk_metrics(
 
     returns_arr = returns_clean.values
 
-    return {
+    # 标准差为零时直接返回空指标，避免 empyrical 产生极大值
+    if np.std(returns_arr) == 0:
+        return _empty_metrics()
+
+    result = {
         "total_return": float(empyrical.cum_returns_final(returns_arr)),
         "annual_return": float(empyrical.annual_return(
             returns_arr, period='daily', annualization=annual_trading_days
@@ -41,11 +45,11 @@ def calculate_risk_metrics(
             returns_arr, period='daily', annualization=annual_trading_days
         )),
         "sharpe_ratio": float(empyrical.sharpe_ratio(
-            returns_arr, risk_free=risk_free_rate,
+            returns_arr, risk_free=risk_free_rate / annual_trading_days,
             period='daily', annualization=annual_trading_days
         )),
         "sortino_ratio": float(empyrical.sortino_ratio(
-            returns_arr, required_return=risk_free_rate,
+            returns_arr, required_return=risk_free_rate / annual_trading_days,
             period='daily', annualization=annual_trading_days
         )),
         "max_drawdown": float(empyrical.max_drawdown(returns_arr)),
@@ -56,6 +60,13 @@ def calculate_risk_metrics(
         "var_95": float(empyrical.value_at_risk(returns_arr, cutoff=0.05)),
         "cvar_95": float(empyrical.conditional_value_at_risk(returns_arr, cutoff=0.05)),
     }
+
+    # empyrical 在某些边界条件下可能返回非有限值，截断为 0
+    for key in ["sharpe_ratio", "sortino_ratio", "calmar_ratio"]:
+        if not np.isfinite(result[key]):
+            result[key] = 0.0
+
+    return result
 
 
 def _empty_metrics() -> Dict[str, float]:

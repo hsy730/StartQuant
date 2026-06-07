@@ -543,8 +543,8 @@ class VectorBTBacktestService:
             total_return = float(empyrical.cum_returns_final(returns_arr))
             annual_return = float(empyrical.annual_return(returns_arr, period='daily', annualization=fc["annual_bars"]))
             volatility = float(empyrical.annual_volatility(returns_arr, period='daily', annualization=fc["annual_bars"]))
-            sharpe_ratio = float(empyrical.sharpe_ratio(returns_arr, risk_free=risk_free_rate, period='daily', annualization=fc["annual_bars"]))
-            sortino_ratio = float(empyrical.sortino_ratio(returns_arr, required_return=risk_free_rate, period='daily', annualization=fc["annual_bars"]))
+            sharpe_ratio = float(empyrical.sharpe_ratio(returns_arr, risk_free=risk_free_rate / fc["annual_bars"], period='daily', annualization=fc["annual_bars"]))
+            sortino_ratio = float(empyrical.sortino_ratio(returns_arr, required_return=risk_free_rate / fc["annual_bars"], period='daily', annualization=fc["annual_bars"]))
             max_drawdown = float(empyrical.max_drawdown(returns_arr))
             calmar_ratio = float(empyrical.calmar_ratio(returns_arr, period='daily', annualization=fc["annual_bars"]))
         else:

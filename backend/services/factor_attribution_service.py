@@ -264,7 +264,7 @@ class FactorAttributionService:
                     "daily_mean": float(portfolio_returns.mean()),
                     "annual_return": float((1 + portfolio_returns.mean()) ** 252 - 1),
                     "volatility": float(portfolio_returns.std() * np.sqrt(252)),
-                    "sharpe": float(empyrical.sharpe_ratio(portfolio_returns, risk_free=0.03, period='daily', annualization=252))
+                    "sharpe": float(empyrical.sharpe_ratio(portfolio_returns, risk_free=0.03 / 252, period='daily', annualization=252))
                 }
             }
 
@@ -355,7 +355,7 @@ class FactorAttributionService:
                         "cumulative_return": cum_return,
                         "volatility": float(volatility * np.sqrt(252)),
                         "daily_volatility": volatility,
-                        "sharpe": float(empyrical.sharpe_ratio(returns, risk_free=0.03, period='daily', annualization=252)),
+                        "sharpe": float(empyrical.sharpe_ratio(returns, risk_free=0.03 / 252, period='daily', annualization=252)),
                         "win_rate": float((returns > 0).mean()),
                         "count": len(returns)
                     }
@@ -379,7 +379,7 @@ class FactorAttributionService:
                 "cumulative_return": overall_cum,
                 "volatility_annual": float(overall_vol * np.sqrt(252)),
                 "daily_volatility": overall_vol,
-                "sharpe_ratio": float(empyrical.sharpe_ratio(all_returns_series, risk_free=0.03, period='daily', annualization=252)),
+                "sharpe_ratio": float(empyrical.sharpe_ratio(all_returns_series, risk_free=0.03 / 252, period='daily', annualization=252)),
                 "win_rate": float((all_returns_series > 0).mean())
             },
             "return_by_stock": returns_by_stock,
