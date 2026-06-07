@@ -7,6 +7,9 @@ import pandas as pd
 from typing import Dict, List, Optional, Any
 from scipy import stats
 
+from backend.utils.safe_math import safe_divide
+from backend.utils.factor_data_utils import find_longest_stock
+
 logger = logging.getLogger(__name__)
 
 
@@ -60,14 +63,7 @@ class FactorExposureService:
             }
         """
         # 找一个数据完整且时间最长的股票作为主要分析对象
-        longest_stock = None
-        max_length = 0
-        for stock_code, df in factor_data.items():
-            if factor_name in df.columns:
-                factor_col = df[factor_name].dropna()
-                if len(factor_col) > max_length:
-                    max_length = len(factor_col)
-                    longest_stock = stock_code
+        longest_stock, longest_df = find_longest_stock(factor_data, factor_name)
 
         if not longest_stock:
             raise ValueError(f"因子 {factor_name} 没有有效数据")
@@ -112,7 +108,7 @@ class FactorExposureService:
         latest_std = rolling_std.iloc[-1]
 
         # 变异系数
-        cv = float(latest_std / latest_mean) if latest_mean != 0 else 0.0
+        cv = safe_divide(float(latest_std), float(latest_mean), default=None)
 
         # 合并所有股票的所有因子值（用于整体分布统计）
         all_factor_values = []
@@ -305,14 +301,7 @@ class FactorExposureService:
             }
         """
         # 找一个数据完整且时间最长的股票
-        longest_stock = None
-        max_length = 0
-        for stock_code, df in factor_data.items():
-            if factor_name in df.columns:
-                factor_col = df[factor_name].dropna()
-                if len(factor_col) > max_length:
-                    max_length = len(factor_col)
-                    longest_stock = stock_code
+        longest_stock, longest_df = find_longest_stock(factor_data, factor_name)
 
         if not longest_stock:
             return {"error": "没有可用的因子数据"}

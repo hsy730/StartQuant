@@ -30,6 +30,8 @@ from enum import Enum
 import logging
 from scipy import stats as scipy_stats
 
+from backend.utils.safe_math import safe_divide, safe_ir
+
 logger = logging.getLogger(__name__)
 
 
@@ -291,8 +293,8 @@ class LookaheadBiasDetector:
                 q1_ret = ret[fv.rank(pct=True) <= 0.2].mean()
                 if pd.notna(q5_ret) and pd.notna(q1_ret):
                     daily_spreads.append(q5_ret - q1_ret)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"计算分层收益差失败: {e}")
 
         ic_series = pd.Series(daily_ics) if daily_ics else pd.Series()
 
@@ -318,7 +320,7 @@ class LookaheadBiasDetector:
             # 检测 2: IR 过高
             ic_std = ic_series.std()
             if ic_std > 1e-8:
-                ir = abs(mean_ic) / ic_std
+                ir = safe_ir(float(abs(mean_ic)), float(ic_std), default=999.0)
                 ir_threshold = self.thresholds["ir_max"]
                 checks.append(BiasCheckResult(
                     check_name="cross_sectional_ir",
@@ -439,7 +441,7 @@ class LookaheadBiasDetector:
 
         ic_mean = rolling_ic.mean()
         ic_std = rolling_ic.std()
-        ir = abs(ic_mean) / ic_std if ic_std > 1e-10 else 999.0
+        ir = safe_ir(float(abs(ic_mean)), float(ic_std), default=999.0)
         ir = min(ir, 99.0)  # cap
         threshold = self.thresholds["ir_max"]
 
@@ -659,7 +661,7 @@ class LookaheadBiasDetector:
         is_too_stable = (
             std_factor > 1e-10
             and avg_change > 0
-            and day_over_day_change.std() / (avg_change + 1e-10) < 0.01
+            and safe_divide(float(day_over_day_change.std()), float(avg_change), default=0.0) < 0.01
         )
 
         is_abnormal = is_constant or is_too_stable
@@ -813,9 +815,12 @@ class LookaheadBiasDetector:
             return self._skip_result("temporal_consistency", "IC计算无效")
 
         # 保护除零
-        abs_ic_second = abs(ic_second) + 1e-10
-        abs_ic_first = abs(ic_first) + 1e-10
-        ratio = max(abs_ic_second / abs_ic_first, abs_ic_first / abs_ic_second)
+        abs_ic_second = abs(ic_second)
+        abs_ic_first = abs(ic_first)
+        ratio = max(
+            safe_divide(float(abs_ic_second), float(abs_ic_first), default=1.0),
+            safe_divide(float(abs_ic_first), float(abs_ic_second), default=1.0),
+        )
         threshold = self.thresholds["ic_split_ratio_max"]
 
         return BiasCheckResult(

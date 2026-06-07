@@ -40,6 +40,7 @@ except ImportError:
     logger.warning("PyTorch库未安装，GFlowNet因子挖掘功能将不可用。请运行: pip install torch")
 
 from backend.services.base_mining_service import BaseMiningService
+from backend.utils.safe_math import safe_divide
 from backend.services.factor_generator_service import factor_generator_service
 from backend.services.factor_validation_service import factor_validation_service
 from backend.services.alphalens_analysis_service import alphalens_analysis_service
@@ -629,7 +630,8 @@ if GFLOWNET_AVAILABLE:
                 fv = self._compute_factor_from_string(expr_str)
                 if fv is None:
                     return 0.0
-            except Exception:
+            except Exception as e:
+                logger.debug(f"因子计算失败: {e}")
                 return 0.0
 
             # 根据是否有股票池选择评估方式
@@ -694,13 +696,14 @@ if GFLOWNET_AVAILABLE:
                     return None
 
                 return result
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"表达式求值失败(talib): {e}")
 
             # 方法2: 直接用Python eval（安全受限，仅用于简单表达式）
             try:
                 return self._eval_expression_direct(expr_str)
-            except Exception:
+            except Exception as e:
+                logger.debug(f"表达式求值失败: {e}")
                 return None
 
         def _eval_expression_direct(self, expr_str: str) -> Optional[pd.Series]:
@@ -771,7 +774,8 @@ if GFLOWNET_AVAILABLE:
                     stock_fv = self._eval_expression_on_stock(expr_str, base_factors)
                     if stock_fv is not None and len(stock_fv.dropna()) >= 10:
                         factor_values_dict[code] = stock_fv.dropna()
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"表达式求值失败: {e}")
                     continue
 
             if len(factor_values_dict) < 2:
@@ -842,7 +846,8 @@ if GFLOWNET_AVAILABLE:
 
                 result = result.replace([np.inf, -np.inf], np.nan)
                 return result
-            except Exception:
+            except Exception as e:
+                logger.debug(f"表达式求值失败: {e}")
                 return None
 
         def _evaluate_single_stock_ic_from_values(self, fv: pd.Series) -> float:
@@ -859,7 +864,7 @@ if GFLOWNET_AVAILABLE:
                 fitness = validation["score"] / 100.0
             else:
                 # 无收益率数据时，使用变异系数(CV)作为代理适应度
-                cv_value = fv.std() / (fv.mean() + 1e-8)
+                cv_value = safe_divide(float(fv.std()), float(fv.mean()), default=0.0)
                 if np.isfinite(cv_value) and abs(fv.mean()) > 1e-8:
                     fitness = cv_value
                 else:
@@ -1019,6 +1024,7 @@ if GFLOWNET_AVAILABLE:
                     fitness = self._evaluate_expression(expr_state)
 
                     # 奖励 = 缩放后的适应度
+                    # NOTE: +1e-10 is a small additive term for numerical stability in log(reward), not a division hack
                     reward = fitness * self.reward_scale + 1e-10
 
                     trajectory_data.append({
@@ -1108,8 +1114,8 @@ if GFLOWNET_AVAILABLE:
                             return_values=self.return_values,
                         )
                         factor_info["validation"] = validation
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"因子验证失败: {e}")
 
                 best_factors.append(factor_info)
 

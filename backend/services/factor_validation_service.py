@@ -5,7 +5,6 @@ from typing import Dict, Optional, List
 import pandas as pd
 import numpy as np
 from scipy import stats
-from scipy import stats as scipy_stats
 from sklearn.metrics import pairwise_distances
 from backend.services.alphalens_analysis_service import alphalens_analysis_service
 from backend.services.lookahead_bias_detector import (
@@ -13,6 +12,7 @@ from backend.services.lookahead_bias_detector import (
     lookahead_bias_detector,
     BiasRiskLevel,
 )
+from backend.utils.safe_math import safe_ir
 
 
 class FactorValidationService:
@@ -147,7 +147,7 @@ class FactorValidationService:
             p_value = 0.0
         else:
             t_stat = ic * np.sqrt(n - 2) / np.sqrt(1 - ic ** 2)
-            p_value = 2 * (1 - scipy_stats.t.cdf(abs(t_stat), df=n - 2))
+            p_value = 2 * (1 - stats.t.cdf(abs(t_stat), df=n - 2))
 
         is_significant = p_value < 0.05
 
@@ -188,7 +188,7 @@ class FactorValidationService:
             p_value = 0.0
         else:
             t_stat = rank_ic * np.sqrt(n - 2) / np.sqrt(1 - rank_ic ** 2)
-            p_value = 2 * (1 - scipy_stats.t.cdf(abs(t_stat), df=n - 2))
+            p_value = 2 * (1 - stats.t.cdf(abs(t_stat), df=n - 2))
 
         is_significant = p_value < 0.05
 
@@ -248,7 +248,7 @@ class FactorValidationService:
         ic_std = rolling_ic.std()
 
         if ic_std > 0:
-            ir = ic_mean / ic_std
+            ir = safe_ir(float(ic_mean), float(ic_std), default=0.0)
             ir = min(ir, 5.0)
         else:
             ir = 0.0

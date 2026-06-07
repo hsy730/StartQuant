@@ -4,6 +4,7 @@
 import os
 import pickle
 import hashlib
+import logging
 from pathlib import Path
 from datetime import datetime
 from typing import Optional, Any, Dict
@@ -13,6 +14,8 @@ from sqlalchemy.orm import Session
 from backend.core.settings import settings
 from backend.core.database import get_db_session
 from backend.repositories.cache_repository import CacheRepository
+
+logger = logging.getLogger(__name__)
 
 
 class CacheService:
@@ -100,7 +103,8 @@ class CacheService:
                     data = pickle.load(f)
                 self._hits += 1
                 return data
-            except Exception:
+            except Exception as e:
+                logger.debug(f"缓存文件损坏: {e}")
                 # 缓存文件损坏，删除
                 self._misses += 1
                 if cache_path.exists():
@@ -166,7 +170,7 @@ class CacheService:
                 db.close()
 
         except Exception as e:
-            print(f"Error saving cache: {e}")
+            logger.warning(f"保存缓存失败: {e}")
             return False
 
     def delete(self, cache_key: str) -> bool:
@@ -185,8 +189,8 @@ class CacheService:
         if cache_path.exists():
             try:
                 os.remove(cache_path)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"删除缓存文件失败: {e}")
 
         # 删除元数据
         db = self._get_db()
@@ -215,8 +219,8 @@ class CacheService:
                 if file_path.exists():
                     try:
                         os.remove(file_path)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug(f"删除过期缓存文件失败: {e}")
 
                 # 删除元数据
                 repo.delete(metadata)
@@ -272,8 +276,8 @@ class CacheService:
                 if file_path.exists():
                     try:
                         os.remove(file_path)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug(f"清理缓存文件失败: {e}")
 
             # 清空元数据表
             return repo.clear_all()

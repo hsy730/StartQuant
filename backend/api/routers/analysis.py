@@ -274,10 +274,10 @@ async def stability_test(request: StabilityRequest):
             end_date=request.end_date
         )
 
-        return {
+        return sanitize_dict({
             "success": True,
             "data": result
-        }
+        })
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -413,10 +413,10 @@ async def exposure_analysis(request: CalculateRequest):
             window=20
         )
 
-        return {
+        return sanitize_dict({
             "success": True,
             "data": result
-        }
+        })
     except HTTPException:
         raise
     except Exception as e:
@@ -463,10 +463,10 @@ async def effectiveness_analysis(request: ICAnalysisRequest):
             future_periods=[1, 5, 10, 20]
         )
 
-        return {
+        return sanitize_dict({
             "success": True,
             "data": result
-        }
+        })
     except HTTPException:
         raise
     except Exception as e:
@@ -513,10 +513,10 @@ async def attribution_analysis(request: ICAnalysisRequest):
             benchmark_data=None
         )
 
-        return {
+        return sanitize_dict({
             "success": True,
             "data": result
-        }
+        })
     except HTTPException:
         raise
     except Exception as e:
@@ -562,10 +562,10 @@ async def monitoring_analysis(request: ICAnalysisRequest):
             factor_name=request.factor_name
         )
 
-        return {
+        return sanitize_dict({
             "success": True,
             "data": result
-        }
+        })
     except HTTPException:
         raise
     except Exception as e:
@@ -681,7 +681,7 @@ async def enhanced_correlation_analysis(request: CorrelationAnalysisRequest):
         
         logger.info(f"增强版相关性分析完成，生成{len(result.get('warnings', []))}个警告")
         
-        return {
+        return sanitize_dict({
             "success": True,
             "data": result,
             "metadata": {
@@ -692,7 +692,7 @@ async def enhanced_correlation_analysis(request: CorrelationAnalysisRequest):
                 "warnings_count": len(result.get('warnings', [])),
                 "recommendations_count": len(result.get('recommendations', []))
             }
-        }
+        })
         
     except HTTPException:
         raise
@@ -867,7 +867,7 @@ async def quantile_returns_analysis(request: QuantileReturnsRequest):
         
         logger.info(f"因子分组收益分析完成")
         
-        return {
+        return sanitize_dict({
             "success": True,
             "data": result,
             "metadata": {
@@ -876,7 +876,7 @@ async def quantile_returns_analysis(request: QuantileReturnsRequest):
                 "time_range": f"{request.start_date} ~ {request.end_date}",
                 "implementation": "FactorHub原生实现（对标JoinQuant/BigQuant）",
             }
-        }
+        })
         
     except HTTPException:
         raise
@@ -941,7 +941,7 @@ async def cumulative_returns_analysis(request: QuantileReturnsRequest):
         
         logger.info("累计收益曲线分析完成")
         
-        return {
+        return sanitize_dict({
             "success": True,
             "data": result,
             "metadata": {
@@ -949,7 +949,7 @@ async def cumulative_returns_analysis(request: QuantileReturnsRequest):
                 "time_range": f"{request.start_date} ~ {request.end_date}",
                 "implementation": "FactorHub原生实现",
             }
-        }
+        })
         
     except HTTPException:
         raise
@@ -1014,7 +1014,7 @@ async def turnover_analysis(request: ICAnalysisRequest):
         
         logger.info("换手率分析完成")
         
-        return {
+        return sanitize_dict({
             "success": True,
             "data": result,
             "metadata": {
@@ -1022,7 +1022,7 @@ async def turnover_analysis(request: ICAnalysisRequest):
                 "n_stocks": len(request.stock_codes),
                 "implementation": "FactorHub增强版（含自相关+稳定性评分）",
             }
-        }
+        })
         
     except HTTPException:
         raise
@@ -1094,7 +1094,7 @@ async def full_tear_sheet(request: QuantileReturnsRequest):
             f"✅ Tear Sheet生成完成: 得分={score:.1f}, 等级={grade}"
         )
         
-        return {
+        return sanitize_dict({
             "success": True,
             "data": tear_sheet,
             "metadata": {
@@ -1106,7 +1106,7 @@ async def full_tear_sheet(request: QuantileReturnsRequest):
                 "grade": grade,
                 "implementation": "FactorHub原生Tear Sheet（对标Alphalens create_full_tear_sheet）",
             }
-        }
+        })
         
     except HTTPException:
         raise
@@ -1185,7 +1185,7 @@ async def weighted_ic_analysis(request: WeightedICRequest):
         
         logger.info("加权IC分析完成")
         
-        return {
+        return sanitize_dict({
             "success": True,
             "data": result,
             "metadata": {
@@ -1193,7 +1193,7 @@ async def weighted_ic_analysis(request: WeightedICRequest):
                 "weighting_method": request.weighting_method,
                 "implementation": "FactorHub原生实现（对标Barra/Bloomberg多因子模型）",
             }
-        }
+        })
         
     except HTTPException:
         raise
@@ -1304,7 +1304,7 @@ async def factor_importance_analysis(request: WeightedICRequest):
         
         top_factor = result.get("ranking", [{}])[0].get("factor_name", "N/A") if result.get("ranking") else "N/A"
         
-        return {
+        return sanitize_dict({
             "success": True,
             "data": result,
             "metadata": {
@@ -1312,7 +1312,7 @@ async def factor_importance_analysis(request: WeightedICRequest):
                 "top_factor": top_factor,
                 "implementation": "FactorHub原生实现（5维综合评分）",
             }
-        }
+        })
         
     except HTTPException:
         raise
@@ -1473,7 +1473,7 @@ async def detect_lookahead_bias(request: LookaheadBiasRequest):
             f"综合风险={overall_risk}, 高风险={n_high_risk}"
         )
 
-        return {
+        return sanitize_dict({
             "success": True,
             "data": {
                 "per_factor": per_factor_results,
@@ -1489,7 +1489,7 @@ async def detect_lookahead_bias(request: LookaheadBiasRequest):
                 "detector_version": "1.0.0",
                 "implementation": "FactorHub原生实现（多维度统计检测）",
             },
-        }
+        })
 
     except HTTPException:
         raise

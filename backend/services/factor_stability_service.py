@@ -9,11 +9,14 @@ from scipy import stats
 from statsmodels.tsa.stattools import adfuller
 
 from backend.utils.returns import calculate_future_returns
+from backend.utils.safe_math import safe_divide, safe_ir
 from backend.services.analysis_service import AnalysisService
 from backend.services.data_service import data_service
 from backend.services.factor_service import factor_service
 from backend.repositories.factor_repository import FactorRepository
 from backend.core.database import get_db_session
+
+logger = logging.getLogger(__name__)
 
 
 class FactorStabilityService:
@@ -54,6 +57,9 @@ class FactorStabilityService:
             end_idx = start_idx + window
             segments.append(factor_series.iloc[start_idx:end_idx].dropna())
 
+        # 过滤掉数据量不足的段（至少需要3个数据点才能进行统计检验）
+        segments = [s for s in segments if len(s) >= 3]
+
         # 两两比较
         comparisons = []
         for i in range(len(segments) - 1):
@@ -61,25 +67,39 @@ class FactorStabilityService:
                 segment1 = segments[i]
                 segment2 = segments[j]
 
-                if method == "ks":
-                    # Kolmogorov-Smirnov检验
-                    statistic, p_value = stats.ks_2samp(segment1, segment2)
-                elif method == "ttest":
-                    # t检验
-                    statistic, p_value = stats.ttest_ind(segment1, segment2)
-                else:
-                    raise ValueError(f"不支持的检验方法: {method}")
+                try:
+                    if method == "ks":
+                        # Kolmogorov-Smirnov检验
+                        statistic, p_value = stats.ks_2samp(segment1, segment2)
+                    elif method == "ttest":
+                        # t检验
+                        statistic, p_value = stats.ttest_ind(segment1, segment2)
+                    else:
+                        raise ValueError(f"不支持的检验方法: {method}")
 
-                comparisons.append({
-                    "segment1": i,
-                    "segment2": j,
-                    "statistic": float(statistic),
-                    "p_value": float(p_value),
-                })
-                p_values.append(p_value)
-                test_statistics.append(statistic)
+                    comparisons.append({
+                        "segment1": i,
+                        "segment2": j,
+                        "statistic": float(statistic),
+                        "p_value": float(p_value),
+                    })
+                    p_values.append(p_value)
+                    test_statistics.append(statistic)
+                except Exception as e:
+                    logger.debug(f"统计检验失败: {e}")
+                    continue
 
         # 汇总统计
+        if len(p_values) == 0:
+            return {
+                "method": method,
+                "window": window,
+                "n_comparisons": 0,
+                "avg_p_value": None,
+                "stable_ratio": None,
+                "stability_score": 0.0,
+                "comparisons": [],
+            }
         avg_p_value = np.mean(p_values)
         stable_ratio = sum(1 for p in p_values if p > 0.05) / len(p_values)
 
@@ -173,7 +193,7 @@ class FactorStabilityService:
         mean = ic_clean.mean()
         std = ic_clean.std()
 
-        cv = std / mean if mean != 0 else np.nan
+        cv = safe_divide(float(std), float(mean), default=None)
 
         return {
             "mean": float(mean),
@@ -346,6 +366,11 @@ class FactorStabilityService:
             - recommendation: 推荐建议
         """
         logger = logging.getLogger(__name__)
+
+        # 规则5：禁止就地修改传入的数据，必须先copy
+        all_factor_data = [
+            {**item, 'data': item['data'].copy()} for item in all_factor_data
+        ]
 
         try:
             logger.info(
@@ -537,7 +562,7 @@ class FactorStabilityService:
                 # 使用横截面均值的时序数据进行滚动分析
                 rolling_data = pd.DataFrame({
                     'factor': cs_mean,
-                    'future_return': all_factor_data[0]['data']['future_return'].reindex(cs_mean.index)
+                    'future_return': pd.DataFrame({item['stock_code']: item['data']['future_return'] for item in all_factor_data}).mean(axis=1).reindex(cs_mean.index)
                     if len(all_factor_data) > 0 else pd.Series(dtype=float)
                 }).dropna()
                 rolling_result = self.calculate_rolling_stability(
@@ -575,9 +600,9 @@ class FactorStabilityService:
                 # 使用横截面均值构建市场环境分析数据
                 market_data = pd.DataFrame({
                     'factor': cs_mean,
-                    'future_return': all_factor_data[0]['data']['future_return'].reindex(cs_mean.index)
+                    'future_return': pd.DataFrame({item['stock_code']: item['data']['future_return'] for item in all_factor_data}).mean(axis=1).reindex(cs_mean.index)
                     if len(all_factor_data) > 0 else pd.Series(dtype=float),
-                    'close': all_factor_data[0]['data']['close'].reindex(cs_mean.index)
+                    'close': pd.DataFrame({item['stock_code']: item['data']['close'] for item in all_factor_data}).mean(axis=1).reindex(cs_mean.index)
                     if len(all_factor_data) > 0 else pd.Series(dtype=float)
                 }).dropna()
                 regime_result = self.calculate_market_regime_performance(

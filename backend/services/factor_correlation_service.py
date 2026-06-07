@@ -16,6 +16,8 @@ import pandas as pd
 from typing import Dict, List, Optional, Tuple, Any
 from scipy import stats as scipy_stats
 
+from backend.utils.safe_math import safe_divide, safe_ir
+
 logger = logging.getLogger(__name__)
 
 import alphalens
@@ -58,6 +60,9 @@ class FactorCorrelationService:
         Returns:
             完整的分析结果字典
         """
+        # 规则5：禁止就地修改传入的DataFrame，必须先copy
+        factor_panel = factor_panel.copy()
+
         config = config or self._default_config()
         
         result = {
@@ -166,10 +171,16 @@ class FactorCorrelationService:
                 # 效果验证（关键！）
                 validation = {}
                 for col in fill_cols:
-                    mean_chg = abs((new_stats.loc['mean', col] - orig_stats.loc['mean', col]) / 
-                                   (orig_stats.loc['std', col] + 1e-10) * 100)
-                    std_chg = abs((new_stats.loc['std', col] - orig_stats.loc['std', col]) / 
-                                  (orig_stats.loc['std', col] + 1e-10) * 100)
+                    mean_chg = abs(safe_divide(
+                        new_stats.loc['mean', col] - orig_stats.loc['mean', col],
+                        orig_stats.loc['std', col],
+                        default=0.0
+                    ) * 100)
+                    std_chg = abs(safe_divide(
+                        new_stats.loc['std', col] - orig_stats.loc['std', col],
+                        orig_stats.loc['std', col],
+                        default=0.0
+                    ) * 100)
                     validation[col] = {
                         'mean_change_pct': round(mean_chg, 2),
                         'std_change_pct': round(std_chg, 2),
@@ -337,7 +348,7 @@ class FactorCorrelationService:
             return {'error': '数据不足'}
         
         rdf = pd.DataFrame(results)
-        stability = 1 - (rdf['mean_abs_corr'].std() / (rdf['mean_abs_corr'].mean() + 1e-10))
+        stability = 1.0 - safe_divide(float(rdf['mean_abs_corr'].std()), float(rdf['mean_abs_corr'].mean()), default=0.0)
         
         return {
             'stability_score': round(float(stability), 4),

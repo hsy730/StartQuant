@@ -1,11 +1,14 @@
 """
 应用配置模块
 """
+import logging
 import shutil
 from pathlib import Path
 from typing import Optional
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+logger = logging.getLogger(__name__)
 
 
 class Settings(BaseSettings):
@@ -64,7 +67,7 @@ class Settings(BaseSettings):
         db_file = self.DB_DIR / "factorflow.db"
         sample_db_file = self.DB_DIR / "factorflow.sample.db"
         if not db_file.exists() and sample_db_file.exists():
-            print(f"Copying sample database file: factorflow.sample.db -> {db_file}")
+            logger.info(f"Copying sample database file: factorflow.sample.db -> {db_file}")
             shutil.copy2(sample_db_file, db_file)
 
 

@@ -30,6 +30,8 @@ from datetime import datetime
 import pandas as pd
 import numpy as np
 
+from backend.utils.safe_math import safe_divide
+
 logger = logging.getLogger(__name__)
 
 try:
@@ -260,8 +262,8 @@ class StockRankerService:
                         bias_warnings.append(
                             f"特征 [{feat}] 存在未来函数风险({check.risk_level.value})，建议移除"
                         )
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"未来函数检测失败: {e}")
 
         # ---- 构造 DMatrix ----
         # 对于排序任务，需要按 group_col 分组
@@ -454,7 +456,7 @@ class StockRankerService:
             "bottom_score": float(np.min(scores)),
             "score_range": float(np.max(scores) - np.min(scores)),
             "n_predicted": len(features),
-            "score_cv": float(np.std(scores, ddof=1) / (np.abs(np.mean(scores)) + 1e-10)),  # 变异系数，衡量分数区分度
+            "score_cv": safe_divide(float(np.std(scores, ddof=1)), float(np.abs(np.mean(scores))), default=0.0),  # 变异系数，衡量分数区分度
         }
 
         return RankPredictionResult(
@@ -526,8 +528,8 @@ class StockRankerService:
                             f"({overlap_pct:.1f}%)，存在 in-sample bias 风险！"
                             f"训练期={train_period}"
                         )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"训练期重叠校验失败: {e}")
 
         # 按日期滚动预测（使用 groupby 预分组，避免重复扫描）
         portfolio_weights_list = []

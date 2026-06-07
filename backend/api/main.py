@@ -8,10 +8,13 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.encoders import jsonable_encoder
 from contextlib import asynccontextmanager
 import sys
+import logging
 from pathlib import Path
 import numpy as np
 import json
 import os
+
+logger = logging.getLogger(__name__)
 
 # 添加项目根目录到Python路径
 PROJECT_ROOT = Path(__file__).parent.parent.parent
@@ -39,16 +42,16 @@ from .routers import (
 async def lifespan(app: FastAPI):
     """应用生命周期管理"""
     # 启动时初始化
-    print("启动FastAPI服务...")
+    logger.info("启动FastAPI服务...")
     init_db()
     factor_service.load_preset_factors()
     app.json_encoder = NumpyJSONEncoder
-    print("数据库和预置因子加载完成")
+    logger.info("数据库和预置因子加载完成")
 
     yield
 
     # 关闭时清理
-    print("关闭FastAPI服务...")
+    logger.info("关闭FastAPI服务...")
 
 
 # 自定义JSON编码器来处理numpy浮点数值
@@ -109,7 +112,7 @@ app.add_middleware(
 FRONTEND_DIST = PROJECT_ROOT / "frontend" / "react-antd" / "dist"
 
 if FRONTEND_DIST.exists():
-    print(f"Serving static files from: {FRONTEND_DIST}")
+    logger.info(f"Serving static files from: {FRONTEND_DIST}")
     # Mount static assets directory (js, css, images, etc.)
     app.mount("/assets", StaticFiles(directory=FRONTEND_DIST / "assets"), name="assets")
 
@@ -160,7 +163,7 @@ async def health_check():
 @app.exception_handler(Exception)
 async def global_exception_handler(request, exc):
     """全局异常处理"""
-    print(f"[ERROR] 请求错误: {exc}")
+    logger.error(f"请求错误: {exc}")
     return JSONResponse(
         status_code=500,
         content={

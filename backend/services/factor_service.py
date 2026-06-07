@@ -1,6 +1,7 @@
 """
 因子服务模块 - 因子计算与管理
 """
+import ast
 import numpy as np
 import pandas as pd
 import talib
@@ -22,6 +23,81 @@ logger = logging.getLogger(__name__)
 
 class FactorCalculator:
     """因子计算器 - 执行因子计算逻辑"""
+
+    # AST 节点白名单：只允许安全的操作
+    _SAFE_AST_NODES = {
+        ast.Module, ast.FunctionDef, ast.Return, ast.Assign, ast.AugAssign,
+        ast.For, ast.While, ast.If, ast.Expr, ast.Pass, ast.Break, ast.Continue,
+        ast.BoolOp, ast.BinOp, ast.UnaryOp, ast.Lambda, ast.IfExp,
+        ast.Dict, ast.List, ast.Tuple, ast.Set,
+        ast.Compare, ast.Call, ast.Constant, ast.Name, ast.Subscript,
+        ast.Attribute, ast.Index, ast.Slice, ast.ExtSlice,
+        ast.Starred, ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp,
+        ast.comprehension, ast.Num, ast.Str, ast.NameConstant, ast.FormattedValue,
+        ast.JoinedStr,
+        # 算术/逻辑/比较操作符节点（ast.walk 会遍历到这些）
+        ast.Add, ast.Sub, ast.Mult, ast.Div, ast.FloorDiv, ast.Mod, ast.Pow,
+        ast.LShift, ast.RShift, ast.BitOr, ast.BitXor, ast.BitAnd, ast.MatMult,
+        ast.And, ast.Or, ast.Not, ast.Invert,
+        ast.Eq, ast.NotEq, ast.Lt, ast.LtE, ast.Gt, ast.GtE, ast.Is, ast.IsNot, ast.In, ast.NotIn,
+        # 其他安全节点
+        ast.Store, ast.Load, ast.Del, ast.arg, ast.arguments,
+    }
+
+    # 禁止访问的属性名（防止沙箱逃逸）
+    _FORBIDDEN_ATTRS = {
+        "__builtins__", "__import__", "__class__", "__bases__", "__subclasses__",
+        "__globals__", "__code__", "__closure__", "__dict__", "__mro__",
+        "exec", "eval", "compile", "open", "input", "globals", "locals",
+        "__getattribute__", "__setattr__", "delattr",
+    }
+
+    def _validate_code_safety(self, code: str) -> None:
+        """
+        通过 AST 解析验证代码安全性，拒绝包含危险操作的代码
+
+        Args:
+            code: 待验证的 Python 代码字符串
+
+        Raises:
+            ValueError: 代码包含不安全的操作
+        """
+        try:
+            tree = ast.parse(code)
+        except SyntaxError as e:
+            raise ValueError(f"因子代码语法错误: {e}")
+
+        for node in ast.walk(tree):
+            # 检查是否包含不允许的 AST 节点类型
+            if type(node) not in self._SAFE_AST_NODES:
+                raise ValueError(
+                    f"因子代码包含不安全的操作: {type(node).__name__}，"
+                    f"仅允许数学运算和数据处理操作"
+                )
+
+            # 检查属性访问是否安全
+            if isinstance(node, ast.Attribute):
+                if node.attr in self._FORBIDDEN_ATTRS:
+                    raise ValueError(
+                        f"因子代码禁止访问属性: {node.attr}，"
+                        f"不允许使用反射和系统调用"
+                    )
+
+            # 检查变量名是否安全（如直接引用 __builtins__）
+            if isinstance(node, ast.Name):
+                if node.id in self._FORBIDDEN_ATTRS:
+                    raise ValueError(
+                        f"因子代码禁止访问: {node.id}，"
+                        f"不允许使用反射和系统调用"
+                    )
+
+            # 检查函数名是否安全
+            if isinstance(node, ast.Call):
+                if isinstance(node.func, ast.Name):
+                    if node.func.id in ("exec", "eval", "compile", "open", "__import__", "input"):
+                        raise ValueError(
+                            f"因子代码禁止调用函数: {node.func.id}"
+                        )
 
     def __init__(self):
         # TALib 函数（注意：SMA 在 mylanguage_funcs 中定义，支持命名参数）
@@ -342,6 +418,9 @@ class FactorCalculator:
 
         if is_function:
             # 函数形式：使用 exec 执行函数定义，然后调用函数
+            # 先通过 AST 检查代码安全性，拒绝危险操作
+            self._validate_code_safety(factor_code)
+
             # 提供完整的全局变量，包括 pandas, numpy 和常见函数
             global_vars = {
                 "__builtins__": {
@@ -1030,7 +1109,8 @@ class FactorService:
                 end_date="20231027",
                 adjust="qfq"
             )
-        except Exception:
+        except Exception as e:
+            logger.warning(f"akshare健康检查失败: {e}")
             akshare_healthy = False
 
         stats = {
@@ -1202,6 +1282,7 @@ class FactorService:
             "low": np.linspace(9.0, 10.0, 100),
             "close": np.linspace(10.5, 11.5, 100),
             "volume": np.linspace(1000000, 1100000, 100),
+            "amount": np.linspace(1e7, 1.2e7, 100),
         })
 
         try:

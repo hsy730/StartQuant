@@ -1,13 +1,19 @@
 """
 组合分析服务 - 分析投资组合的暴露度和风险
 """
+import logging
 from typing import Dict, List, Optional
 import pandas as pd
 import numpy as np
 
-import empyrical
 from pypfopt import EfficientFrontier, risk_models, expected_returns
 from pypfopt import HRPOpt
+
+from backend.utils.safe_math import safe_divide
+from backend.utils.weight_utils import normalize_weights
+from backend.services.risk_metrics import calculate_relative_metrics
+
+logger = logging.getLogger(__name__)
 
 
 class PortfolioAnalysisService:
@@ -45,7 +51,7 @@ class PortfolioAnalysisService:
         # 归一化
         total_weight = industry_weights.sum()
         if total_weight > 0:
-            industry_exposure = industry_weights / total_weight
+            industry_exposure = safe_divide(industry_weights, total_weight, default=0.0)
         else:
             industry_exposure = industry_weights
 
@@ -95,9 +101,12 @@ class PortfolioAnalysisService:
                     aligned_factors = factor_values.reindex(stock_weights.index)
                     valid_mask = aligned_factors.notna() & stock_weights.notna()
                     if valid_mask.sum() > 0:
-                        weighted_factor = (
-                            stock_weights[valid_mask] * aligned_factors[valid_mask]
-                        ).sum() / stock_weights[valid_mask].sum()
+                        weight_sum = stock_weights[valid_mask].sum()
+                        weighted_factor = safe_divide(
+                            (stock_weights[valid_mask] * aligned_factors[valid_mask]).sum(),
+                            weight_sum,
+                            default=0.0,
+                        )
                     else:
                         weighted_factor = 0.0
                 else:
@@ -144,10 +153,14 @@ class PortfolioAnalysisService:
 
         # 1. 前十大持仓占比
         weights_sorted = weights.sort_values(ascending=False)
-        top10_concentration = weights_sorted.head(10).sum() / weights.sum()
+        top10_concentration = safe_divide(
+            weights_sorted.head(10).sum(),
+            weights.sum(),
+            default=0.0,
+        )
 
         # 2. Herfindahl指数（权重平方和）
-        normalized_weights = weights / weights.sum()
+        normalized_weights = normalize_weights(weights, default_equal=False)
         herfindahl_index = (normalized_weights ** 2).sum()
 
         # 3. 基尼系数
@@ -192,26 +205,14 @@ class PortfolioAnalysisService:
 
         result = calc_risk(returns_clean, risk_free_rate, annual_trading_days)
 
-        # 如果有基准，计算相对风险指标
+        # 如果有基准，计算相对风险指标（委托risk_metrics统一入口，符合规则2）
         if benchmark_returns is not None:
-            aligned_data = pd.DataFrame({
-                "portfolio": returns_clean,
-                "benchmark": benchmark_returns
-            }).dropna()
-
-            if len(aligned_data) > 0:
-                excess_returns = aligned_data["portfolio"] - aligned_data["benchmark"]
-                tracking_error = excess_returns.std() * np.sqrt(annual_trading_days)
-                try:
-                    alpha, beta = empyrical.alpha_beta_aligned(
-                        aligned_data["portfolio"], aligned_data["benchmark"],
-                        risk_free=risk_free_rate / annual_trading_days, period='daily', annualization=annual_trading_days
-                    )
-                except Exception:
-                    beta = np.nan
-
-                result["tracking_error"] = float(tracking_error)
-                result["beta"] = float(beta)
+            relative = calculate_relative_metrics(
+                returns_clean, benchmark_returns,
+                risk_free_rate=risk_free_rate, annual_trading_days=annual_trading_days
+            )
+            result["tracking_error"] = relative.get("tracking_error")
+            result["beta"] = relative.get("beta")
 
         return result
 
@@ -321,7 +322,7 @@ class PortfolioAnalysisService:
                 if len(returns) > 0:
                     mean_return = returns.mean()
                     std_return = returns.std()
-                    ir = mean_return / std_return if std_return > 0 else 0
+                    ir = safe_ir(float(mean_return), float(std_return), default=0.0)
 
                     factor_stats[factor] = {
                         "mean": mean_return,
@@ -401,8 +402,10 @@ class PortfolioAnalysisService:
 
         # 确保权重归一化（和为1），避免收益被错误缩放
         weight_sum = weights.sum()
-        if abs(weight_sum - 1.0) > 1e-6 and weight_sum != 0:
-            weights = weights / weight_sum
+        if weight_sum == 0:
+            return {"weights": {}, "method": method, "error": "权重总和为0，无法计算组合指标"}
+        if abs(weight_sum - 1.0) > 1e-6:
+            weights = normalize_weights(weights)
 
         # 计算加权期望收益（年化）
         mean_returns = factor_returns.mean()  # 每个因子的平均收益
@@ -467,7 +470,7 @@ class PortfolioAnalysisService:
                 mean = aligned_factor.mean()
                 std = aligned_factor.std()
                 if std > 0:
-                    normalized_factors[factor_name] = (aligned_factor - mean) / std
+                    normalized_factors[factor_name] = safe_divide(aligned_factor - mean, std, default=0.0)
                 else:
                     normalized_factors[factor_name] = aligned_factor - mean
         else:

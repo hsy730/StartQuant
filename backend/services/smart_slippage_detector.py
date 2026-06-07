@@ -13,10 +13,13 @@ import numpy as np
 import pandas as pd
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
+
+from backend.services.risk_metrics import calculate_volatility
 from enum import Enum
 import logging
 
 from backend.core.market_board import MarketBoard, detect_market_board, get_board_slippage_multiplier
+from backend.utils.safe_math import safe_divide
 
 logger = logging.getLogger(__name__)
 
@@ -184,7 +187,7 @@ class SmartSlippageDetector:
             if len(valid_mc) > 0:
                 avg_mc = valid_mc.mean()
                 median_mc = valid_mc.median()
-                mc_cv = valid_mc.std() / (avg_mc + 1e-10)
+                mc_cv = safe_divide(float(valid_mc.std()), float(avg_mc), default=0.0)
             
             if "volume" in market_data.columns:
                 avg_volume = market_data["volume"].dropna().mean()
@@ -208,7 +211,7 @@ class SmartSlippageDetector:
             
             if all_returns:
                 returns_series = pd.Series(all_returns)
-                price_vol = returns_series.std() * np.sqrt(252)  # 年化波动率
+                price_vol = calculate_volatility(returns_series) or 0.0
                 
                 # 估算买卖价差（基于波动率的简化模型）
                 # 价差 ≈ 波动率 * sqrt(1/250) * 2 （粗略估计）
@@ -368,7 +371,7 @@ class SmartSlippageDetector:
             turnover_penalty = np.log1p(turnover / 12) * base_slippage * 0.5
             
             if turnover > 30:
-                warnings.append("⚠️ 超高换手率策略(>{turnover:.0f}倍/年)，滑点影响将被显著放大")
+                warnings.append(f"⚠️ 超高换手率策略(>{turnover:.0f}倍/年)，滑点影响将被显著放大")
                 tips.append("💡 考虑降低换手率或使用算法交易")
             elif turnover > 12:
                 tips.append("💡 中高频策略，建议关注交易执行质量")

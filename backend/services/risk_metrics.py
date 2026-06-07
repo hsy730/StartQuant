@@ -3,6 +3,7 @@
 
 底层委托 empyrical 计算，所有需要计算 Sharpe/Sortino/MaxDD/Calmar/VaR/CVaR 的地方应使用此模块。
 """
+import logging
 import numpy as np
 import pandas as pd
 from typing import Dict, Optional
@@ -70,16 +71,148 @@ def calculate_risk_metrics(
 
 
 def _empty_metrics() -> Dict[str, Optional[float]]:
-    """返回空的风险指标"""
+    """返回空的风险指标（不可计算的指标返回None，符合规则6）"""
     return {
-        "total_return": 0.0,
-        "annual_return": 0.0,
-        "volatility": 0.0,
+        "total_return": None,
+        "annual_return": None,
+        "volatility": None,
         "sharpe_ratio": None,
         "sortino_ratio": None,
-        "max_drawdown": 0.0,
+        "max_drawdown": None,
         "calmar_ratio": None,
-        "win_rate": 0.0,
-        "var_95": 0.0,
-        "cvar_95": 0.0,
+        "win_rate": None,
+        "var_95": None,
+        "cvar_95": None,
     }
+
+
+def calculate_relative_metrics(
+    strategy_returns: pd.Series,
+    benchmark_returns: pd.Series,
+    risk_free_rate: float = 0.03,
+    annual_trading_days: int = 252,
+) -> Dict[str, Optional[float]]:
+    """
+    计算相对风险指标（需要基准收益率）
+
+    统一入口 — 所有需要计算 alpha/beta/information_ratio/tracking_error 的地方应使用此函数。
+
+    Args:
+        strategy_returns: 策略日收益率序列
+        benchmark_returns: 基准日收益率序列
+        risk_free_rate: 年化无风险利率
+        annual_trading_days: 年化交易日数
+
+    Returns:
+        包含相对风险指标的字典
+    """
+    aligned = pd.DataFrame({"strategy": strategy_returns, "benchmark": benchmark_returns}).dropna()
+    if len(aligned) < 2:
+        return _empty_relative_metrics()
+
+    strategy_arr = aligned["strategy"].values
+    benchmark_arr = aligned["benchmark"].values
+
+    result = {}
+
+    # Tracking Error
+    excess_returns = aligned["strategy"] - aligned["benchmark"]
+    tracking_error = float(excess_returns.std() * np.sqrt(annual_trading_days))
+    result["tracking_error"] = tracking_error if np.isfinite(tracking_error) else None
+
+    # Excess Return
+    excess_return = float(excess_returns.mean() * annual_trading_days)
+    result["excess_return"] = excess_return if np.isfinite(excess_return) else None
+
+    # Information Ratio
+    try:
+        ir = float(empyrical.information_ratio(strategy_arr, benchmark_arr))
+        result["information_ratio"] = ir if np.isfinite(ir) else None
+    except Exception as e:
+        logger.debug(f"信息比率计算失败: {e}")
+        # Fallback: excess_return / tracking_error
+        if tracking_error and tracking_error > 0 and result["excess_return"] is not None:
+            result["information_ratio"] = result["excess_return"] / tracking_error
+        else:
+            result["information_ratio"] = None
+
+    # Alpha & Beta
+    try:
+        alpha, beta = empyrical.alpha_beta_aligned(
+            strategy_arr, benchmark_arr,
+            risk_free=risk_free_rate / annual_trading_days,
+            period='daily', annualization=annual_trading_days
+        )
+        result["alpha"] = float(alpha) if np.isfinite(alpha) else None
+        result["beta"] = float(beta) if np.isfinite(beta) else None
+    except Exception as e:
+        logger.debug(f"alpha/beta计算失败: {e}")
+        # Fallback: covariance / variance
+        cov = float(aligned["strategy"].cov(aligned["benchmark"]))
+        var = float(aligned["benchmark"].var())
+        result["beta"] = cov / var if var > 0 else None
+        result["alpha"] = None
+
+    # Correlation
+    correlation = float(aligned["strategy"].corr(aligned["benchmark"]))
+    result["correlation"] = correlation if np.isfinite(correlation) else None
+
+    return result
+
+
+def _empty_relative_metrics() -> Dict[str, Optional[float]]:
+    """返回空的相对风险指标"""
+    return {
+        "tracking_error": None,
+        "excess_return": None,
+        "information_ratio": None,
+        "alpha": None,
+        "beta": None,
+        "correlation": None,
+    }
+
+
+def calculate_sharpe(returns: pd.Series, risk_free_rate: float = 0.03, annual_trading_days: int = 252) -> Optional[float]:
+    """
+    单独计算Sharpe比率（轻量接口，用于只需Sharpe的场景）
+
+    Args:
+        returns: 日收益率序列
+        risk_free_rate: 年化无风险利率
+        annual_trading_days: 年化交易日数
+
+    Returns:
+        Sharpe比率，不可计算时返回None
+    """
+    returns_clean = returns.dropna()
+    if len(returns_clean) < 2:
+        return None
+    returns_arr = returns_clean.values
+    if np.std(returns_arr) == 0:
+        return None
+    result = float(empyrical.sharpe_ratio(
+        returns_arr, risk_free=risk_free_rate / annual_trading_days,
+        period='daily', annualization=annual_trading_days
+    ))
+    return result if np.isfinite(result) else None
+
+
+def calculate_volatility(returns: pd.Series, annual_trading_days: int = 252) -> Optional[float]:
+    """
+    单独计算年化波动率（轻量接口）
+
+    Args:
+        returns: 日收益率序列
+        annual_trading_days: 年化交易日数
+
+    Returns:
+        年化波动率，不可计算时返回None
+    """
+    returns_clean = returns.dropna()
+    if len(returns_clean) < 2:
+        return None
+    returns_arr = returns_clean.values
+    result = float(empyrical.annual_volatility(
+        returns_arr, period='daily', annualization=annual_trading_days
+    ))
+    return result if np.isfinite(result) else None

@@ -21,6 +21,9 @@ from enum import Enum
 import logging
 from scipy import stats as scipy_stats
 
+from backend.utils.safe_math import safe_divide, safe_ir
+from backend.utils.weight_utils import normalize_weights
+
 logger = logging.getLogger(__name__)
 
 
@@ -116,7 +119,7 @@ class WeightedICService:
                 ic_stats[name] = {
                     "mean_ic": float(valid_ic.mean()),
                     "std_ic": float(valid_ic.std()) if valid_ic.std() > 0 else 1e-6,
-                    "ir": float(valid_ic.mean() / valid_ic.std()) if valid_ic.std() > 0 else 0.0,
+                    "ir": safe_ir(float(valid_ic.mean()), float(valid_ic.std()), default=0.0),
                     "ic_positive_ratio": float((valid_ic > 0).mean()),
                     "n_observations": len(valid_ic),
                     "ic_series": valid_ic,
@@ -150,8 +153,11 @@ class WeightedICService:
                         "mean_contribution": float(ic_contribution.mean()),
                         "std_contribution": float(ic_contribution.std()),
                         "contribution_ratio": float(
-                            abs(ic_contribution.mean()) / 
-                            (abs(weighted_ic_series.mean()) if weighted_ic_series.mean() != 0 else 1.0)
+                            safe_divide(
+                                abs(ic_contribution.mean()),
+                                abs(weighted_ic_series.mean()),
+                                default=1.0,
+                            )
                         ),
                     }
             
@@ -165,9 +171,7 @@ class WeightedICService:
                 "weighted_ic": {
                     "mean": float(valid_weighted_ic.mean()) if len(valid_weighted_ic) > 0 else 0.0,
                     "std": float(valid_weighted_ic.std()) if len(valid_weighted_ic) > 1 else 0.0,
-                    "ir": float(
-                        valid_weighted_ic.mean() / valid_weighted_ic.std()
-                    ) if len(valid_weighted_ic) > 1 and valid_weighted_ic.std() > 0 else 0.0,
+                    "ir": safe_ir(float(valid_weighted_ic.mean()), float(valid_weighted_ic.std()), default=0.0) if len(valid_weighted_ic) > 1 else 0.0,
                     "positive_ratio": float((valid_weighted_ic > 0).mean()) if len(valid_weighted_ic) > 0 else 0.0,
                     "n_observations": len(valid_weighted_ic),
                     "series_dates": [str(d) for d in valid_weighted_ic.index],
@@ -224,13 +228,17 @@ class WeightedICService:
                 
                 mean_ic = abs(valid_ic.mean())
                 std_ic = valid_ic.std()
-                ir = mean_ic / std_ic if std_ic > 0 else 0
+                ir = safe_ir(mean_ic, std_ic, default=0.0)
                 positive_ratio = (valid_ic > 0).mean()
-                
+
                 recent_ic = valid_ic.tail(self.config.lookback_window // 4)
                 momentum_score = (
-                    (recent_ic.mean() - valid_ic.mean()) / std_ic 
-                    if std_ic > 0 and len(recent_ic) > 10 else 0
+                    safe_divide(
+                        recent_ic.mean() - valid_ic.mean(),
+                        std_ic,
+                        default=0.0,
+                    )
+                    if len(recent_ic) > 10 else 0
                 )
                 
                 stability_score = self._calculate_stability_score(valid_ic)
@@ -320,13 +328,8 @@ class WeightedICService:
                     stats = ic_stats[name]
                     ir = stats["ir"]
                     raw_weights[name] = max(ir, 0)
-            
-            total = sum(raw_weights.values())
-            if total > 0:
-                return {k: v / total for k, v in raw_weights.items()}
-            else:
-                n = len(raw_weights)
-                return {k: 1.0 / n for k in raw_weights}
+
+            return normalize_weights(raw_weights)
         
         elif method == WeightingMethod.ABS_IC_WEIGHT:
             raw_weights = {}
@@ -334,13 +337,8 @@ class WeightedICService:
                 if name in ic_stats:
                     stats = ic_stats[name]
                     raw_weights[name] = abs(stats["mean_ic"])
-            
-            total = sum(raw_weights.values())
-            if total > 0:
-                return {k: v / total for k, v in raw_weights.items()}
-            else:
-                n = len(raw_weights)
-                return {k: 1.0 / n for k in raw_weights}
+
+            return normalize_weights(raw_weights)
         
         elif method == WeightingMethod.DECAY_WEIGHT:
             raw_weights = {}
@@ -359,13 +357,8 @@ class WeightedICService:
                     raw_weights[name] = abs(weighted_mean)
                 elif name in ic_stats:
                     raw_weights[name] = abs(ic_stats[name]["mean_ic"])
-            
-            total = sum(raw_weights.values())
-            if total > 0:
-                return {k: v / total for k, v in raw_weights.items()}
-            else:
-                n = len(raw_weights)
-                return {k: 1.0 / n for k in raw_weights}
+
+            return normalize_weights(raw_weights)
         
         elif method == WeightingMethod.OPTIMAL_WEIGHT:
             return self._calculate_optimal_weights(ic_stats, factor_names)
@@ -424,13 +417,12 @@ class WeightedICService:
         pre_norm_total = sum(adjusted_weights.values())
         original_total = sum(weights.values())
         adjustment_info["total_reduction"] = float(
-            1.0 - pre_norm_total / original_total
-            if original_total > 0 else 0.0
+            safe_divide(1.0 - pre_norm_total, original_total, default=0.0)
         )
 
         total = sum(adjusted_weights.values())
         if total > 0:
-            adjusted_weights = {k: v / total for k, v in adjusted_weights.items()}
+            adjusted_weights = normalize_weights(adjusted_weights)
 
         adjustment_info["adjusted_weights"] = dict(adjusted_weights)
         
@@ -524,7 +516,7 @@ class WeightedICService:
         change_score = 1.0 - min(abs(second_mean - first_mean) / overall_std, 1.0)
         
         rolling_std = ic_series.rolling(window=20).std()
-        cv_of_std = rolling_std.std() / rolling_std.mean() if rolling_std.mean() != 0 else 1.0
+        cv_of_std = safe_divide(float(rolling_std.std()), float(rolling_std.mean()), default=1.0)
         consistency_score = max(0, 1.0 - cv_of_std)
         
         return change_score * 0.6 + consistency_score * 0.4

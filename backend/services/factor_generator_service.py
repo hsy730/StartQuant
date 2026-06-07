@@ -7,6 +7,8 @@ import numpy as np
 import random
 from itertools import combinations, product
 
+from backend.utils.safe_math import safe_ir
+
 
 class FactorGeneratorService:
     """因子生成器服务"""
@@ -167,6 +169,7 @@ class FactorGeneratorService:
                         expressions.append(expr)
                     elif stat_func == "zscore":
                         # zscore需要特殊处理: (x - mean) / std
+                        # NOTE: +1e-8 in eval string — safe_divide not applicable in formula templates
                         expr = f"(({factor} - {factor}.rolling(252, min_periods=1).mean()) / ({factor}.rolling(252, min_periods=1).std() + 1e-8))"
                         expressions.append(expr)
                 elif stat_func in no_window_functions:
@@ -459,7 +462,7 @@ class FactorGeneratorService:
                                         try:
                                             window = int(arg_list[1].strip())
                                         except (ValueError, TypeError):
-                                            pass
+                                            window = 252
                                     # 构建替换：先替换 df['{col}'] 整体为 data_source，再替换其余占位符
                                     # 必须先替换 df['{col}'] 再替换 {col}，避免展开后无法匹配多引用场景
                                     replacement = template.replace("df['{col}']", data_source)
@@ -493,6 +496,7 @@ class FactorGeneratorService:
         if expression.strip().startswith("zscore("):
             inner = expression.strip()[len("zscore("):-1]
             parsed_inner = parse_and_replace(inner)
+            # NOTE: +1e-8 in eval string — safe_divide not applicable in formula templates
             code = f"({parsed_inner} - ({parsed_inner}).rolling(252, min_periods=1).mean()) / (({parsed_inner}).rolling(252, min_periods=1).std() + 1e-8)"
         else:
             code = parse_and_replace(expression)
@@ -515,7 +519,8 @@ def calculate_factor(df):
         factor = {code}
         return factor
     except Exception as e:
-        print(f"计算因子时出错: {{e}}")
+        import logging
+        logging.getLogger(__name__).warning(f"计算因子时出错: {{e}}")
         return pd.Series(index=df.index, dtype=float)
 """
 
@@ -666,7 +671,7 @@ def calculate_factor(df):
                     if pd.isna(ic_std) or ic_std == 0:
                         ir = 0
                     else:
-                        ir = ic_mean / ic_std
+                        ir = safe_ir(float(ic_mean), float(ic_std), default=0.0)
                 else:
                     ir = 0
 
@@ -722,7 +727,7 @@ def calculate_factor(df):
 
         ic_mean = rolling_ic.mean()
         ic_std = rolling_ic.std()
-        ir = ic_mean / ic_std if ic_std > 0 else 0
+        ir = safe_ir(float(ic_mean), float(ic_std), default=0.0)
 
         # 计算胜率
         ic_win_rate = (rolling_ic > 0).sum() / rolling_ic.count() if rolling_ic.count() > 0 else 0

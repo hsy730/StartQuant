@@ -104,8 +104,8 @@ class DataPreprocessingService:
             df = df[~outliers].copy()
 
         elif method == "replace":
-            # 替换为均值
-            mean_value = df[column].mean()
+            # 替换为均值（排除异常值后计算均值）
+            mean_value = df.loc[~outliers, column].mean() if (~outliers).any() else df[column].mean()
             df.loc[outliers, column] = mean_value
 
         elif method == "replace_median":
@@ -137,6 +137,9 @@ class DataPreprocessingService:
         Returns:
             合并后的数据框
         """
+        existing_df = existing_df.copy()
+        new_df = new_df.copy()
+
         # 确保索引是日期类型
         if not isinstance(existing_df.index, pd.DatetimeIndex):
             if on in existing_df.columns:

@@ -234,6 +234,7 @@ async def _run_mining(task_id: str, request: GeneticMiningRequest):
         logger.info(f"Retrieved {len(data)} rows of data for primary stock")
 
         if "close" in data.columns:
+            data = data.copy()
             data["return"] = data["close"].pct_change()
 
         base_factor_codes = []
@@ -1028,11 +1029,10 @@ async def get_mining_status(task_id: str):
             if _rec and _rec.started_at:
                 started_at = _rec.started_at.isoformat()
             _db.close()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"获取任务启动时间失败: {e}")
 
         response_data = {
-            "task_id": task_id,
             "status": task["status"],
             "progress": task.get("progress", 0),
             "error": task.get("error"),
@@ -1125,8 +1125,8 @@ async def get_mining_results(task_id: str):
             if _rec and _rec.process_info:
                 result_data["process_info"] = _rec.process_info
             _db.close()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"获取任务过程信息失败: {e}")
         return {
             "success": True,
             "data": result_data

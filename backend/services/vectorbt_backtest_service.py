@@ -11,10 +11,10 @@ import traceback
 import gc
 
 import vectorbt as vbt
-import empyrical
 
-from backend.services.risk_metrics import calculate_risk_metrics, _empty_metrics
+from backend.services.risk_metrics import calculate_risk_metrics, calculate_volatility as _calc_volatility, _empty_metrics
 from backend.services.smart_slippage_detector import smart_slippage_detector, SlippageRecommendation
+from backend.utils.return_calculator import calculate_future_return
 
 logger = logging.getLogger(__name__)
 
@@ -253,7 +253,7 @@ class VectorBTBacktestService:
             tradable_mask = df["tradable_mask"]
 
         # 计算前向收益率（t→t+1），避免前视偏差
-        df["forward_return"] = df["close"].shift(-1) / df["close"] - 1
+        df["forward_return"] = calculate_future_return(df)
 
         # 因子分位数排名
         factor_raw = df[factor_name]
@@ -528,8 +528,8 @@ class VectorBTBacktestService:
                             if warmup_cutoff is not None:
                                 trades_readable = trades_readable[trades_readable["Entry Timestamp"] >= warmup_cutoff]
                         trades_dfs.append(trades_readable)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"提取分块交易记录失败: {e}")
 
         trades_df = None
         if trades_dfs:
@@ -538,30 +538,33 @@ class VectorBTBacktestService:
             if "Entry Timestamp" in trades_df.columns and "Exit Timestamp" in trades_df.columns:
                 trades_df = trades_df.drop_duplicates(subset=["Entry Timestamp", "Exit Timestamp"])
 
-        # 指标计算（委托empyrical）
+        # 指标计算（委托risk_metrics统一入口）
         n_bars = len(returns)
-        returns_arr = returns.values if isinstance(returns, pd.Series) else returns
+        returns_series = pd.Series(returns) if not isinstance(returns, pd.Series) else returns
 
         if n_bars > 0:
-            total_return = float(empyrical.cum_returns_final(returns_arr))
-            annual_return = float(empyrical.annual_return(returns_arr, period='daily', annualization=fc["annual_bars"]))
-            volatility = float(empyrical.annual_volatility(returns_arr, period='daily', annualization=fc["annual_bars"]))
-            sharpe_ratio = float(empyrical.sharpe_ratio(returns_arr, risk_free=risk_free_rate / fc["annual_bars"], period='daily', annualization=fc["annual_bars"]))
-            sortino_ratio = float(empyrical.sortino_ratio(returns_arr, required_return=risk_free_rate / fc["annual_bars"], period='daily', annualization=fc["annual_bars"]))
-            max_drawdown = float(empyrical.max_drawdown(returns_arr))
-            calmar_ratio = float(empyrical.calmar_ratio(returns_arr, period='daily', annualization=fc["annual_bars"]))
+            metrics = calculate_risk_metrics(returns_series, risk_free_rate=risk_free_rate, annual_trading_days=fc["annual_bars"])
+            total_return = metrics["total_return"]
+            annual_return = metrics["annual_return"]
+            volatility = metrics["volatility"]
+            sharpe_ratio = metrics["sharpe_ratio"]
+            sortino_ratio = metrics["sortino_ratio"]
+            max_drawdown = metrics["max_drawdown"]
+            calmar_ratio = metrics["calmar_ratio"]
+            win_rate = metrics["win_rate"]
+            var_95 = metrics["var_95"]
+            cvar_95 = metrics["cvar_95"]
         else:
-            total_return = 0.0
-            annual_return = 0.0
-            volatility = 0.0
-            sharpe_ratio = 0.0
-            sortino_ratio = 0.0
-            max_drawdown = 0.0
-            calmar_ratio = 0.0
-
-        win_rate = float((returns > 0).mean()) if n_bars > 0 else 0.0
-        var_95 = float(returns.quantile(0.05)) if n_bars > 0 else 0.0
-        cvar_95 = float(returns[returns <= var_95].mean()) if n_bars > 0 and var_95 is not None else 0.0
+            total_return = None
+            annual_return = None
+            volatility = None
+            sharpe_ratio = None
+            sortino_ratio = None
+            max_drawdown = None
+            calmar_ratio = None
+            win_rate = None
+            var_95 = None
+            cvar_95 = None
 
         trades_count = int(len(trades_df)) if trades_df is not None else 0
 
@@ -697,12 +700,12 @@ class VectorBTBacktestService:
         if annual_return == 0 or np.isnan(annual_return):
             # 手动计算年化收益率 = (1 + 总收益率)^(年化bar数/交易bar数) - 1
             n_days = len(returns_clean)
-            if n_days > 0:
+            if n_days > 0 and total_return > -1:
                 annual_return = (1 + total_return) ** (fc["annual_bars"] / n_days) - 1
             else:
-                annual_return = 0.0
+                annual_return = None
 
-        volatility = self._calculate_volatility(returns_clean, stats)
+        volatility = self._calculate_volatility(returns_clean, fc["annual_bars"])
 
         # 使用统一的calculate_metrics计算Sharpe/Sortino（扣除无风险利率3%）
         # VectorBT默认rf=0，此处统一为rf=3%以保持与分块回测一致
@@ -812,7 +815,7 @@ class VectorBTBacktestService:
         elif method == "ic_weight":
             # IC加权：使用滚动窗口历史IC，避免前视偏差
             # 对每个因子，用过去数据计算因子值与未来收益的滚动IC
-            df["forward_return"] = df["close"].pct_change().shift(-1)
+            df["forward_return"] = calculate_future_return(df)
             ic_window = min(60, max(10, len(df) // 4))
             # 使用滚动IC作为时变权重，每个时间点仅使用截至前一天的信息
             ic_weight_frames = []
@@ -820,11 +823,12 @@ class VectorBTBacktestService:
                 norm_factor = f"{factor_name}_normalized"
                 # 滚动IC：因子值（滞后1期，避免前视偏差）与未来收益的相关系数
                 # 使用历史窗口内的数据，确保t日的IC权重只用到t-1日及之前的信息
+                # forward_return 也需 shift(1)，确保 t 日窗口只用到 t-1→t 的已知收益
                 rolling_ic = (
                     df[norm_factor]
                     .shift(1)
                     .rolling(ic_window, min_periods=10)
-                    .corr(df["forward_return"])
+                    .corr(df["forward_return"].shift(1))
                 )
                 ic_abs = rolling_ic.abs()
                 ic_weight_frames.append(ic_abs)
@@ -904,6 +908,9 @@ class VectorBTBacktestService:
         Returns:
             Dict: 回测结果
         """
+        # 规则5：禁止就地修改传入的DataFrame，必须先copy
+        df = df.copy()
+
         # 获取频率配置
         fc = _get_freq_config(freq)
         logger.info(f"横截面回测频率: {fc['description']} (vbt_freq={fc['vbt_freq']}, 年化bar数={fc['annual_bars']})")
@@ -1006,12 +1013,12 @@ class VectorBTBacktestService:
         if annual_return == 0 or np.isnan(annual_return):
             # 手动计算年化收益率 = (1 + 总收益率)^(年化bar数/交易bar数) - 1
             n_days = len(returns_clean)
-            if n_days > 0:
+            if n_days > 0 and total_return > -1:
                 annual_return = (1 + total_return) ** (fc["annual_bars"] / n_days) - 1
             else:
-                annual_return = 0.0
+                annual_return = None
 
-        volatility = self._calculate_volatility(returns_clean, stats)
+        volatility = self._calculate_volatility(returns_clean, fc["annual_bars"])
 
         # 使用统一的calculate_metrics计算Sharpe/Sortino（扣除无风险利率3%）
         # VectorBT默认rf=0，此处统一为rf=3%以保持与分块回测一致
@@ -1153,17 +1160,10 @@ class VectorBTBacktestService:
 
         return calculate_risk_metrics(returns_clean, risk_free_rate, annual_trading_days)
 
-    def _calculate_volatility(self, returns_clean: pd.Series | pd.DataFrame, stats: pd.Series, annual_trading_days: int = 252) -> float:
-        """Calculate volatility from stats or compute manually"""
-        if 'Volatility (Ann.) [%]' in stats:
-            return stats.get('Volatility (Ann.) [%]', 0) / 100.0
-
-        # For multi-asset case, calculate portfolio returns volatility
-        if isinstance(returns_clean, pd.DataFrame):
-            portfolio_returns = returns_clean.mean(axis=1)
-            return portfolio_returns.std() * np.sqrt(annual_trading_days) if len(portfolio_returns) > 0 else 0.0
-
-        return returns_clean.std() * np.sqrt(annual_trading_days) if len(returns_clean) > 0 else 0.0
+    def _calculate_volatility(self, returns: pd.Series, annual_trading_days: int = 252) -> float:
+        """计算年化波动率（委托risk_metrics统一入口，符合规则2）"""
+        vol = _calc_volatility(returns, annual_trading_days=annual_trading_days)
+        return vol if vol is not None else 0.0
 
     def _format_trades_df(self, pf) -> Optional[pd.DataFrame]:
         """从VectorBT Portfolio提取并格式化交易记录为中文可读格式
@@ -1259,22 +1259,16 @@ class VectorBTBacktestService:
 
         return trades_df
 
-    def _calculate_var_cvar(self, returns_clean: pd.Series | pd.DataFrame) -> tuple[float, float]:
-        """Calculate VaR and CVaR from returns, with defensive empty-check for CVaR"""
-        if len(returns_clean) == 0:
+    def _calculate_var_cvar(self, returns: pd.Series, cutoff: float = 0.05) -> tuple:
+        """计算VaR和CVaR（委托risk_metrics统一入口，符合规则2）"""
+        returns_clean = returns.dropna()
+        if len(returns_clean) < 2:
             return 0.0, 0.0
-
-        if isinstance(returns_clean, pd.DataFrame):
-            portfolio_returns = returns_clean.mean(axis=1)
-            var_95 = portfolio_returns.quantile(0.05)
-            tail = portfolio_returns[portfolio_returns <= var_95]
-            cvar_95 = float(tail.mean()) if len(tail) > 0 else 0.0
-        else:
-            var_95 = returns_clean.quantile(0.05)
-            tail = returns_clean[returns_clean <= var_95]
-            cvar_95 = float(tail.mean()) if len(tail) > 0 else 0.0
-
-        return var_95, cvar_95
+        metrics = calculate_risk_metrics(returns_clean)
+        var_95 = metrics.get("var_95")
+        cvar_95 = metrics.get("cvar_95")
+        return (var_95 if var_95 is not None else 0.0,
+                cvar_95 if cvar_95 is not None else 0.0)
 
     def _empty_metrics(self) -> Dict:
         """返回空的性能指标字典"""

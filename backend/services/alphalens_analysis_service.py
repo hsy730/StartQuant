@@ -12,17 +12,13 @@ logger = logging.getLogger(__name__)
 
 import alphalens
 
+from backend.utils.safe_math import safe_divide, safe_ir
+from backend.utils.serialization import safe_numeric_value
 
-def _to_python_float(value) -> Optional[float]:
-    if value is None or (isinstance(value, float) and (np.isnan(value) or np.isinf(value))):
-        return None
-    try:
-        result = float(value)
-        if np.isnan(result) or np.isinf(result):
-            return None
-        return result
-    except (TypeError, ValueError):
-        return None
+
+def _to_python_float(value, default=None):
+    """转换numpy类型为Python原生类型（委托safe_numeric_value）"""
+    return safe_numeric_value(value, default=default)
 
 
 def _series_to_list(s: pd.Series) -> List[Optional[float]]:
@@ -197,7 +193,8 @@ class AlphalensAnalysisService:
                     if not np.isnan(corr):
                         ic_values.append(corr)
                         ic_dates.append(date)
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"IC计算异常: {e}")
                     continue
             if ic_values:
                 ic_results[period_col] = pd.Series(ic_values, index=ic_dates)
@@ -233,10 +230,10 @@ class AlphalensAnalysisService:
             n = len(ic_series)
             ic_mean = float(ic_series.mean())
             ic_std = float(ic_series.std()) if n > 1 else 0.0
-            ir = ic_mean / ic_std if ic_std != 0 else 0.0
+            ir = safe_ir(float(ic_mean), float(ic_std), default=0.0)
 
             if n > 1 and ic_std > 0:
-                t_stat = ic_mean / (ic_std / np.sqrt(n))
+                t_stat = safe_divide(float(ic_mean), float(ic_std / np.sqrt(n)), default=0.0)
                 p_value = float(2 * (1 - scipy_stats.t.cdf(abs(t_stat), df=n - 1)))
             else:
                 t_stat = 0.0

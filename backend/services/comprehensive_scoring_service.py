@@ -2,10 +2,14 @@
 综合评分服务 - 多维度综合评分系统
 """
 from typing import Dict, List, Optional
+import logging
 import pandas as pd
 import numpy as np
 
 from backend.services.smart_slippage_detector import smart_slippage_detector
+from backend.utils.safe_math import safe_divide
+
+logger = logging.getLogger(__name__)
 
 
 class ComprehensiveScoringService:
@@ -126,7 +130,7 @@ class ComprehensiveScoringService:
                 # 使用智能推荐的基准滑点
                 base_slippage = smart_recommendation.recommended_slippage
             except Exception as e:
-                pass  # 智能检测失败时回退到默认值
+                logger.warning(f"智能滑点检测失败，回退到默认值: {e}")
 
         # 定义测试场景
         if test_slippages is None:
@@ -138,7 +142,7 @@ class ComprehensiveScoringService:
             # 年化滑点成本 = 滑点率 * 换手率 * 2（买入+卖出）
             annual_cost = slip * turnover * 2
             net_return = annual_return - annual_cost
-            return_decay = (annual_cost / annual_return * 100) if annual_return != 0 else 0
+            return_decay = safe_divide(float(annual_cost), float(annual_return), default=0.0) * 100
 
             scenario = {
                 "slippage_rate": slip,
@@ -152,7 +156,7 @@ class ComprehensiveScoringService:
 
         # 敏感性等级评估
         base_cost = base_slippage * turnover * 2
-        sensitivity_ratio = abs(base_cost / annual_return) if annual_return != 0 else float('inf')
+        sensitivity_ratio = safe_divide(float(abs(base_cost)), float(annual_return), default=float('inf'))
 
         if sensitivity_ratio < 0.1:
             sensitivity_level = "low"

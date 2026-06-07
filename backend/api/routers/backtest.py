@@ -8,6 +8,7 @@ import numpy as np
 
 from backend.utils.serialization import safe_numeric_value, sanitize_dict
 from backend.services.vectorbt_backtest_service import VectorBTBacktestService, check_vectorbt_available
+from backend.services.risk_metrics import calculate_sharpe, calculate_volatility
 from backend.repositories.backtest_repository import BacktestRepository
 from backend.repositories.factor_repository import FactorRepository
 from backend.core.database import get_db_session
@@ -108,13 +109,13 @@ async def run_single_backtest(request: SingleBacktestRequest):
                     request.start_date,
                     request.end_date,
                     period=minute_period if minute_period.isdigit() else "5",
-                )
+                ).copy()
             else:
                 stock_data = data_service.get_stock_data(
                     stock_code,
                     request.start_date,
                     request.end_date
-                )
+                ).copy()
 
             if stock_data is not None and len(stock_data) > 0:
                 # 计算所有选中的因子
@@ -496,17 +497,12 @@ async def run_strategy_comparison(request: ComparisonRequest):
                         "returns": returns_series.tolist(),
                         "total_return": total_return,
                         "annual_return": annual_return,
-                        "volatility": float(returns_series.std() * np.sqrt(252)),
+                        "volatility": calculate_volatility(returns_series) or 0.0,
                     }
 
-                    # 计算夏普比率
-                    if results[strategy_name]["volatility"] > 0:
-                        results[strategy_name]["sharpe_ratio"] = (
-                            results[strategy_name]["annual_return"] /
-                            results[strategy_name]["volatility"]
-                        )
-                    else:
-                        results[strategy_name]["sharpe_ratio"] = 0.0
+                    # 计算夏普比率（委托risk_metrics统一入口，符合规则2）
+                    sharpe = calculate_sharpe(returns_series, risk_free_rate=0.03)
+                    results[strategy_name]["sharpe_ratio"] = sharpe if sharpe is not None else 0.0
 
         results_clean = sanitize_dict(results)
 

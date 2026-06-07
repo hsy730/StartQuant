@@ -127,7 +127,8 @@ class BacktestRepository:
             )
             self.db.commit()
             return True
-        except Exception:
+        except Exception as e:
+            logger.error(f"删除回测结果失败: {e}")
             self.db.rollback()
             return False
 

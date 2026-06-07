@@ -1,3 +1,5 @@
+# NOTE: Alpha101因子公式中的 +1e-10 是表达式模板，在eval中执行，
+# 无法使用safe_divide。这些是业界标准公式，保留原样。
 from typing import Dict, List
 
 

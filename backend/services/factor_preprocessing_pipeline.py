@@ -720,9 +720,10 @@ class FactorPreprocessingPipeline:
             return factor_vals
 
         # 抑制 pandas FutureWarning（groupby.apply 对分组列的操作警告）
-        # 必须在线程入口设置，catch_warnings 在子线程中不生效
-        warnings.simplefilter("ignore", FutureWarning)
-        result = df.groupby(df[date_column], group_keys=False).apply(process_group)
+        # 使用 catch_warnings 确保线程安全，不影响其他模块
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", FutureWarning)
+            result = df.groupby(df[date_column], group_keys=False).apply(process_group)
         stats["dates_processed"] = df[date_column].nunique()
 
         return result, stats

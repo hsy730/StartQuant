@@ -430,8 +430,9 @@ class DeepFactorMiningService:
         """
         mean = X_train.mean(axis=0)
         std = X_train.std(axis=0)
-        std[std < 1e-8] = 1.0  # 避免除零
+        std[std < 1e-8] = 1.0  # 避免除零 — guard before division below
 
+        # NOTE: Division by std is safe due to the guard above (std[std < 1e-8] = 1.0)
         X_train_norm = (X_train - mean) / std
         X_val_norm = (X_val - mean) / std
 

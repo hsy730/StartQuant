@@ -8,6 +8,7 @@ from typing import Dict, List, Optional, Any
 from scipy.stats import pearsonr, spearmanr
 
 from backend.utils.returns import calculate_future_returns
+from backend.utils.safe_math import safe_ir
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +43,9 @@ class FactorEffectivenessService:
                 "decay_analysis": {...}
             }
         """
+        # 规则5：禁止就地修改传入的DataFrame，必须先copy
+        factor_data = {k: v.copy() for k, v in factor_data.items()}
+
         results = {}
 
         results["scatter_plot"] = self._create_scatter_data(
@@ -181,7 +185,7 @@ class FactorEffectivenessService:
                 "ic_values": valid_values,
                 "ic_mean": float(ic_s.mean()),
                 "ic_std": float(ic_s.std()) if len(ic_s) > 1 else 0.0,
-                "ir": float(ic_s.mean() / ic_s.std()) if len(ic_s) > 1 and ic_s.std() != 0 else 0.0,
+                "ir": safe_ir(float(ic_s.mean()), float(ic_s.std()), default=0.0) if len(ic_s) > 1 else 0.0,
                 "ic_positive_ratio": float((ic_s > 0).mean()),
                 "source": "Alphalens"
             }
@@ -216,13 +220,14 @@ class FactorEffectivenessService:
         ic_values = valid_ic.tolist()
         dates = [str(d) for d in valid_ic.index]
         ic_series = pd.Series(ic_values)
+        ic_std = float(ic_series.std())
 
         return {
             "dates": dates,
             "ic_values": [float(v) for v in ic_values],
             "ic_mean": float(ic_series.mean()),
-            "ic_std": float(ic_series.std()),
-            "ir": ic_series.mean() / ic_series.std() if ic_series.std() != 0 else 0.0,
+            "ic_std": ic_std,
+            "ir": safe_ir(float(ic_series.mean()), ic_std, default=0.0),
             "ic_positive_ratio": float((ic_series > 0).mean())
         }
 
@@ -252,7 +257,8 @@ class FactorEffectivenessService:
                 if not np.isnan(ic) and not np.isinf(ic):
                     ic_values.append(float(ic))
                     dates.append(str(date))
-            except Exception:
+            except Exception as e:
+                logger.debug(f"IC计算失败: {e}")
                 continue
 
         if not ic_values:
@@ -264,7 +270,7 @@ class FactorEffectivenessService:
             "ic_values": [float(v) for v in ic_values],
             "ic_mean": float(ic_series.mean()),
             "ic_std": float(ic_series.std()),
-            "ir": ic_series.mean() / ic_series.std() if ic_series.std() != 0 else 0.0,
+            "ir": safe_ir(float(ic_series.mean()), float(ic_series.std()), default=0.0),
             "ic_positive_ratio": float((ic_series > 0).mean())
         }
 
@@ -389,8 +395,8 @@ class FactorEffectivenessService:
                         "ic": float(mean_ic),
                         "abs_ic": abs(float(mean_ic))
                     })
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"衰减数据追加失败: {e}")
 
         if not decay_data:
             return {"error": "无法计算衰减曲线"}

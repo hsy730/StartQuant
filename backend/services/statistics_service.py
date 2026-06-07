@@ -4,22 +4,26 @@
 import pandas as pd
 import numpy as np
 from typing import Dict, List, Optional, Tuple
+from contextlib import contextmanager
 from scipy import stats
 from sklearn.preprocessing import PolynomialFeatures
 import warnings
 import logging
 
-import empyrical
-
 from backend.utils.returns import calculate_future_returns
+from backend.services.risk_metrics import calculate_risk_metrics
 
 # 配置日志
 logger = logging.getLogger(__name__)
 
-# 只忽略特定类型的警告
-warnings.filterwarnings("ignore", category=FutureWarning)
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-warnings.filterwarnings("ignore", message=".*invalid value.*")
+
+@contextmanager
+def _suppress_scipy_warnings():
+    """局部抑制scipy兼容性警告（不影响其他模块）"""
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", FutureWarning)
+        warnings.simplefilter("ignore", DeprecationWarning)
+        yield
 
 
 class StatisticsService:
@@ -50,14 +54,15 @@ class StatisticsService:
                 "confidence_interval": (0.0, 0.0),
             }
 
-        # t检验
-        t_stat, p_value = stats.ttest_1samp(ic_clean, 0)
+        with _suppress_scipy_warnings():
+            # t检验
+            t_stat, p_value = stats.ttest_1samp(ic_clean, 0)
 
-        # 计算置信区间
-        alpha = 1 - confidence_level
-        df = len(ic_clean) - 1
-        se = ic_clean.std() / np.sqrt(len(ic_clean))
-        ci = stats.t.interval(confidence_level, df, loc=ic_clean.mean(), scale=se)
+            # 计算置信区间
+            alpha = 1 - confidence_level
+            df = len(ic_clean) - 1
+            se = ic_clean.std() / np.sqrt(len(ic_clean))
+            ci = stats.t.interval(confidence_level, df, loc=ic_clean.mean(), scale=se)
 
         return {
             "t_statistic": t_stat,
@@ -96,16 +101,17 @@ class StatisticsService:
         n_layers = len(layer_means)
         layer_ranks = np.arange(n_layers)
 
-        if alternative == "increasing":
-            # 正相关
-            correlation, p_value = stats.spearmanr(layer_ranks, layer_means, alternative="greater")
-            expected_direction = "正相关"
-        else:
-            # 负相关
-            correlation, p_value = stats.spearmanr(
-                layer_ranks, layer_means, alternative="less"
-            )
-            expected_direction = "负相关"
+        with _suppress_scipy_warnings():
+            if alternative == "increasing":
+                # 正相关
+                correlation, p_value = stats.spearmanr(layer_ranks, layer_means, alternative="greater")
+                expected_direction = "正相关"
+            else:
+                # 负相关
+                correlation, p_value = stats.spearmanr(
+                    layer_ranks, layer_means, alternative="less"
+                )
+                expected_direction = "负相关"
 
         return {
             "correlation": correlation,
@@ -279,12 +285,13 @@ class StatisticsService:
         if len(factor_df) < 10:
             return {"interaction_features": [], "feature_importance": {}}
 
-        # 创建多项式特征（包含交互项）
-        poly = PolynomialFeatures(degree=degree, include_bias=False)
-        poly_features = poly.fit_transform(factor_df)
+        with _suppress_scipy_warnings():
+            # 创建多项式特征（包含交互项）
+            poly = PolynomialFeatures(degree=degree, include_bias=False)
+            poly_features = poly.fit_transform(factor_df)
 
-        # 获取特征名称
-        feature_names = poly.get_feature_names_out(factor_names)
+            # 获取特征名称
+            feature_names = poly.get_feature_names_out(factor_names)
 
         # 计算每个特征与目标变量的相关性（这里简化处理）
         interaction_results = {}
@@ -395,39 +402,35 @@ class StatisticsService:
         results = {}
         daily_rf = risk_free_rate / annual_trading_days
 
-        for quantile_name, returns in quantile_returns.items():
-            returns_clean = returns.dropna()
+        with _suppress_scipy_warnings():
+            for quantile_name, returns in quantile_returns.items():
+                returns_clean = returns.dropna()
 
-            if len(returns_clean) == 0:
+                if len(returns_clean) == 0:
+                    results[quantile_name] = {
+                        "mean": 0.0,
+                        "std": 0.0,
+                        "annual_return": 0.0,
+                        "sharpe": 0.0,
+                        "win_rate": 0.0,
+                    }
+                    continue
+
+                mean = returns_clean.mean()
+                std = returns_clean.std()
+                # 委托risk_metrics统一入口计算年化收益和Sharpe（符合规则2）
+                metrics = calculate_risk_metrics(returns_clean, risk_free_rate=risk_free_rate, annual_trading_days=annual_trading_days)
+                annual_return = metrics.get("annual_return") or 0.0
+                sharpe = metrics.get("sharpe_ratio") or 0.0
+                win_rate = (returns_clean > 0).mean()
+
                 results[quantile_name] = {
-                    "mean": 0.0,
-                    "std": 0.0,
-                    "annual_return": 0.0,
-                    "sharpe": 0.0,
-                    "win_rate": 0.0,
+                    "mean": mean,
+                    "std": std,
+                    "annual_return": annual_return,
+                    "sharpe": sharpe,
+                    "win_rate": win_rate,
                 }
-                continue
-
-            mean = returns_clean.mean()
-            std = returns_clean.std()
-            # 委托empyrical计算复利年化收益（与risk_metrics保持一致）
-            annual_return = float(empyrical.annual_return(
-                returns_clean.values, period='daily', annualization=annual_trading_days
-            ))
-            # 委托empyrical计算Sharpe（复利年化，与risk_metrics保持一致）
-            sharpe = float(empyrical.sharpe_ratio(
-                returns_clean.values, risk_free=risk_free_rate / annual_trading_days,
-                period='daily', annualization=annual_trading_days
-            )) if std > 0 else 0.0
-            win_rate = (returns_clean > 0).mean()
-
-            results[quantile_name] = {
-                "mean": mean,
-                "std": std,
-                "annual_return": annual_return,
-                "sharpe": sharpe,
-                "win_rate": win_rate,
-            }
 
         return results
 

@@ -8,6 +8,8 @@ from typing import Dict, List, Optional, Any
 from scipy.fft import fft, fftfreq
 from scipy.signal import find_peaks
 
+from backend.utils.factor_data_utils import find_longest_stock as _find_longest_stock_util
+
 logger = logging.getLogger(__name__)
 
 
@@ -16,6 +18,11 @@ class FactorMonitoringService:
 
     def __init__(self):
         pass
+
+    def _find_longest_stock(self, factor_data: Dict[str, pd.DataFrame], factor_name: str) -> tuple:
+        """找到数据最长的股票（代码和数据），委托公共工具"""
+        code, df = _find_longest_stock_util(factor_data, factor_name)
+        return code, len(df[factor_name].dropna()) if factor_name in df.columns else len(df)
 
     def monitor_dynamics(
         self,
@@ -81,14 +88,7 @@ class FactorMonitoringService:
             }
         """
         # 找一个数据完整且时间最长的股票
-        longest_stock = None
-        max_length = 0
-        for stock_code, df in factor_data.items():
-            if factor_name in df.columns:
-                factor_col = df[factor_name].dropna()
-                if len(factor_col) > max_length:
-                    max_length = len(factor_col)
-                    longest_stock = stock_code
+        longest_stock, _ = self._find_longest_stock(factor_data, factor_name)
 
         if not longest_stock:
             return {"error": "没有可用的因子数据"}
@@ -131,14 +131,7 @@ class FactorMonitoringService:
             }
         """
         # 找一个数据完整且时间最长的股票
-        longest_stock = None
-        max_length = 0
-        for stock_code, df in factor_data.items():
-            if factor_name in df.columns:
-                factor_col = df[factor_name].dropna()
-                if len(factor_col) > max_length:
-                    max_length = len(factor_col)
-                    longest_stock = stock_code
+        longest_stock, _ = self._find_longest_stock(factor_data, factor_name)
 
         if not longest_stock:
             return {"error": "没有可用的因子数据"}
@@ -208,14 +201,7 @@ class FactorMonitoringService:
             }
         """
         # 找一个数据完整且时间最长的股票
-        longest_stock = None
-        max_length = 0
-        for stock_code, df in factor_data.items():
-            if factor_name in df.columns:
-                factor_col = df[factor_name].dropna()
-                if len(factor_col) > max_length:
-                    max_length = len(factor_col)
-                    longest_stock = stock_code
+        longest_stock, _ = self._find_longest_stock(factor_data, factor_name)
 
         if not longest_stock:
             return {"error": "没有可用的因子数据"}
@@ -263,14 +249,7 @@ class FactorMonitoringService:
             }
         """
         # 找一个数据完整且时间最长的股票
-        longest_stock = None
-        max_length = 0
-        for stock_code, df in factor_data.items():
-            if factor_name in df.columns:
-                factor_col = df[factor_name].dropna()
-                if len(factor_col) > max_length:
-                    max_length = len(factor_col)
-                    longest_stock = stock_code
+        longest_stock, _ = self._find_longest_stock(factor_data, factor_name)
 
         if not longest_stock:
             return {"error": "没有可用的因子数据"}

@@ -63,7 +63,7 @@ class EnhancedAnalysisService:
         t_critical = stats.t.ppf(1 - alpha / 2, df=n - 2)
 
         # 标准误差
-        se = np.sqrt((1 - ic**2) / (n - 2))
+        se = np.sqrt((1 - ic_clipped**2) / (n - 2))
         ci_lower = ic - t_critical * se
         ci_upper = ic + t_critical * se
 

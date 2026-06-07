@@ -38,6 +38,8 @@ from backend.services.lookahead_bias_detector import (
     lookahead_bias_detector,
     BiasRiskLevel,
 )
+from backend.utils.safe_math import safe_ir, safe_divide
+from backend.utils.weight_utils import normalize_weights
 
 
 class AnalysisService:
@@ -242,13 +244,13 @@ class AnalysisService:
         # 缓存检查必须在数据获取之前，避免缓存命中时浪费昂贵的计算
         if use_cache:
             db = get_db_session()
-            repo = AnalysisCacheRepository(db)
-            cached = repo.get_by_key(cache_key)
-            if cached:
+            try:
+                repo = AnalysisCacheRepository(db)
+                cached = repo.get_by_key(cache_key)
+                if cached:
+                    return self._deserialize_from_cache(cached.result_data)
+            finally:
                 db.close()
-                # 缓存命中：直接从缓存反序列化，无需重新计算因子
-                return self._deserialize_from_cache(cached.result_data)
-            db.close()
 
         factor_data = factor_service.calculate_factors_for_stocks(
             stock_codes, factor_names, start_date, end_date, rolling_window
@@ -316,18 +318,20 @@ class AnalysisService:
 
         if use_cache:
             db = get_db_session()
-            repo = AnalysisCacheRepository(db)
-            serialized_results = self._serialize_for_cache(results)
-            cache = AnalysisCacheModel(
-                cache_key=cache_key,
-                stock_codes=",".join(stock_codes),
-                factor_names=",".join(factor_names),
-                start_date=start_date,
-                end_date=end_date,
-                result_data=serialized_results,
-            )
-            repo.create(cache)
-            db.close()
+            try:
+                repo = AnalysisCacheRepository(db)
+                serialized_results = self._serialize_for_cache(results)
+                cache = AnalysisCacheModel(
+                    cache_key=cache_key,
+                    stock_codes=",".join(stock_codes),
+                    factor_names=",".join(factor_names),
+                    start_date=start_date,
+                    end_date=end_date,
+                    result_data=serialized_results,
+                )
+                repo.create(cache)
+            finally:
+                db.close()
 
         return results
 
@@ -363,7 +367,8 @@ class AnalysisService:
                 groupby_dict = {k: v for k, v in groupby_dict.items() if v}
                 if not groupby_dict:
                     groupby_dict = None
-            except Exception:
+            except Exception as e:
+                logger.warning(f"获取行业分类失败: {e}")
                 groupby_dict = None
 
         # 预提取每个因子的 factor_values_dict
@@ -520,7 +525,7 @@ class AnalysisService:
         for factor_name, ic_s in ic_series.items():
             ic_mean = float(ic_s.mean())
             ic_std = float(ic_s.std()) if len(ic_s) > 1 else 0.0
-            ir = ic_mean / ic_std if ic_std != 0 and not np.isnan(ic_std) else 0.0
+            ir = safe_ir(ic_mean, ic_std, default=0.0)
 
             n = len(ic_s)
             t_stat = ic_mean / (ic_std / np.sqrt(n)) if n > 1 and ic_std > 0 else 0.0
@@ -612,7 +617,7 @@ class AnalysisService:
         for factor_name, ic_s in ic_series.items():
             ic_mean = ic_s.mean()
             ic_std = ic_s.std()
-            ir = ic_mean / ic_std if ic_std != 0 and not np.isnan(ic_std) else 0
+            ir = safe_ir(ic_mean, ic_std, default=0.0)
             stats = {
                 "IC均值": ic_mean, "IC标准差": ic_std, "IR": ir,
                 "IC>0占比": (ic_s > 0).mean(), "IC绝对值均值": abs(ic_s).mean(),
@@ -625,7 +630,7 @@ class AnalysisService:
                 rank_ic_std = rank_ic_s.std()
                 stats["Rank_IC均值"] = rank_ic_mean
                 stats["Rank_IC标准差"] = rank_ic_std
-                stats["Rank_IR"] = rank_ic_mean / rank_ic_std if rank_ic_std != 0 else 0
+                stats["Rank_IR"] = safe_ir(rank_ic_mean, rank_ic_std, default=0.0)
             ic_stats[factor_name] = stats
 
         result = {
@@ -652,7 +657,8 @@ class AnalysisService:
         try:
             groupby_dict = data_service.get_industry_classification(codes)
             groupby_dict = {k: v for k, v in groupby_dict.items() if v}
-        except Exception:
+        except Exception as e:
+            logger.warning(f"获取行业分类失败: {e}")
             groupby_dict = None
 
         for factor_name in factor_names:
@@ -990,7 +996,7 @@ class AnalysisService:
                         weight_map[stock_code] = amt.mean()
             total_liq = sum(weight_map.values())
             if total_liq > 0:
-                weight_map = {k: v / total_liq for k, v in weight_map.items()}
+                weight_map = normalize_weights(weight_map)
 
         all_ic_stats = {}
         all_monthly_ic = {}
@@ -1035,11 +1041,12 @@ class AnalysisService:
                         factor_key = f"{factor_name}_{ic_type_key}_weighted_{weight_type}"
 
                         weighted_mean = self._compute_weighted_ic_mean(ic_s, factor_values_dict, weight_map, weight_type)
+                        std_ic_val = period_stats.get("std_ic", ic_s.std())
 
                         all_ic_stats[factor_key] = {
                             "IC均值": float(weighted_mean),
                             "IC标准差": float(period_stats.get("std_ic", ic_s.std())),
-                            "IR": float(weighted_mean / (period_stats.get("std_ic", ic_s.std()) + 1e-10)),
+                            "IR": safe_ir(float(weighted_mean), float(std_ic_val), default=None),
                             "IC>0占比": float((ic_s > 0).mean()),
                             "IC绝对值均值": float(abs(ic_s).mean()),
                             "IC序列": ic_s.to_dict(),
@@ -1088,7 +1095,7 @@ class AnalysisService:
         total_weight = weights_series.sum()
         if total_weight == 0:
             return float(ic_s.mean())
-        weights_normalized = weights_series / total_weight
+        weights_normalized = normalize_weights(weights_series)
 
         aligned_weights = weights_normalized.reindex(ic_s.index, fill_value=1.0 / len(ic_s))
 

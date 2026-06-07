@@ -8,6 +8,8 @@ import pandas as pd
 from typing import Dict, List, Optional, Sequence, Tuple
 from scipy import stats as scipy_stats
 
+from backend.utils.safe_math import safe_divide, safe_ir
+
 
 def calculate_future_returns(
     df: pd.DataFrame,
@@ -69,11 +71,11 @@ def calculate_ic_stats(
 
     mean_ic = float(ic_clean.mean())
     std_ic = float(ic_clean.std())
-    ir = mean_ic / std_ic if std_ic > 0 else 0.0
+    ir = safe_ir(float(mean_ic), float(std_ic), default=0.0)
 
     # t检验
     se = std_ic / np.sqrt(n)
-    t_statistic = mean_ic / se if se > 0 else 0.0
+    t_statistic = safe_divide(float(mean_ic), float(se), default=0.0)
     p_value = 2 * (1 - scipy_stats.t.cdf(abs(t_statistic), df=n - 1))
 
     # 置信区间
@@ -126,6 +128,6 @@ def calculate_rolling_ir(
     rolling_std = ic_clean.rolling(window=window, min_periods=min_periods).std()
     ic_std = float(rolling_std.mean())
 
-    ir = ic_mean / ic_std if ic_std > 0 else 0.0
+    ir = safe_ir(float(ic_mean), float(ic_std), default=0.0)
 
     return ic_mean, ic_std, ir

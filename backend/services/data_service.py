@@ -302,7 +302,7 @@ class DataService:
             try:
                 return code, self.get_stock_data(code, start_date, end_date, use_cache)
             except Exception as e:
-                print(f"Warning: 获取股票 {code} 数据失败: {e}")
+                logger.warning(f"获取股票 {code} 数据失败: {e}")
                 return code, None
 
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -570,8 +570,8 @@ class DataService:
                     for _, row in cons_df.iterrows():
                         code = str(row["代码"]).strip()
                         local_map[code] = name
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"获取行业 {name} 成分股失败: {e}")
             return local_map
 
         with ThreadPoolExecutor(max_workers=10) as executor:
@@ -597,6 +597,7 @@ class DataService:
                 return cached_data
 
         df = self.get_stock_data(stock_code, start_date, end_date, use_cache=True)
+        df = df.copy()
 
         total_shares = None
         try:
@@ -606,8 +607,8 @@ class DataService:
                 if "总股本" in str(row.iloc[0]):
                     total_shares = float(row.iloc[1])
                     break
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"获取股票 {stock_code} 总股本信息失败: {e}")
 
         if total_shares is not None and "close" in df.columns:
             df["market_cap"] = df["close"] * total_shares

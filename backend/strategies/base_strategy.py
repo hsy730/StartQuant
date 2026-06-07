@@ -4,9 +4,9 @@
 from abc import ABC, abstractmethod
 from typing import Dict, Optional
 import pandas as pd
-import numpy as np
 
-import empyrical
+from backend.services.risk_metrics import calculate_risk_metrics as _calculate_risk_metrics, _empty_metrics as _risk_empty_metrics
+from backend.utils.return_calculator import calculate_future_return
 
 
 class BaseStrategy(ABC):
@@ -91,10 +91,8 @@ class BaseStrategy(ABC):
         weights = self.calculate_weights(df, signals)
 
         # 3. 计算下一期收益率
-        # pct_change(1) = (close[t] - close[t-1]) / close[t-1]，即当日收益率
-        # shift(-1) 取下一日的收益率，用于与当日权重配对
-        # 这样在t日决策（权重），t+1日获得收益，无前视偏差
-        df["next_return"] = df["close"].pct_change(1).shift(-1)
+        # t日决策（权重），t+1日获得收益，无前视偏差
+        df["next_return"] = calculate_future_return(df)
 
         # 4. 计算组合收益（权重 * 下一期收益率）
         portfolio_returns = weights * df["next_return"]
@@ -103,7 +101,8 @@ class BaseStrategy(ABC):
         # portfolio_returns 是比例收益率，手续费也必须保持比例
         # weight_change 是权重变化比例，commission_rate 是费率
         # 比例手续费 = 权重变化 * 费率
-        weight_change = weights.diff().abs()
+        # 首期视作从0建仓，diff首行NaN用初始权重填充
+        weight_change = weights.diff().abs().fillna(weights.abs())
         commission = weight_change * self.commission_rate
         portfolio_returns = portfolio_returns - commission
 
@@ -138,58 +137,13 @@ class BaseStrategy(ABC):
         risk_free_rate: float = 0.03
     ) -> Dict:
         """
-        计算性能指标
-
-        Args:
-            returns: 收益率序列
-            annual_trading_days: 年化交易日数
-            risk_free_rate: 无风险利率
-
-        Returns:
-            Dict: 性能指标
+        计算性能指标（委托risk_metrics统一入口，符合规则0和代码复用原则）
         """
-        returns_clean = returns.dropna()
-
-        if len(returns_clean) == 0:
-            return self._empty_metrics()
-
-        returns_arr = returns_clean.values
-
-        # 委托empyrical计算标准风险指标
-        total_return = float(empyrical.cum_returns_final(returns_arr))
-        annual_return = float(empyrical.annual_return(returns_arr, period='daily', annualization=annual_trading_days))
-        volatility = float(empyrical.annual_volatility(returns_arr, period='daily', annualization=annual_trading_days))
-        sharpe_ratio = float(empyrical.sharpe_ratio(returns_arr, risk_free=risk_free_rate / annual_trading_days, period='daily', annualization=annual_trading_days))
-        sortino_ratio = float(empyrical.sortino_ratio(returns_arr, required_return=risk_free_rate / annual_trading_days, period='daily', annualization=annual_trading_days))
-        max_drawdown = float(empyrical.max_drawdown(returns_arr))
-        calmar_ratio = float(empyrical.calmar_ratio(returns_arr, period='daily', annualization=annual_trading_days))
-
-        # 胜率
-        win_rate = (returns_clean > 0).mean()
-
-        return {
-            "total_return": float(total_return),
-            "annual_return": float(annual_return),
-            "volatility": float(volatility),
-            "sharpe_ratio": float(sharpe_ratio),
-            "max_drawdown": float(max_drawdown),
-            "calmar_ratio": float(calmar_ratio),
-            "win_rate": float(win_rate),
-            "sortino_ratio": float(sortino_ratio),
-        }
+        return _calculate_risk_metrics(returns, risk_free_rate=risk_free_rate, annual_trading_days=annual_trading_days)
 
     def _empty_metrics(self) -> Dict:
-        """返回空的性能指标"""
-        return {
-            "total_return": 0.0,
-            "annual_return": 0.0,
-            "volatility": 0.0,
-            "sharpe_ratio": 0.0,
-            "max_drawdown": 0.0,
-            "calmar_ratio": 0.0,
-            "win_rate": 0.0,
-            "sortino_ratio": 0.0,
-        }
+        """返回空的性能指标（委托risk_metrics统一入口）"""
+        return _risk_empty_metrics()
 
     def get_name(self) -> str:
         """获取策略名称"""

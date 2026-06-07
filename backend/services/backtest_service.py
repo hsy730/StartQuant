@@ -7,23 +7,16 @@ VectorBT不可用时抛出明确错误，不再使用有Bug的自建fallback。
 """
 import pandas as pd
 import numpy as np
-import empyrical
 from typing import Dict, List, Optional, Tuple
 from datetime import datetime
-import warnings
 import logging
-
-warnings.filterwarnings("ignore", category=FutureWarning)
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-warnings.filterwarnings("ignore", message=".*divide by zero.*")
-warnings.filterwarnings("ignore", message=".*invalid value.*")
 
 from backend.strategies.base_strategy import BaseStrategy
 from backend.services.strategy_registry import strategy_registry
 from backend.services.strategy_comparison_service import strategy_comparison_service
 from backend.services.position_analysis_service import position_analysis_service
 from backend.services.export_service import export_service
-from backend.services.risk_metrics import calculate_risk_metrics, _empty_metrics as _risk_empty_metrics
+from backend.services.risk_metrics import calculate_risk_metrics, calculate_relative_metrics, _empty_metrics as _risk_empty_metrics
 from backend.services.factor_preprocessing_pipeline import (
     FactorPreprocessingPipeline,
     PreprocessingConfig,
@@ -35,6 +28,8 @@ from backend.services.vectorbt_backtest_service import (
 )
 
 logger = logging.getLogger(__name__)
+
+
 
 
 class BacktestService:
@@ -106,8 +101,9 @@ class BacktestService:
     # ==================== 回撤计算 ====================
 
     def calculate_drawdown(self, equity_curve: pd.Series) -> pd.Series:
+        """计算回撤序列（返回负值，与empyrical约定一致）"""
         peak = equity_curve.cummax()
-        return (peak - equity_curve) / peak
+        return (equity_curve - peak) / peak.replace(0, np.nan)
 
     # ==================== 信号生成 ====================
 
@@ -122,24 +118,15 @@ class BacktestService:
     # ==================== 基准对比 ====================
 
     def calculate_benchmark_metrics(self, returns: pd.Series, benchmark_returns: pd.Series, annual_trading_days: int = 252) -> Dict:
-        aligned_data = pd.DataFrame({"strategy": returns, "benchmark": benchmark_returns}).dropna()
-        if len(aligned_data) == 0:
-            return {"excess_return": 0.0, "tracking_error": 0.0, "information_ratio": 0.0}
-        excess_returns = aligned_data["strategy"] - aligned_data["benchmark"]
-        excess_return = excess_returns.mean() * annual_trading_days
-        tracking_error = excess_returns.std() * np.sqrt(annual_trading_days)
-        try:
-            information_ratio = float(empyrical.information_ratio(aligned_data["strategy"], aligned_data["benchmark"]))
-        except Exception:
-            information_ratio = excess_return / tracking_error if tracking_error > 0 else 0.0
-        correlation = aligned_data["strategy"].corr(aligned_data["benchmark"])
-        try:
-            alpha, beta = empyrical.alpha_beta_aligned(aligned_data["strategy"], aligned_data["benchmark"], risk_free=0.0 / annual_trading_days, period='daily', annualization=annual_trading_days)
-        except Exception:
-            covariance = aligned_data["strategy"].cov(aligned_data["benchmark"])
-            benchmark_variance = aligned_data["benchmark"].var()
-            beta = covariance / benchmark_variance if benchmark_variance > 0 else 1.0
-        return {"excess_return": excess_return, "tracking_error": tracking_error, "information_ratio": information_ratio, "correlation": correlation, "beta": float(beta)}
+        """计算基准对比指标（委托risk_metrics统一入口，符合规则2）"""
+        relative = calculate_relative_metrics(returns, benchmark_returns, annual_trading_days=annual_trading_days)
+        return {
+            "excess_return": relative.get("excess_return", 0.0) or 0.0,
+            "tracking_error": relative.get("tracking_error", 0.0) or 0.0,
+            "information_ratio": relative.get("information_ratio", 0.0) or 0.0,
+            "correlation": relative.get("correlation", 0.0) or 0.0,
+            "beta": relative.get("beta", 1.0) or 1.0,
+        }
 
     # ==================== 月度收益计算 ====================
 

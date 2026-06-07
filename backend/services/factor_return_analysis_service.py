@@ -21,8 +21,10 @@ from enum import Enum
 import logging
 from scipy import stats as scipy_stats
 
-import empyrical
 from empyrical import max_drawdown as empyrical_max_drawdown
+
+from backend.utils.safe_math import safe_divide
+from backend.services.risk_metrics import calculate_sharpe
 
 logger = logging.getLogger(__name__)
 
@@ -157,8 +159,12 @@ class FactorReturnAnalysisService:
                 
                 if self.config.weight_by_market_cap and "market_cap" in group_data.columns:
                     weights = group_data["market_cap"].fillna(group_data["market_cap"].median())
-                    weights = weights / weights.sum()
-                    avg_return = (group_data["future_return"] * weights).sum()
+                    weight_sum = weights.sum()
+                    if weight_sum == 0 or np.isnan(weight_sum):
+                        avg_return = group_data["future_return"].mean()
+                    else:
+                        weights = safe_divide(weights, weight_sum, default=0.0)
+                        avg_return = (group_data["future_return"] * weights).sum()
                 else:
                     avg_return = group_data["future_return"].mean()
                 
@@ -346,7 +352,7 @@ class FactorReturnAnalysisService:
                     final_return = valid_returns[-1]
                     max_drawdown = self._calculate_max_drawdown(valid_returns)
                     sharpe_ratio = self._calculate_sharpe_ratio(
-                        pd.Series([long_short_returns[i+1] - long_short_returns[i] 
+                        pd.Series([(long_short_returns[i+1] + 1) / (long_short_returns[i] + 1) - 1
                                   for i in range(len(long_short_returns)-1) 
                                   if long_short_returns[i] is not None and long_short_returns[i+1] is not None])
                     )
@@ -628,20 +634,9 @@ class FactorReturnAnalysisService:
         return abs(float(drawdown.min())) if len(drawdown) > 0 else 0.0
 
     def _calculate_sharpe_ratio(self, returns: pd.Series, risk_free_rate: float = 0.03) -> float:
-        """计算夏普比率（年化，扣除无风险利率），委托empyrical"""
-        if len(returns) < 2:
-            return 0.0
-        # 标准差为零时直接返回0，避免empyrical产生极大值
-        if returns.std() == 0:
-            return 0.0
-        try:
-            result = float(empyrical.sharpe_ratio(returns, risk_free=risk_free_rate / 252, period='daily', annualization=252))
-            # empyrical在某些边界条件下可能返回极大值，截断到合理范围
-            if not np.isfinite(result):
-                return 0.0
-            return result
-        except Exception:
-            return 0.0
+        """计算夏普比率（年化，扣除无风险利率），委托risk_metrics统一入口"""
+        sharpe = calculate_sharpe(returns, risk_free_rate=risk_free_rate)
+        return sharpe if sharpe is not None else 0.0
 
     def _interpret_turnover(self, turnover: float) -> str:
         """解读换手率"""

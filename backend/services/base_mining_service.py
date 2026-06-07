@@ -20,6 +20,7 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 from backend.services.data_service import data_service
+from backend.utils.safe_math import safe_divide, safe_ir
 
 
 class BaseMiningService(ABC):
@@ -266,7 +267,7 @@ class BaseMiningService(ABC):
                     continue
                 mean_ic = abs(float(mean_ic))
                 std_ic = float(std_ic)
-                ir = abs(mean_ic / std_ic) if std_ic > 1e-10 else 0.0
+                ir = safe_ir(float(mean_ic), float(std_ic), default=0.0)
                 if mean_ic > best_ic:
                     best_ic = mean_ic
                 if ir > best_ir:
@@ -308,8 +309,8 @@ class BaseMiningService(ABC):
             return best_ir
         elif self.fitness_objective == "combined":
             # Z-Score归一化使用上一代的统计量（含先验冷启动）
-            z_ic = max(-3.0, min((best_ic - self._zscore_ic_mean) / (self._zscore_ic_std + 1e-8), 3.0))
-            z_ir = max(-3.0, min((best_ir - self._zscore_ir_mean) / (self._zscore_ir_std + 1e-8), 3.0))
+            z_ic = max(-3.0, min(safe_divide(float(best_ic - self._zscore_ic_mean), float(self._zscore_ic_std), default=0.0), 3.0))
+            z_ir = max(-3.0, min(safe_divide(float(best_ir - self._zscore_ir_mean), float(self._zscore_ir_std), default=0.0), 3.0))
             # 映射 [-3, 3] → [0, 1]
             norm_ic = (z_ic + 3.0) / 6.0
             norm_ir = (z_ir + 3.0) / 6.0
@@ -413,8 +414,8 @@ class BaseMiningService(ABC):
             raw_ic = abs(validation.get("_raw_ic_mean", 0.0))
             raw_ir = abs(validation.get("_raw_ir", 0.0))
 
-            z_ic = max(-3.0, min((raw_ic - ic_mean) / (ic_std + 1e-8), 3.0))
-            z_ir = max(-3.0, min((raw_ir - ir_mean) / (ir_std + 1e-8), 3.0))
+            z_ic = max(-3.0, min(safe_divide(float(raw_ic - ic_mean), float(ic_std), default=0.0), 3.0))
+            z_ir = max(-3.0, min(safe_divide(float(raw_ir - ir_mean), float(ir_std), default=0.0), 3.0))
             norm_ic = (z_ic + 3.0) / 6.0
             norm_ir = (z_ir + 3.0) / 6.0
             factor_info["fitness"] = 0.6 * norm_ic + 0.4 * norm_ir

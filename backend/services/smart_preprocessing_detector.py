@@ -15,6 +15,7 @@ from dataclasses import dataclass
 import logging
 
 from backend.core.market_board import MarketBoard, detect_market_board, get_board_n_sigma
+from backend.utils.safe_math import safe_divide
 
 logger = logging.getLogger(__name__)
 
@@ -120,6 +121,9 @@ class SmartPreprocessingDetector:
             if len(df) > 0:
                 df_copy = df.copy()
                 df_copy["stock_code"] = stock_code
+                # factor_service 返回的 DataFrame 使用 DatetimeIndex，需显式添加 date 列
+                if "date" not in df_copy.columns:
+                    df_copy["date"] = df_copy.index
                 all_dfs.append(df_copy)
 
         if not all_dfs:
@@ -202,7 +206,7 @@ class SmartPreprocessingDetector:
                     .std()
                 )
                 if len(rolling_vol.dropna()) > 10:
-                    vol_of_vol = rolling_vol.std() / (rolling_vol.mean() + 1e-10)
+                    vol_of_vol = safe_divide(float(rolling_vol.std()), float(rolling_vol.mean()), default=0.0)
                     time_varying_vol = vol_of_vol > 0.3  # 波动率的变异系数>30%
 
         return DataCharacteristics(
@@ -338,7 +342,7 @@ class SmartPreprocessingDetector:
 
         # ==================== 3️⃣ 中性化策略 ====================
         # 市值中性化
-        if chars.avg_market_cap > 0 and chars.market_cap_std / (chars.avg_market_cap + 1e-10) > 0.5:
+        if chars.avg_market_cap > 0 and safe_divide(float(chars.market_cap_std), float(chars.avg_market_cap), default=0.0) > 0.5:
             # 市值差异大 → 必须中性化
             config["enable_market_cap_neutralization"] = True
             confidence_scores.append(0.95)

@@ -134,24 +134,32 @@ class FactorSummaryService:
             # 简化处理：假设第一个因子的IC数据
             first_factor = list(ic_summary.values())[0] if ic_summary else {}
             ic_mean = abs(first_factor.get("ic_mean", 0))
+            if isinstance(ic_mean, float) and np.isnan(ic_mean):
+                ic_mean = 0.0
             score += min(ic_mean * 400, 40)  # IC=0.1时得40分满分
 
         # IR得分（0-30分）
         if ic_summary:
             first_factor = list(ic_summary.values())[0] if ic_summary else {}
             ir = first_factor.get("ir", 0)
+            if isinstance(ir, float) and np.isnan(ir):
+                ir = 0.0
             score += min(ir * 10, 30)  # IR=3时得30分满分
 
         # 稳定性得分（0-20分）
         stability_summary = summary.get("stability_summary")
         if stability_summary and "distribution" in stability_summary:
             stability_score = stability_summary["distribution"].get("stability_score", 0)
+            if isinstance(stability_score, float) and np.isnan(stability_score):
+                stability_score = 0.0
             score += stability_score * 20
 
         # IC>0占比得分（0-10分）
         if ic_summary:
             first_factor = list(ic_summary.values())[0] if ic_summary else {}
             positive_ratio = first_factor.get("ic_positive_ratio", 0)
+            if isinstance(positive_ratio, float) and np.isnan(positive_ratio):
+                positive_ratio = 0.0
             score += positive_ratio * 10
 
         return round(score, 2)

@@ -4,10 +4,11 @@
 import logging
 import numpy as np
 import pandas as pd
-import empyrical
 from typing import Dict, List, Optional, Any
 from scipy.stats import pearsonr, ttest_1samp
 import akshare as ak
+
+from backend.services.risk_metrics import calculate_sharpe, calculate_volatility
 
 logger = logging.getLogger(__name__)
 
@@ -263,8 +264,8 @@ class FactorAttributionService:
                 "portfolio_return": {
                     "daily_mean": float(portfolio_returns.mean()),
                     "annual_return": float((1 + portfolio_returns.mean()) ** 252 - 1),
-                    "volatility": float(portfolio_returns.std() * np.sqrt(252)),
-                    "sharpe": float(empyrical.sharpe_ratio(portfolio_returns, risk_free=0.03 / 252, period='daily', annualization=252))
+                    "volatility": calculate_volatility(portfolio_returns) or 0.0,
+                    "sharpe": calculate_sharpe(portfolio_returns, risk_free_rate=0.03) or 0.0
                 }
             }
 
@@ -291,7 +292,7 @@ class FactorAttributionService:
 
         # 计算Beta (协方差 / 基准方差)
         cov_matrix = np.cov(y, X.flatten())
-        beta = cov_matrix[0, 1] / cov_matrix[1, 1] if cov_matrix[1, 1] != 0 else 1.0
+        beta = safe_divide(float(cov_matrix[0, 1]), float(cov_matrix[1, 1]), default=1.0)
 
         # 计算Alpha (组合收益 - Beta * 基准收益)
         alpha = y.mean() - beta * X.mean()
@@ -303,7 +304,7 @@ class FactorAttributionService:
         y_pred = alpha + beta * X.flatten()
         ss_tot = np.sum((y - y.mean()) ** 2)
         ss_res = np.sum((y - y_pred) ** 2)
-        r_squared = 1 - (ss_res / ss_tot) if ss_tot != 0 else 0.0
+        r_squared = 1.0 - safe_divide(float(ss_res), float(ss_tot), default=0.0)
 
         interpretation = (
             f"相对于基准的年化Alpha: {alpha_annual:.4f}, "
@@ -347,15 +348,15 @@ class FactorAttributionService:
                 if len(returns) > 0:
                     avg_return = float(returns.mean())
                     cum_return = float((1 + returns).prod() - 1)
-                    volatility = float(returns.std())
+                    vol_annual = calculate_volatility(returns) or 0.0
 
                     returns_by_stock[stock_code] = {
                         "avg_daily_return": avg_return,
                         "annual_return": float((1 + avg_return) ** 252 - 1),
                         "cumulative_return": cum_return,
-                        "volatility": float(volatility * np.sqrt(252)),
-                        "daily_volatility": volatility,
-                        "sharpe": float(empyrical.sharpe_ratio(returns, risk_free=0.03 / 252, period='daily', annualization=252)),
+                        "volatility": vol_annual,
+                        "daily_volatility": float(returns.std()),
+                        "sharpe": calculate_sharpe(returns, risk_free_rate=0.03) or 0.0,
                         "win_rate": float((returns > 0).mean()),
                         "count": len(returns)
                     }
@@ -367,7 +368,7 @@ class FactorAttributionService:
 
         all_returns_series = pd.Series(all_returns)
         overall_avg = float(all_returns_series.mean())
-        overall_vol = float(all_returns_series.std())
+        overall_vol_annual = calculate_volatility(all_returns_series) or 0.0
         # 先计算每只股票的累计收益再取均值，而非跨股票连乘
         stock_cum_returns = [v["cumulative_return"] for v in returns_by_stock.values()]
         overall_cum = float(np.mean(stock_cum_returns)) if stock_cum_returns else 0.0
@@ -377,9 +378,9 @@ class FactorAttributionService:
                 "avg_daily_return": overall_avg,
                 "annual_return": float((1 + overall_avg) ** 252 - 1),
                 "cumulative_return": overall_cum,
-                "volatility_annual": float(overall_vol * np.sqrt(252)),
-                "daily_volatility": overall_vol,
-                "sharpe_ratio": float(empyrical.sharpe_ratio(all_returns_series, risk_free=0.03 / 252, period='daily', annualization=252)),
+                "volatility_annual": overall_vol_annual,
+                "daily_volatility": float(all_returns_series.std()),
+                "sharpe_ratio": calculate_sharpe(all_returns_series, risk_free_rate=0.03) or 0.0,
                 "win_rate": float((all_returns_series > 0).mean())
             },
             "return_by_stock": returns_by_stock,

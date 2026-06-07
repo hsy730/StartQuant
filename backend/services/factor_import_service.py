@@ -1,6 +1,7 @@
 """
 因子导入服务 - 从CSV文件导入因子
 """
+import logging
 import pandas as pd
 from typing import Optional, Dict, List
 from pathlib import Path
@@ -234,7 +235,8 @@ class FactorImportService:
                 # 检查是否为数值类型
                 try:
                     pd.to_numeric(df[factor_column], errors="coerce")
-                except Exception:
+                except Exception as e:
+                    logger.warning(f"因子值列包含非数值数据: {e}")
                     result["warnings"].append("因子值列包含非数值数据")
 
             # 添加基本信息

@@ -25,6 +25,7 @@ except ImportError:
     logger.warning("PySR库未安装，符号回归功能将不可用。请运行: pip install pysr")
 
 from backend.services.base_mining_service import BaseMiningService
+from backend.utils.safe_math import safe_divide
 from backend.services.factor_validation_service import factor_validation_service
 from backend.services.alphalens_analysis_service import alphalens_analysis_service
 from backend.services.data_service import data_service
@@ -378,7 +379,7 @@ class PySRFactorMiningService(BaseMiningService):
             return fitness, validation
         else:
             # 无收益率数据时，使用变异系数(CV)作为代理适应度
-            cv_value = float(fv.std() / (fv.mean() + 1e-8))
+            cv_value = safe_divide(float(fv.std()), float(fv.mean()), default=0.0)
             if np.isfinite(cv_value) and abs(fv.mean()) > 1e-8:
                 fitness = cv_value
             else:

@@ -56,22 +56,22 @@ def _ensure_creator_types():
     try:
         creator.create("FitnessMax", base.Fitness, weights=(1.0,))
     except RuntimeError:
-        pass
+        logger.debug("FitnessMax已注册，跳过")
     # Multi-objective fitness: (maximise IC, minimise complexity)
     try:
         creator.create("FitnessMulti", base.Fitness, weights=(1.0, -1.0))
     except RuntimeError:
-        pass
+        logger.debug("FitnessMulti已注册，跳过")
     # Individual for single-objective
     try:
         creator.create("Individual", gp.PrimitiveTree, fitness=creator.FitnessMax)
     except RuntimeError:
-        pass
+        logger.debug("Individual已注册，跳过")
     # Individual for multi-objective (NSGA-II)
     try:
         creator.create("IndividualMulti", gp.PrimitiveTree, fitness=creator.FitnessMulti)
     except RuntimeError:
-        pass
+        logger.debug("IndividualMulti已注册，跳过")
 
 
 class GeneticFactorMiningService(BaseMiningService):
@@ -305,7 +305,8 @@ class GeneticFactorMiningService(BaseMiningService):
                 raw_fitness = self._evaluate_single_stock_ic(individual)[0]
             else:
                 raw_fitness = self._evaluate_single_stock_ic(individual)[0]
-        except Exception:
+        except Exception as e:
+            logger.debug(f"适应度评估失败: {e}")
             return (0.0,)
 
         # --- Parsimony Pressure (Phase 2) ---
@@ -346,7 +347,8 @@ class GeneticFactorMiningService(BaseMiningService):
                 raw_fitness = self._evaluate_single_stock_ic(individual)[0]
             else:
                 raw_fitness = self._evaluate_single_stock_ic(individual)[0]
-        except Exception:
+        except Exception as e:
+            logger.debug(f"NSGA2适应度评估失败: {e}")
             return (0.0, 1.0)
 
         # --- Diversity Penalty (Phase 3, applied to IC objective only) ---
@@ -377,7 +379,8 @@ class GeneticFactorMiningService(BaseMiningService):
 
         try:
             func = compile_tree(tree, self.pset)
-        except Exception:
+        except Exception as e:
+            logger.debug(f"编译表达式失败: {e}")
             return None
 
         # Build ordered positional args matching factor_0 … factor_N
@@ -390,7 +393,8 @@ class GeneticFactorMiningService(BaseMiningService):
 
         try:
             result = func(*ordered)
-        except Exception:
+        except Exception as e:
+            logger.debug(f"执行表达式失败: {e}")
             return None
 
         if isinstance(result, (int, float, np.number)):
@@ -440,8 +444,8 @@ class GeneticFactorMiningService(BaseMiningService):
                     fv = self._eval_tree_on_stock(tree, code, base_factors)
                     if fv is not None and len(fv.dropna()) >= 10:
                         return code, fv.dropna()
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"评估股票 {code} 因子失败: {e}")
                 return code, None
 
             with ThreadPoolExecutor(max_workers=min(len(eval_codes), 10)) as executor:
@@ -547,7 +551,8 @@ class GeneticFactorMiningService(BaseMiningService):
             return None
         try:
             func = compile_tree(tree, self.pset)
-        except Exception:
+        except Exception as e:
+            logger.debug(f"编译表达式失败: {e}")
             return None
 
         ordered = []
@@ -559,7 +564,8 @@ class GeneticFactorMiningService(BaseMiningService):
 
         try:
             result = func(*ordered)
-        except Exception:
+        except Exception as e:
+            logger.debug(f"执行表达式失败: {e}")
             return None
 
         if isinstance(result, (int, float, np.number)):
@@ -753,8 +759,8 @@ class GeneticFactorMiningService(BaseMiningService):
                         return_values=self.return_values,
                     )
                     factor_info["validation"] = validation
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"因子验证失败: {e}")
 
             best_factors.append(factor_info)
 
