@@ -4,6 +4,7 @@
 import logging
 import numpy as np
 import pandas as pd
+import empyrical
 from typing import Dict, List, Optional, Any
 from scipy.stats import pearsonr, ttest_1samp
 import akshare as ak
@@ -263,7 +264,7 @@ class FactorAttributionService:
                     "daily_mean": float(portfolio_returns.mean()),
                     "annual_return": float((1 + portfolio_returns.mean()) ** 252 - 1),
                     "volatility": float(portfolio_returns.std() * np.sqrt(252)),
-                    "sharpe": float(portfolio_returns.mean() / portfolio_returns.std() * np.sqrt(252)) if portfolio_returns.std() > 0 else 0.0
+                    "sharpe": float(empyrical.sharpe_ratio(portfolio_returns, risk_free=0.03, period='daily', annualization=252))
                 }
             }
 
@@ -354,7 +355,7 @@ class FactorAttributionService:
                         "cumulative_return": cum_return,
                         "volatility": float(volatility * np.sqrt(252)),
                         "daily_volatility": volatility,
-                        "sharpe": float(avg_return / volatility * np.sqrt(252)) if volatility != 0 else 0.0,
+                        "sharpe": float(empyrical.sharpe_ratio(returns, risk_free=0.03, period='daily', annualization=252)),
                         "win_rate": float((returns > 0).mean()),
                         "count": len(returns)
                     }
@@ -378,7 +379,7 @@ class FactorAttributionService:
                 "cumulative_return": overall_cum,
                 "volatility_annual": float(overall_vol * np.sqrt(252)),
                 "daily_volatility": overall_vol,
-                "sharpe_ratio": float(overall_avg / overall_vol * np.sqrt(252)) if overall_vol != 0 else 0.0,
+                "sharpe_ratio": float(empyrical.sharpe_ratio(all_returns_series, risk_free=0.03, period='daily', annualization=252)),
                 "win_rate": float((all_returns_series > 0).mean())
             },
             "return_by_stock": returns_by_stock,

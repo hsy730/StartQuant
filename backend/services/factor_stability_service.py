@@ -8,6 +8,7 @@ from typing import Dict, List, Optional, Tuple
 from scipy import stats
 from statsmodels.tsa.stattools import adfuller
 
+from backend.utils.returns import calculate_future_returns
 from backend.services.analysis_service import AnalysisService
 from backend.services.data_service import data_service
 from backend.services.factor_service import factor_service
@@ -210,14 +211,14 @@ class FactorStabilityService:
             if len(factor_data) < window * 2:
                 continue
 
-            # 计算滚动IC
-            rolling_ic = []
-            for i in range(window, len(factor_data)):
-                window_data = factor_data.iloc[i-window:i]
-                if factor_name in window_data.columns and return_col in window_data.columns:
-                    ic = window_data[factor_name].corr(window_data[return_col])
-                    if not np.isnan(ic):
-                        rolling_ic.append(ic)
+            # 计算滚动IC（向量化操作）
+            if factor_name in factor_data.columns and return_col in factor_data.columns:
+                rolling_ic_series = factor_data[factor_name].rolling(
+                    window=window, min_periods=window
+                ).corr(factor_data[return_col]).dropna()
+                rolling_ic = rolling_ic_series.tolist()
+            else:
+                rolling_ic = []
 
             if rolling_ic:
                 ic_series = pd.Series(rolling_ic)
@@ -261,31 +262,32 @@ class FactorStabilityService:
         factor_data = factor_data.copy()
         factor_data['market_return'] = factor_data[price_col].pct_change()
 
-        # 划分市场环境
+        # 划分市场环境（向量化操作）
+        lookback = 20
+        rolling_return = factor_data['market_return'].rolling(window=lookback, min_periods=lookback).sum()
+
+        regime_labels = pd.cut(
+            rolling_return,
+            bins=[-float('inf'), bear_threshold, bull_threshold, float('inf')],
+            labels=['bear', 'flat', 'bull']
+        )
+
+        # 将连续相同regime合并为区间
         regimes = []
-        current_regime = "unknown"
-        regime_start = 0
+        current_regime = None
+        regime_start = None
 
-        for i in range(len(factor_data)):
-            if i < 20:
+        for i, regime in enumerate(regime_labels):
+            if pd.isna(regime):
                 continue
-
-            recent_return = factor_data['market_return'].iloc[i-20:i].sum()
-            if recent_return > bull_threshold:
-                new_regime = "bull"
-            elif recent_return < bear_threshold:
-                new_regime = "bear"
-            else:
-                new_regime = "flat"
-
-            if new_regime != current_regime:
-                if current_regime != "unknown":
+            if regime != current_regime:
+                if current_regime is not None:
                     regimes.append({"start": regime_start, "end": i - 1, "regime": current_regime})
-                current_regime = new_regime
+                current_regime = regime
                 regime_start = i
 
         # 记录最后一个regime
-        if current_regime != "unknown":
+        if current_regime is not None:
             regimes.append({"start": regime_start, "end": len(factor_data) - 1, "regime": current_regime})
 
         # 计算各环境下的IC
@@ -397,7 +399,8 @@ class FactorStabilityService:
                         continue
 
                     # 计算未来收益率（用于IC计算）
-                    future_return = data['close'].pct_change(20).shift(-20)
+                    df_with_returns = calculate_future_returns(data[['close']], periods=[20])
+                    future_return = df_with_returns['future_return_20']
                     
                     # 构建该股票的分析数据框
                     stock_df = pd.DataFrame({

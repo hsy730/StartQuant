@@ -21,6 +21,7 @@ from enum import Enum
 import logging
 from scipy import stats as scipy_stats
 
+import empyrical
 from empyrical import max_drawdown as empyrical_max_drawdown
 
 logger = logging.getLogger(__name__)
@@ -257,18 +258,21 @@ class FactorReturnAnalysisService:
                     df_copy[price_column] - 1
                 )
                 
-                for idx, row in df_copy.iterrows():
-                    if pd.notna(row[factor_name]) and pd.notna(row["future_return"]):
-                        date_key = str(idx) if not isinstance(idx, pd.Timestamp) else idx.strftime("%Y-%m-%d")
-                        
-                        if date_key not in date_returns:
-                            date_returns[date_key] = []
-                        
-                        date_returns[date_key].append({
-                            "factor_value": row[factor_name],
-                            "return": row["future_return"],
-                            "stock_code": stock_code,
-                        })
+                valid_rows = df_copy[[factor_name, "future_return"]].dropna()
+                if len(valid_rows) == 0:
+                    continue
+
+                for idx in valid_rows.index:
+                    date_key = str(idx) if not isinstance(idx, pd.Timestamp) else idx.strftime("%Y-%m-%d")
+
+                    if date_key not in date_returns:
+                        date_returns[date_key] = []
+
+                    date_returns[date_key].append({
+                        "factor_value": valid_rows.loc[idx, factor_name],
+                        "return": valid_rows.loc[idx, "future_return"],
+                        "stock_code": stock_code,
+                    })
             
             if not date_returns:
                 return {"error": "没有有效的数据"}
@@ -624,12 +628,13 @@ class FactorReturnAnalysisService:
         return abs(float(drawdown.min())) if len(drawdown) > 0 else 0.0
 
     def _calculate_sharpe_ratio(self, returns: pd.Series, risk_free_rate: float = 0.03) -> float:
-        """计算夏普比率（年化，扣除无风险利率）"""
-        if len(returns) < 2 or returns.std() == 0:
+        """计算夏普比率（年化，扣除无风险利率），委托empyrical"""
+        if len(returns) < 2:
             return 0.0
-        
-        daily_rf = risk_free_rate / 252
-        return (returns.mean() - daily_rf) / returns.std() * np.sqrt(252)
+        try:
+            return float(empyrical.sharpe_ratio(returns, risk_free=risk_free_rate, period='daily', annualization=252))
+        except Exception:
+            return 0.0
 
     def _interpret_turnover(self, turnover: float) -> str:
         """解读换手率"""

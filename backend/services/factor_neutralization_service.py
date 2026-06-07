@@ -182,9 +182,16 @@ class FactorNeutralizationService:
         if len(valid_data) < self.MIN_SAMPLES:
             raise ValueError("有效数据不足，无法进行联合中性化")
 
-        y = valid_data[factor_name].values
-        X_list = []
+        # Step 1: 先完成所有过滤，再统一构建特征矩阵
+        # 这样避免过滤顺序导致的数据对齐Bug
 
+        # 1a. 过滤市值<=0的记录（必须在构建dummies之前完成）
+        if has_mc:
+            valid_data = valid_data[valid_data[market_cap_column] > 0]
+            if len(valid_data) < self.MIN_SAMPLES:
+                raise ValueError("有效数据不足（市值>0），无法进行联合中性化")
+
+        # 1b. 过滤小行业（必须在构建dummies之前完成）
         if has_industry:
             industries = valid_data[industry_column].astype(str)
             unique_industries = sorted(industries.unique())
@@ -192,7 +199,6 @@ class FactorNeutralizationService:
                 logger.warning("联合中性化：行业分类不足2个，跳过行业中性化部分")
                 has_industry = False
             else:
-                # 检查最小行业样本量
                 MIN_INDUSTRY_SIZE = 5
                 industry_counts = industries.value_counts()
                 small_industries = industry_counts[industry_counts < MIN_INDUSTRY_SIZE]
@@ -200,26 +206,21 @@ class FactorNeutralizationService:
                     logger.warning(f"联合中性化：行业{small_industries.index.tolist()}样本量< {MIN_INDUSTRY_SIZE}，可能不稳定")
                     valid_industries = industry_counts[industry_counts >= MIN_INDUSTRY_SIZE].index.tolist()
                     if len(valid_industries) >= 2:
-                        mask = industries.isin(valid_industries)
-                        valid_data = valid_data[mask]
-                        industries = industries[mask]
-                        y = valid_data[factor_name].values
+                        valid_data = valid_data[industries.isin(valid_industries)]
                     else:
                         logger.warning("过滤后行业分类不足2个，跳过行业中性化部分")
                         has_industry = False
-                if has_industry:
-                    industry_dummies = pd.get_dummies(industries, drop_first=True).astype(float)
-                    X_list.append(industry_dummies.values)
+
+        # Step 2: 统一构建特征矩阵（此时valid_data已完成所有过滤）
+        y = valid_data[factor_name].values
+        X_list = []
+
+        if has_industry:
+            industries = valid_data[industry_column].astype(str)
+            industry_dummies = pd.get_dummies(industries, drop_first=True).astype(float)
+            X_list.append(industry_dummies.values)
 
         if has_mc:
-            # 排除市值<=0的记录，与 neutralize_market_cap 保持一致
-            valid_data = valid_data[valid_data[market_cap_column] > 0]
-            if len(valid_data) < self.MIN_SAMPLES:
-                raise ValueError("有效数据不足（市值>0），无法进行联合中性化")
-            # 重新获取 y 和 industries（valid_data 可能已变化）
-            y = valid_data[factor_name].values
-            if has_industry:
-                industries = valid_data[industry_column].astype(str)
             log_mc = np.log(valid_data[market_cap_column])
             X_list.append(log_mc.values.reshape(-1, 1))
 

@@ -9,6 +9,10 @@ from sklearn.preprocessing import PolynomialFeatures
 import warnings
 import logging
 
+import empyrical
+
+from backend.utils.returns import calculate_future_returns
+
 # 配置日志
 logger = logging.getLogger(__name__)
 
@@ -126,16 +130,15 @@ class StatisticsService:
         Returns:
             Dict: 各期的IC值
         """
-        df = df.copy()
+        periods = list(range(1, max_periods + 1))
+        df = calculate_future_returns(df, periods=periods, price_col="close")
 
-        # 计算未来收益率
+        # 计算IC
         decay_results = {}
-        for period in range(1, max_periods + 1):
-            df[f"future_return_{period}"] = df["close"].pct_change(period).shift(-period)
-
-            # 计算IC
+        for period in periods:
+            col = f"future_return_{period}"
             factor_clean = df[factor_name].dropna()
-            return_clean = df[f"future_return_{period}"].dropna()
+            return_clean = df[col].dropna()
 
             # 对齐数据
             aligned_idx = factor_clean.index.intersection(return_clean.index)
@@ -369,7 +372,7 @@ class StatisticsService:
 
         return {
             "turnover_rate": turnover_rate,
-            "avg_turnover": signal_changes.mean(),
+            "avg_turnover": float(signal_changes.median()),
         }
 
     # ==================== 因子分层收益分析 ====================
@@ -409,7 +412,11 @@ class StatisticsService:
             std = returns_clean.std()
             # 使用单利近似避免(1+negative)^252产生nan
             annual_return = mean * annual_trading_days if mean > -1 else -1.0
-            sharpe = ((mean - daily_rf) / std) * np.sqrt(annual_trading_days) if std > 0 else 0.0
+            # 委托empyrical计算Sharpe（复利年化，与risk_metrics保持一致）
+            sharpe = float(empyrical.sharpe_ratio(
+                returns_clean.values, risk_free=risk_free_rate,
+                period='daily', annualization=annual_trading_days
+            )) if std > 0 else 0.0
             win_rate = (returns_clean > 0).mean()
 
             results[quantile_name] = {

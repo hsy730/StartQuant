@@ -6,6 +6,7 @@ from pydantic import BaseModel
 from typing import List, Optional, Dict
 import numpy as np
 
+from backend.utils.serialization import safe_numeric_value, sanitize_dict
 from backend.services.vectorbt_backtest_service import VectorBTBacktestService, check_vectorbt_available
 from backend.repositories.backtest_repository import BacktestRepository
 from backend.repositories.factor_repository import FactorRepository
@@ -222,32 +223,6 @@ async def run_single_backtest(request: SingleBacktestRequest):
                 result_serializable[k] = v
 
         # 清理结果中的NaN和inf值，确保JSON可序列化
-        def clean_value(v):
-            """清理值：处理NaN、Inf和超大数值"""
-            if isinstance(v, float):
-                if np.isnan(v) or np.isinf(v):
-                    return None  # 使用None而不是0.0，更明确表示缺失值
-                # 检查是否超出JSON可表示的范围
-                if abs(v) > 1e308:  # JSON float最大值约为1.8e308
-                    return None
-            elif isinstance(v, (np.floating, np.float32, np.float64)):
-                # 处理numpy float类型
-                if np.isnan(v) or np.isinf(v):
-                    return None
-                if abs(v) > 1e308:
-                    return None
-                return float(v)
-            return v
-
-        def clean_dict(d):
-            """递归清理字典、列表中的值"""
-            if isinstance(d, dict):
-                return {k: clean_dict(v) for k, v in d.items()}
-            elif isinstance(d, list):
-                return [clean_value(v) for v in d]
-            else:
-                return clean_value(d)
-
         # 添加详细的图表数据
         chart_data = {}
 
@@ -400,9 +375,9 @@ async def run_single_backtest(request: SingleBacktestRequest):
             chart_data = chart_data[first_stock]
 
         # 清洗数据以确保JSON序列化有效
-        cleaned_metrics = clean_dict(metrics)
-        cleaned_result = clean_dict(result_serializable)
-        cleaned_chart_data = clean_dict(chart_data)
+        cleaned_metrics = sanitize_dict(metrics)
+        cleaned_result = sanitize_dict(result_serializable)
+        cleaned_chart_data = sanitize_dict(chart_data)
 
         return {
             "success": True,
@@ -533,34 +508,7 @@ async def run_strategy_comparison(request: ComparisonRequest):
                     else:
                         results[strategy_name]["sharpe_ratio"] = 0.0
 
-        # 清理结果中的NaN和inf值，确保JSON可序列化
-        def clean_value(v):
-            """清理值：处理NaN、Inf和超大数值"""
-            if isinstance(v, float):
-                if np.isnan(v) or np.isinf(v):
-                    return None  # 使用None而不是0.0，更明确表示缺失值
-                # 检查是否超出JSON可表示的范围
-                if abs(v) > 1e308:  # JSON float最大值约为1.8e308
-                    return None
-            elif isinstance(v, (np.floating, np.float32, np.float64)):
-                # 处理numpy float类型
-                if np.isnan(v) or np.isinf(v):
-                    return None
-                if abs(v) > 1e308:
-                    return None
-                return float(v)
-            return v
-
-        def clean_dict(d):
-            """递归清理字典、列表中的值"""
-            if isinstance(d, dict):
-                return {k: clean_dict(v) for k, v in d.items()}
-            elif isinstance(d, list):
-                return [clean_value(v) for v in d]
-            else:
-                return clean_value(d)
-
-        results_clean = clean_dict(results)
+        results_clean = sanitize_dict(results)
 
         return {
             "success": True,

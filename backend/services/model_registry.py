@@ -425,7 +425,7 @@ class ModelRegistry:
                     "values": {mid: v for mid, v in values},
                     "best_model": best[0],
                     "worst_model": worst[0],
-                    "range": worst[1] - best[1],
+                    "range": abs(best[1] - worst[1]),
                 }
 
         return comparison

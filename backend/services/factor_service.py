@@ -504,7 +504,7 @@ class FactorCalculator:
             rolling_mean = df[col].rolling(window=window, min_periods=1).mean()
             rolling_std = df[col].rolling(window=window, min_periods=1).std()
             # 避免除以0，当标准差为0或接近0时，返回0而不是inf
-            rolling_std_safe = rolling_std.replace(0, np.nan).fillna(1e-10)
+            rolling_std_safe = rolling_std.replace(0, np.nan)
             result[col] = (df[col] - rolling_mean) / rolling_std_safe
             # 将无穷大值替换为NaN
             result[col] = result[col].replace([np.inf, -np.inf], np.nan)

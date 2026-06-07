@@ -12,20 +12,11 @@ import numpy as np
 import pandas as pd
 from typing import Dict, Tuple, Optional, List
 from dataclasses import dataclass
-from enum import Enum
 import logging
-import re
+
+from backend.core.market_board import MarketBoard, detect_market_board, get_board_n_sigma
 
 logger = logging.getLogger(__name__)
-
-
-class MarketBoard(str, Enum):
-    """市场板块枚举"""
-    MAIN = "main"              # 主板 (60xxxx, 00xxxx)
-    CHINEXT = "chinext"        # 创业板 (30xxxx)
-    STAR = "star"              # 科创板 (68xxxx)
-    BEIJING = "beijing"        # 北交所 (8xxxx, 4xxxx)
-    MIXED = "mixed"            # 混合
 
 
 @dataclass
@@ -79,31 +70,27 @@ class SmartPreprocessingDetector:
     def __init__(self):
         self._board_patterns = {
             MarketBoard.MAIN: {
-                "code_pattern": r"^(6[0-57-9]\d{4}|0\d{5})",
                 "price_limit": 0.10,  # ±10%
                 "volatility_factor": 1.0,
-                "default_n_sigma": 3.0,
+                "default_n_sigma": get_board_n_sigma(MarketBoard.MAIN),
                 "description": "主板市场",
             },
             MarketBoard.CHINEXT: {
-                "code_pattern": r"^3\d{5}",
                 "price_limit": 0.20,  # ±20%
                 "volatility_factor": 1.5,  # 创业板波动大50%
-                "default_n_sigma": 2.8,  # 更严格
+                "default_n_sigma": get_board_n_sigma(MarketBoard.CHINEXT),
                 "description": "创业板市场",
             },
             MarketBoard.STAR: {
-                "code_pattern": r"^68\d{4}",
                 "price_limit": 0.20,
                 "volatility_factor": 1.6,  # 科创板波动更大
-                "default_n_sigma": 2.7,
+                "default_n_sigma": get_board_n_sigma(MarketBoard.STAR),
                 "description": "科创板市场",
             },
-            MarketBoard.BEIJING: {
-                "code_pattern": r"^(8\d{5}|4\d{5})",
+            MarketBoard.BSE: {
                 "price_limit": 0.30,  # ±30%
                 "volatility_factor": 2.0,  # 北交所波动最大
-                "default_n_sigma": 2.5,
+                "default_n_sigma": get_board_n_sigma(MarketBoard.BSE),
                 "description": "北交所市场",
             },
         }
@@ -238,28 +225,25 @@ class SmartPreprocessingDetector:
         )
 
     def _detect_market_board(self, stock_codes: List[str]) -> MarketBoard:
-        """识别市场板块"""
-        board_counts = {board: 0 for board in MarketBoard if board != MarketBoard.MIXED}
+        """识别市场板块（基于主导板块判断）"""
+        board_counts: Dict[MarketBoard, int] = {}
 
         for code in stock_codes:
-            pure_code = code.replace(".SZ", "").replace(".SH", "")
-            
-            for board, pattern_info in self._board_patterns.items():
-                if re.match(pattern_info["code_pattern"], pure_code):
-                    board_counts[board] += 1
-                    break
+            board = detect_market_board(code)
+            board_counts[board] = board_counts.get(board, 0) + 1
 
         # 找出占比最大的板块
-        if sum(board_counts.values()) == 0:
-            return MarketBoard.MIXED
+        total = sum(board_counts.values())
+        if total == 0:
+            return MarketBoard.UNKNOWN
 
         dominant_board = max(board_counts.items(), key=lambda x: x[1])
-        
+
         # 如果单一板块占比>80%，认为是单一板块；否则是混合
         if dominant_board[1] / len(stock_codes) > 0.8:
             return dominant_board[0]
         else:
-            return MarketBoard.MIXED
+            return MarketBoard.UNKNOWN
 
     def recommend_config(
         self,
@@ -426,7 +410,7 @@ class SmartPreprocessingDetector:
     def _empty_characteristics(self) -> DataCharacteristics:
         return DataCharacteristics(
             n_stocks=0, n_dates=0, total_samples=0,
-            market_board=MarketBoard.MIXED,
+            market_board=MarketBoard.UNKNOWN,
             avg_market_cap=0, market_cap_std=0,
             factor_volatility=0, factor_skewness=0, factor_kurtosis=0,
             n_industries=0, min_industry_size=0, max_industry_size=0,
@@ -479,8 +463,8 @@ class SmartPreprocessingDetector:
             MarketBoard.MAIN: "主板",
             MarketBoard.CHINEXT: "创业板",
             MarketBoard.STAR: "科创板",
-            MarketBoard.BEIJING: "北交所",
-            MarketBoard.MIXED: "混合板块",
+            MarketBoard.BSE: "北交所",
+            MarketBoard.UNKNOWN: "混合板块",
         }
         return names.get(board, "未知")
 

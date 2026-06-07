@@ -7,6 +7,7 @@ VectorBT不可用时抛出明确错误，不再使用有Bug的自建fallback。
 """
 import pandas as pd
 import numpy as np
+import empyrical
 from typing import Dict, List, Optional, Tuple
 from datetime import datetime
 import warnings
@@ -22,6 +23,7 @@ from backend.services.strategy_registry import strategy_registry
 from backend.services.strategy_comparison_service import strategy_comparison_service
 from backend.services.position_analysis_service import position_analysis_service
 from backend.services.export_service import export_service
+from backend.services.risk_metrics import calculate_risk_metrics, _empty_metrics as _risk_empty_metrics
 from backend.services.factor_preprocessing_pipeline import (
     FactorPreprocessingPipeline,
     PreprocessingConfig,
@@ -90,39 +92,16 @@ class BacktestService:
         result["engine"] = "vectorbt"
         return result
 
-    # ==================== 性能指标计算 (纯计算，保持自建) ====================
+    # ==================== 性能指标计算 (委托risk_metrics + empyrical) ====================
 
     def calculate_metrics(self, returns: pd.Series, annual_trading_days: int = 252, risk_free_rate: float = 0.03) -> Dict:
         returns_clean = returns.dropna()
         if len(returns_clean) == 0:
             return self._empty_metrics()
-        total_return = (1 + returns_clean).prod() - 1
-        n_days = len(returns_clean)
-        annual_return = (1 + total_return) ** (annual_trading_days / n_days) - 1 if n_days > 0 else 0.0
-        volatility = returns_clean.std() * np.sqrt(annual_trading_days)
-        daily_rf = risk_free_rate / annual_trading_days
-        excess_returns = returns_clean - daily_rf
-        sharpe_ratio = excess_returns.mean() * annual_trading_days / volatility if volatility > 0 else 0.0
-        equity = (1 + returns_clean).cumprod()
-        peak = equity.cummax()
-        drawdown = (peak - equity) / peak
-        max_drawdown = drawdown.max()
-        calmar_ratio = annual_return / max_drawdown if max_drawdown > 0 else 0.0
-        win_rate = (returns_clean > 0).mean()
-        # 标准Sortino下行偏差公式（daily_rf已在上方定义）
-        downside_diff = np.minimum(returns_clean - daily_rf, 0)
-        downside_std = np.sqrt((downside_diff ** 2).mean()) * np.sqrt(annual_trading_days)
-        sortino_ratio = (excess_returns.mean() * annual_trading_days) / downside_std if downside_std > 0 else 0.0
-        var_95 = returns_clean.quantile(0.05)
-        cvar_95 = returns_clean[returns_clean <= var_95].mean()
-        return {
-            "total_return": total_return, "annual_return": annual_return, "volatility": volatility,
-            "sharpe_ratio": sharpe_ratio, "max_drawdown": max_drawdown, "calmar_ratio": calmar_ratio,
-            "win_rate": win_rate, "sortino_ratio": sortino_ratio, "var_95": var_95, "cvar_95": cvar_95,
-        }
+        return calculate_risk_metrics(returns_clean, risk_free_rate, annual_trading_days)
 
     def _empty_metrics(self) -> Dict:
-        return {"total_return": 0.0, "annual_return": 0.0, "volatility": 0.0, "sharpe_ratio": 0.0, "max_drawdown": 0.0, "calmar_ratio": 0.0, "win_rate": 0.0, "sortino_ratio": 0.0, "var_95": 0.0, "cvar_95": 0.0}
+        return _risk_empty_metrics()
 
     # ==================== 回撤计算 ====================
 
@@ -149,12 +128,18 @@ class BacktestService:
         excess_returns = aligned_data["strategy"] - aligned_data["benchmark"]
         excess_return = excess_returns.mean() * annual_trading_days
         tracking_error = excess_returns.std() * np.sqrt(annual_trading_days)
-        information_ratio = excess_return / tracking_error if tracking_error > 0 else 0.0
+        try:
+            information_ratio = float(empyrical.information_ratio(aligned_data["strategy"], aligned_data["benchmark"]))
+        except Exception:
+            information_ratio = excess_return / tracking_error if tracking_error > 0 else 0.0
         correlation = aligned_data["strategy"].corr(aligned_data["benchmark"])
-        covariance = aligned_data["strategy"].cov(aligned_data["benchmark"])
-        benchmark_variance = aligned_data["benchmark"].var()
-        beta = covariance / benchmark_variance if benchmark_variance > 0 else 1.0
-        return {"excess_return": excess_return, "tracking_error": tracking_error, "information_ratio": information_ratio, "correlation": correlation, "beta": beta}
+        try:
+            alpha, beta = empyrical.alpha_beta_aligned(aligned_data["strategy"], aligned_data["benchmark"])
+        except Exception:
+            covariance = aligned_data["strategy"].cov(aligned_data["benchmark"])
+            benchmark_variance = aligned_data["benchmark"].var()
+            beta = covariance / benchmark_variance if benchmark_variance > 0 else 1.0
+        return {"excess_return": excess_return, "tracking_error": tracking_error, "information_ratio": information_ratio, "correlation": correlation, "beta": float(beta)}
 
     # ==================== 月度收益计算 ====================
 

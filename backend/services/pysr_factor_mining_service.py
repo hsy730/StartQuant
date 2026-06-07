@@ -24,6 +24,7 @@ except ImportError:
     PYSR_AVAILABLE = False
     logger.warning("PySR库未安装，符号回归功能将不可用。请运行: pip install pysr")
 
+from backend.services.base_mining_service import BaseMiningService
 from backend.services.factor_validation_service import factor_validation_service
 from backend.services.alphalens_analysis_service import alphalens_analysis_service
 from backend.services.data_service import data_service
@@ -41,7 +42,7 @@ _PYSR_OPERATOR_MAP = {
 }
 
 
-class PySRFactorMiningService:
+class PySRFactorMiningService(BaseMiningService):
     """PySR符号回归因子挖掘服务
 
     Uses PySR's Julia-backed symbolic regression engine to discover
@@ -49,6 +50,8 @@ class PySRFactorMiningService:
     :class:`GeneticFactorMiningService` so that both can be used
     interchangeably or in parallel via :class:`DualMiningService`.
     """
+
+    _service_name = "PySR"
 
     def __init__(
         self,
@@ -77,11 +80,16 @@ class PySRFactorMiningService:
         if not PYSR_AVAILABLE:
             raise ImportError("PySR库未安装，请运行: pip install pysr")
 
-        self.base_factor_codes = base_factors
-        self.data = data
-        self.return_column = return_column
-        self.factor_calculator = factor_calculator
-        self.max_eval_stocks = max_eval_stocks
+        super().__init__(
+            base_factors=base_factors,
+            data=data,
+            return_column=return_column,
+            factor_calculator=factor_calculator,
+            max_eval_stocks=max_eval_stocks,
+            fitness_objective=fitness_objective,
+            cv_folds=cv_folds,
+            naming_pattern="x{i}",
+        )
 
         self.niterations = niterations
         self.populations = populations
@@ -94,100 +102,9 @@ class PySRFactorMiningService:
         self.parsimony = parsimony
         self.procs = procs
         self.population_size = population_size
-        self.fitness_objective = fitness_objective
-        self.cv_folds = cv_folds
 
-        self.return_values = data[return_column] if return_column in data.columns else None
-
-        self.stock_codes: List[str] = []
-        self.stock_pool_data: Dict[str, pd.DataFrame] = {}
-        self.stock_pool_return_values: Dict[str, pd.Series] = {}
-        self.stock_pool_base_factor_values: Dict[str, dict] = {}
-
-        self._sampled_stock_codes: List[str] = []
-
-        self.base_factor_values: Dict[str, dict] = {}
-        self._precompute_base_factors()
-
-        self.progress_callback = None
         self._current_iteration = 0
         self._total_iterations = niterations
-        self._cancel_flag = False
-
-    def set_stock_pool(self, stock_codes: List[str], start_date: str, end_date: str):
-        self.stock_codes = stock_codes
-        self.stock_pool_data = data_service.get_multiple_stocks_data(stock_codes, start_date, end_date)
-
-        for code, df in self.stock_pool_data.items():
-            if "close" in df.columns:
-                df["return"] = df["close"].pct_change()
-            self.stock_pool_return_values[code] = (
-                df[self.return_column] if self.return_column in df.columns else None
-            )
-
-            if self.factor_calculator is None:
-                from backend.services.factor_service import factor_service
-                self.factor_calculator = factor_service.calculator
-
-            stock_base_factors = {}
-            for i, factor_code in enumerate(self.base_factor_codes):
-                try:
-                    fv = self.factor_calculator.calculate(df, factor_code)
-                    if fv is not None and len(fv.dropna()) > 0:
-                        var_name = f"x{i}"
-                        stock_base_factors[var_name] = {
-                            "code": factor_code,
-                            "values": fv,
-                        }
-                except Exception as e:
-                    logger.warning(f"Stock {code} factor {factor_code} compute error: {e}")
-            self.stock_pool_base_factor_values[code] = stock_base_factors
-
-        self._refresh_stock_sample()
-        logger.info(
-            f"PySR stock pool set with {len(self.stock_pool_data)} stocks, "
-            f"eval sample={len(self._sampled_stock_codes)}"
-        )
-
-    def _refresh_stock_sample(self):
-        available = list(self.stock_pool_base_factor_values.keys())
-        if len(available) <= self.max_eval_stocks:
-            self._sampled_stock_codes = available
-        else:
-            import random
-            self._sampled_stock_codes = random.sample(available, self.max_eval_stocks)
-
-    def _precompute_base_factors(self):
-        if self.factor_calculator is None:
-            from backend.services.factor_service import factor_service
-            self.factor_calculator = factor_service.calculator
-
-        logger.info(f"PySR预计算 {len(self.base_factor_codes)} 个基础因子...")
-
-        for i, factor_code in enumerate(self.base_factor_codes):
-            try:
-                fv = self.factor_calculator.calculate(self.data, factor_code)
-                if fv is not None and len(fv.dropna()) > 0:
-                    var_name = f"x{i}"
-                    self.base_factor_values[var_name] = {
-                        "code": factor_code,
-                        "values": fv,
-                    }
-                    logger.info(f"  [{i+1}/{len(self.base_factor_codes)}] {factor_code}: {len(fv.dropna())} 个有效值")
-                else:
-                    logger.warning(f"  [{i+1}/{len(self.base_factor_codes)}] {factor_code}: 计算失败或无有效值")
-            except Exception as e:
-                logger.warning(f"  [{i+1}/{len(self.base_factor_codes)}] {factor_code}: 计算出错 - {e}")
-
-        logger.info(f"PySR成功预计算 {len(self.base_factor_values)} 个基础因子")
-
-    def set_progress_callback(self, callback):
-        self.progress_callback = callback
-
-    def request_cancel(self):
-        """请求取消挖掘任务"""
-        self._cancel_flag = True
-        logger.info("收到取消请求")
 
     def _build_feature_matrix(self) -> Tuple[np.ndarray, np.ndarray, List[str]]:
         """Build the feature matrix X and target vector y for PySR.
@@ -470,7 +387,7 @@ class PySRFactorMiningService:
                 fitness = 0.0
             return fitness, {}
 
-    def _route_fitness(self, ic_results: dict) -> float:
+    def _route_fitness(self, ic_results: dict, factor_values_dict=None) -> float:
         """Select the fitness value according to ``self.fitness_objective``.
 
         For ``combined``, returns a raw weighted score as a placeholder; the actual
@@ -479,25 +396,7 @@ class PySRFactorMiningService:
 
         For other objectives, returns the raw metric directly.
         """
-        best_ic = 0.0
-        best_ir = 0.0
-
-        for ic_type in ["spearman_ic", "pearson_ic"]:
-            ic_type_data = ic_results.get(ic_type, {})
-            for period_key, period_stats in ic_type_data.items():
-                if not isinstance(period_stats, dict) or "error" in period_stats:
-                    continue
-                mean_ic = period_stats.get("mean_ic")
-                std_ic = period_stats.get("std_ic")
-                if mean_ic is None or std_ic is None:
-                    continue
-                mean_ic = abs(float(mean_ic))
-                std_ic = float(std_ic)
-                ir = abs(mean_ic / std_ic) if std_ic > 1e-10 else 0.0
-                if mean_ic > best_ic:
-                    best_ic = mean_ic
-                if ir > best_ir:
-                    best_ir = ir
+        best_ic, best_ir = self._extract_best_ic_ir(ic_results)
 
         if self.fitness_objective == "ir_ratio":
             return best_ir
@@ -508,110 +407,6 @@ class PySRFactorMiningService:
             return 0.6 * best_ic + 0.4 * best_ir
         else:
             return best_ic
-
-    def _apply_batch_zscore(self, best_factors: List[Dict]) -> List[Dict]:
-        """Apply post-hoc batch Z-Score normalization to combined fitness scores.
-
-        After all equations are evaluated, compute Z-Score stats from the
-        collected IC/IR values and re-compute combined scores, then re-rank.
-
-        σ lower-bound protection: max(σ, max(0.01*μ, 0.005)) prevents
-        Z-Score explosion when all equations have similar IC/IR.
-        """
-        if not best_factors or self.fitness_objective != "combined":
-            return best_factors
-
-        # Dynamically collect raw IC/IR from best_factors (filtered subset only)
-        valid_ic = []
-        valid_ir = []
-        for factor_info in best_factors:
-            validation = factor_info.get("validation", {})
-            if not isinstance(validation, dict):
-                continue
-            raw_ic = abs(validation.get("_raw_ic_mean", 0.0))
-            raw_ir = abs(validation.get("_raw_ir", 0.0))
-            if raw_ic > 1e-10:
-                valid_ic.append(raw_ic)
-            if raw_ir > 1e-10:
-                valid_ir.append(raw_ir)
-
-        if len(valid_ic) < 2 or len(valid_ir) < 2:
-            logger.warning("Too few valid IC/IR values for batch Z-Score, keeping raw scores")
-            return best_factors
-
-        ic_mean = float(np.mean(valid_ic))
-        ic_std = float(np.std(valid_ic))
-        ir_mean = float(np.mean(valid_ir))
-        ir_std = float(np.std(valid_ir))
-
-        # σ lower-bound protection
-        ic_std = max(ic_std, max(0.01 * ic_mean, 0.005))
-        ir_std = max(ir_std, max(0.01 * ir_mean, 0.005))
-
-        logger.info(
-            f"Batch Z-Score stats: IC μ={ic_mean:.4f} σ={ic_std:.4f}, "
-            f"IR μ={ir_mean:.4f} σ={ir_std:.4f} (from {len(valid_ic)} equations)"
-        )
-
-        # Re-compute combined fitness using Z-Score normalization
-        for factor_info in best_factors:
-            validation = factor_info.get("validation", {})
-            if not isinstance(validation, dict):
-                continue
-
-            raw_ic = abs(validation.get("_raw_ic_mean", 0.0))
-            raw_ir = abs(validation.get("_raw_ir", 0.0))
-
-            z_ic = max(-3.0, min((raw_ic - ic_mean) / (ic_std + 1e-8), 3.0))
-            z_ir = max(-3.0, min((raw_ir - ir_mean) / (ir_std + 1e-8), 3.0))
-            norm_ic = (z_ic + 3.0) / 6.0
-            norm_ir = (z_ir + 3.0) / 6.0
-            factor_info["fitness"] = 0.6 * norm_ic + 0.4 * norm_ir
-
-            # Update validation score to match
-            if "score" in validation:
-                validation["score"] = max(0.0, factor_info["fitness"] * 100)
-
-        # Re-rank by updated fitness
-        best_factors.sort(key=lambda f: f.get("fitness", 0), reverse=True)
-        for i, fi in enumerate(best_factors):
-            fi["rank"] = i + 1
-
-        return best_factors
-
-    def _cv_penalty(self, factor_values_dict: Dict[str, pd.Series]) -> float:
-        if self.cv_folds < 2:
-            return 0.0
-
-        fold_ics: List[float] = []
-        for stock_code, fv in factor_values_dict.items():
-            ret = self.stock_pool_return_values.get(stock_code)
-            if ret is None:
-                continue
-            aligned = pd.DataFrame({"factor": fv, "return": ret}).dropna()
-            if len(aligned) < self.cv_folds * 20:
-                continue
-
-            n = len(aligned)
-            fold_size = n // self.cv_folds
-            for k in range(self.cv_folds):
-                start = k * fold_size
-                end = start + fold_size if k < self.cv_folds - 1 else n
-                segment = aligned.iloc[start:end]
-                if len(segment) >= 10:
-                    ic = segment["factor"].corr(segment["return"])
-                    if not np.isnan(ic):
-                        fold_ics.append(abs(ic))
-
-        if len(fold_ics) < self.cv_folds:
-            return 0.0
-
-        min_ic = min(fold_ics)
-        max_ic = max(fold_ics)
-        if max_ic < 1e-10:
-            return 1.0
-        penalty = 1.0 - (min_ic / max_ic)
-        return max(0.0, min(penalty, 1.0))
 
     def mine_factors(self) -> Dict:
         """Execute PySR-based symbolic regression factor mining.

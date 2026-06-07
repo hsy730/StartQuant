@@ -10,29 +10,20 @@ Mask-First设计：在数据加载阶段即构建可交易性掩码(tradable_mas
 - 解决方案：在数据加载时就标记不可交易日，让所有算子接收并传递mask
 """
 import hashlib
-import re
 import logging
 from pathlib import Path
 from typing import Optional, List, Dict, Tuple
 from dataclasses import dataclass
-from enum import Enum
 import pandas as pd
 import numpy as np
 import akshare as ak
 
+from backend.core.market_board import MarketBoard, detect_market_board
 from backend.core.settings import settings
 from backend.services.cache_service import cache_service
 from backend.services.data_preprocessing_service import data_preprocessing_service
 
 logger = logging.getLogger(__name__)
-
-
-class MarketBoard(str, Enum):
-    """市场板块枚举"""
-    MAIN = "main"              # 主板 (60xxxx, 00xxxx) - ±10%
-    CHINEXT = "chinext"        # 创业板 (30xxxx) - ±20%
-    STAR = "star"              # 科创板 (68xxxx) - ±20%
-    BEIJING = "beijing"        # 北交所 (8xxxx, 4xxxx) - ±30%
 
 
 @dataclass
@@ -56,25 +47,20 @@ class DataService:
         self.preprocessing = data_preprocessing_service
         
         # 市场板块配置（涨跌幅限制）
-        # 注意：顺序很重要！更具体的模式应该放在前面
         self._board_config = {
             MarketBoard.STAR: {
-                "code_pattern": r"^68\d{4}$",  # 科创板 (688000-699999)
                 "price_limit": 0.20,      # ±20%
                 "description": "科创板市场",
             },
             MarketBoard.CHINEXT: {
-                "code_pattern": r"^3\d{5}$",  # 创业板 (300xxx)
                 "price_limit": 0.20,      # ±20%
                 "description": "创业板市场",
             },
-            MarketBoard.BEIJING: {
-                "code_pattern": r"^(8\d{5}|4\d{5})$",  # 北交所 (6位代码: 8xxxxx, 4xxxxx)
+            MarketBoard.BSE: {
                 "price_limit": 0.30,      # ±30%
                 "description": "北交所市场",
             },
             MarketBoard.MAIN: {
-                "code_pattern": r"^(6[0-57-9]\d{4}|0\d{5})$",  # 主板 (600xxx, 000xxx, 排除科创板)
                 "price_limit": 0.10,      # ±10%
                 "description": "主板市场",
             },
@@ -339,15 +325,15 @@ class DataService:
             MarketBoard枚举值
         """
         # 提取纯数字代码
-        pure_code = stock_code.replace(".SH", "").replace(".SZ", "").strip()
+        pure_code = stock_code.replace(".SH", "").replace(".SZ", "").replace(".BJ", "").strip()
 
-        for board, config in self._board_config.items():
-            if re.match(config["code_pattern"], pure_code):
-                return board
+        board = detect_market_board(pure_code)
 
-        # 默认返回主板
-        logger.warning(f"无法识别股票 {stock_code} 的市场板块，默认为主板")
-        return MarketBoard.MAIN
+        if board == MarketBoard.UNKNOWN:
+            logger.warning(f"无法识别股票 {stock_code} 的市场板块，默认为主板")
+            return MarketBoard.MAIN
+
+        return board
 
     def _detect_price_limits(
         self,

@@ -7,15 +7,9 @@ from typing import List, Optional, Dict
 import pandas as pd
 import numpy as np
 import logging
+import traceback
 
-
-def safe_numeric_value(value):
-    """安全处理数值，将NaN和无穷大转换为None"""
-    if value is None:
-        return None
-    if np.isnan(value) or np.isinf(value):
-        return None
-    return float(value)
+from backend.utils.serialization import safe_numeric_value, sanitize_dict
 
 
 from backend.services.analysis_service import analysis_service
@@ -1175,7 +1169,7 @@ async def weighted_ic_analysis(request: WeightedICRequest):
         if not all_factor_data:
             raise HTTPException(status_code=500, detail="未能获取任何有效的因子数据")
         
-        factor_ic_dict = self._extract_all_ics(all_factor_data, request.factor_names)
+        factor_ic_dict = _extract_all_ics(all_factor_data, request.factor_names)
         
         if not factor_ic_dict:
             raise HTTPException(status_code=500, detail="无法计算任何因子的IC序列")
@@ -1207,45 +1201,45 @@ async def weighted_ic_analysis(request: WeightedICRequest):
         logger.error(f"加权IC分析失败: {str(e)}\n{traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"加权IC分析失败: {str(e)}")
 
-    @staticmethod
-    def _extract_all_ics(
-        all_factor_data: Dict[str, Dict],
-        factor_names: List[str],
-    ) -> Dict[str, pd.Series]:
-        """提取所有因子的IC序列"""
-        factor_ic_dict = {}
+
+def _extract_all_ics(
+    all_factor_data: Dict[str, Dict],
+    factor_names: List[str],
+) -> Dict[str, pd.Series]:
+    """提取所有因子的IC序列"""
+    factor_ic_dict = {}
+    
+    for factor_name in factor_names:
+        if factor_name not in all_factor_data:
+            continue
         
-        for factor_name in factor_names:
-            if factor_name not in all_factor_data:
-                continue
-            
-            factor_data = all_factor_data[factor_name]
-            all_ics = []
-            
-            for stock_code, df in factor_data.items():
-                if factor_name in df.columns and "close" in df.columns:
-                    future_ret = df["close"].pct_change(1).shift(-1)
-                    
-                    valid_mask = (
-                        df[factor_name].notna() & 
-                        future_ret.notna()
+        factor_data = all_factor_data[factor_name]
+        all_ics = []
+        
+        for stock_code, df in factor_data.items():
+            if factor_name in df.columns and "close" in df.columns:
+                future_ret = df["close"].pct_change(1).shift(-1)
+                
+                valid_mask = (
+                    df[factor_name].notna() & 
+                    future_ret.notna()
+                )
+                
+                if valid_mask.sum() > 20:
+                    ic_series = (
+                        df.loc[valid_mask, factor_name]
+                        .rolling(20)
+                        .corr(future_ret.loc[valid_mask])
                     )
+                    valid_ic = ic_series.dropna()
                     
-                    if valid_mask.sum() > 20:
-                        ic_series = (
-                            df.loc[valid_mask, factor_name]
-                            .rolling(20)
-                            .corr(future_ret.loc[valid_mask])
-                        )
-                        valid_ic = ic_series.dropna()
-                        
-                        if len(valid_ic) > 10:
-                            all_ics.extend(valid_ic.tolist())
-            
-            if all_ics:
-                factor_ic_dict[factor_name] = pd.Series(all_ics)
+                    if len(valid_ic) > 10:
+                        all_ics.extend(valid_ic.tolist())
         
-        return factor_ic_dict
+        if all_ics:
+            factor_ic_dict[factor_name] = pd.Series(all_ics)
+    
+    return factor_ic_dict
 
 
 @router.post("/factor-importance")
@@ -1289,7 +1283,7 @@ async def factor_importance_analysis(request: WeightedICRequest):
         if not all_factor_data:
             raise HTTPException(status_code=500, detail="未能获取任何有效的因子数据")
         
-        factor_ic_dict = analysis_router._extract_all_ics(
+        factor_ic_dict = _extract_all_ics(
             all_factor_data, 
             request.factor_names
         )

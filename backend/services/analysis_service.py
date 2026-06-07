@@ -199,6 +199,22 @@ class AnalysisService:
 
         cache_key = self._generate_cache_key(stock_codes, factor_names, start_date, end_date, factor_version_hash)
 
+        # 缓存检查必须在数据获取之前，避免缓存命中时浪费昂贵的计算
+        if use_cache:
+            db = get_db_session()
+            repo = AnalysisCacheRepository(db)
+            cached = repo.get_by_key(cache_key)
+            if cached:
+                db.close()
+                # 缓存命中：仍需获取factor_data用于反序列化，但跳过预处理和分析计算
+                factor_data = factor_service.calculate_factors_for_stocks(
+                    stock_codes, factor_names, start_date, end_date, rolling_window
+                )
+                if factor_data:
+                    return self._deserialize_from_cache(cached.result_data, factor_data)
+                # factor_data获取失败时继续走完整流程
+            db.close()
+
         factor_data = factor_service.calculate_factors_for_stocks(
             stock_codes, factor_names, start_date, end_date, rolling_window
         )
@@ -222,15 +238,6 @@ class AnalysisService:
         )
 
         logger.info(f"因子数据美颜完成，统计信息:\n{preprocessing_pipeline.get_processing_summary(preprocessing_stats)}")
-
-        if use_cache:
-            db = get_db_session()
-            repo = AnalysisCacheRepository(db)
-            cached = repo.get_by_key(cache_key)
-            if cached:
-                db.close()
-                return self._deserialize_from_cache(cached.result_data, factor_data)
-            db.close()
 
         results = {
             "metadata": {
@@ -1078,6 +1085,7 @@ class AnalysisService:
         y_list = []
 
         for stock_code, df in factor_data.items():
+            df = df.copy()
             logger.debug(f"[SHAP] Processing stock: {stock_code}")
             logger.debug(f"[SHAP]   DataFrame columns: {df.columns.tolist()}")
             logger.debug(f"[SHAP]   DataFrame shape: {df.shape}")

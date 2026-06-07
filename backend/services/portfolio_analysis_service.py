@@ -183,54 +183,14 @@ class PortfolioAnalysisService:
         annual_trading_days: int = 252,
         risk_free_rate: float = 0.03,
     ) -> Dict:
-        """
-        计算组合风险指标
+        """计算组合风险指标，委托 risk_metrics 统一入口"""
+        from backend.services.risk_metrics import calculate_risk_metrics as calc_risk, _empty_metrics
 
-        Args:
-            returns: 组合收益率序列
-            benchmark_returns: 基准收益率序列（可选）
-            annual_trading_days: 年化交易日数
-            risk_free_rate: 无风险利率（年化）
-
-        Returns:
-            风险指标字典
-        """
         returns_clean = returns.dropna()
-
         if len(returns_clean) == 0:
-            return self._empty_risk_metrics()
+            return _empty_metrics()
 
-        # 波动率
-        volatility = returns_clean.std() * np.sqrt(annual_trading_days)
-
-        # 下行波动率（Sortino标准：低于无风险利率的偏差）
-        daily_rf = risk_free_rate / annual_trading_days
-        downside_returns = returns_clean[returns_clean < daily_rf] - daily_rf
-        downside_volatility = (
-            downside_returns.std() * np.sqrt(annual_trading_days)
-            if len(downside_returns) > 0
-            else 0.0
-        )
-
-        # VaR (95%置信度)
-        var_95 = returns_clean.quantile(0.05)
-
-        # CVaR (条件VaR)
-        cvar_95 = returns_clean[returns_clean <= var_95].mean()
-
-        # 最大回撤
-        cumulative = (1 + returns_clean).cumprod()
-        peak = cumulative.cummax()
-        drawdown = (peak - cumulative) / peak
-        max_drawdown = drawdown.max()
-
-        result = {
-            "volatility": float(volatility),
-            "downside_volatility": float(downside_volatility),
-            "var_95": float(var_95),
-            "cvar_95": float(cvar_95),
-            "max_drawdown": float(max_drawdown),
-        }
+        result = calc_risk(returns_clean, risk_free_rate, annual_trading_days)
 
         # 如果有基准，计算相对风险指标
         if benchmark_returns is not None:
@@ -240,14 +200,15 @@ class PortfolioAnalysisService:
             }).dropna()
 
             if len(aligned_data) > 0:
-                # 跟踪误差
                 excess_returns = aligned_data["portfolio"] - aligned_data["benchmark"]
                 tracking_error = excess_returns.std() * np.sqrt(annual_trading_days)
-
-                # Beta
-                covariance = aligned_data["portfolio"].cov(aligned_data["benchmark"])
-                benchmark_variance = aligned_data["benchmark"].var()
-                beta = covariance / benchmark_variance if benchmark_variance > 0 else np.nan
+                try:
+                    alpha, beta = empyrical.alpha_beta_aligned(
+                        aligned_data["portfolio"], aligned_data["benchmark"],
+                        risk_free=risk_free_rate, period='daily', annualization=annual_trading_days
+                    )
+                except Exception:
+                    beta = np.nan
 
                 result["tracking_error"] = float(tracking_error)
                 result["beta"] = float(beta)
@@ -256,13 +217,8 @@ class PortfolioAnalysisService:
 
     def _empty_risk_metrics(self) -> Dict:
         """返回空的风险指标"""
-        return {
-            "volatility": 0.0,
-            "downside_volatility": 0.0,
-            "var_95": 0.0,
-            "cvar_95": 0.0,
-            "max_drawdown": 0.0,
-        }
+        from backend.services.risk_metrics import _empty_metrics
+        return _empty_metrics()
 
     def analyze_portfolio_comprehensive(
         self,

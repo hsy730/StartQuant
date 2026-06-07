@@ -6,9 +6,9 @@
 import pytest
 import numpy as np
 import pandas as pd
+from backend.core.market_board import MarketBoard
 from backend.services.smart_slippage_detector import (
     SmartSlippageDetector,
-    MarketBoard,
     LiquidityLevel,
     MarketCharacteristics,
     SlippageRecommendation,
@@ -50,7 +50,7 @@ class TestSmartSlippageDetector:
         stock_codes = ["830799", "430047", "400001"]
         chars = self.detector.analyze_market(stock_codes)
         
-        assert chars.market_board == MarketBoard.BEIJING
+        assert chars.market_board == MarketBoard.BSE
 
     def test_market_board_detection_mixed(self):
         """测试混合板块识别"""
@@ -58,7 +58,7 @@ class TestSmartSlippageDetector:
         chars = self.detector.analyze_market(stock_codes)
         
         # 混合板块，没有单一主导
-        assert chars.market_board == MarketBoard.MIXED
+        assert chars.market_board == MarketBoard.UNKNOWN
 
     def test_basic_slippage_recommendation_main_board(self):
         """测试主板股票的基础滑点推荐"""

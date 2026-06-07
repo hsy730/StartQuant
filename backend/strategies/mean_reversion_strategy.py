@@ -58,7 +58,7 @@ class MeanReversionStrategy(BaseStrategy):
         rolling_std = df["close"].rolling(window=self.lookback_window).std()
 
         # 计算Z-score
-        zscore = (df["close"] - rolling_mean) / rolling_std
+        zscore = (df["close"] - rolling_mean) / rolling_std.replace(0, np.nan)
 
         # 带持仓状态记忆的均值回归信号生成
         # entry_threshold: 进场阈值（超买/超卖）

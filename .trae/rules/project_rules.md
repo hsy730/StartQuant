@@ -198,6 +198,144 @@ except Exception as e:
 
 ---
 
+## 🧮 量化计算防坑规范
+
+> 本次代码审查中发现的系统性Bug模式，每条都来自真实缺陷，必须作为编码红线遵守。
+
+### 规则1：量纲一致性 — 比例与绝对金额不可混用
+
+**来源**：base_strategy.py 手续费计算Bug（`weight_change * initial_capital * commission_rate` 产生绝对金额，与比例收益率 `portfolio_returns` 相减导致净值爆炸）
+
+```python
+# ✅ 正确：手续费与收益率同量纲（比例）
+portfolio_returns = 0.01  # 1%收益
+commission = 0.1 * 0.0003  # 权重变化10% × 费率万三 = 0.003%比例手续费
+net = portfolio_returns - commission  # 0.01 - 0.00003 = 0.00997 ✅
+
+# ❌ 错误：手续费乘以initial_capital变成绝对金额
+commission = 0.1 * 1000000 * 0.0003  # = 30元绝对金额
+net = portfolio_returns - commission  # 0.01 - 30 = -29.99 ❌ 净值爆炸
+```
+
+**检查原则**：任何与收益率（比例）做加减的值，必须是同量纲的比例值。涉及金额转换时，只在最终输出净值曲线时乘以 `initial_capital`。
+
+### 规则2：前视偏差的判断标准 — shift方向不等于前视偏差
+
+**来源**：base_strategy.py 中 `shift(-1)` 被误判为前视偏差
+
+```python
+# ✅ 正确：shift(-1) 获取次日收益率，这是回测的标准语义
+# "t日决策，t+1日收益" — 决策在先，收益在后，不是前视
+df["next_return"] = df["close"].pct_change(1).shift(-1)
+
+# ❌ 真正的前视偏差：信号使用了未来数据
+# 如：用t+1日的价格来生成t日的信号
+signal_t = df["close"].shift(-1) > df["close"]  # 用了明天价格 ❌
+```
+
+**判断标准**：
+- `shift(-1)` 用于获取**未来收益**（结果变量）→ ✅ 合法
+- `shift(-1)` 用于生成**交易信号**（决策变量）→ ❌ 前视偏差
+- 关键区分：**信号生成**是否使用了未来数据，而非收益率的shift方向
+
+### 规则3：除零保护 — 所有除法/标准差必须处理零值
+
+**来源**：本次审查发现5处除零Bug（zscore的std=0、风险平价的volatility=0、rolling_ir的std=0、IC加权的norm_factor=0、CVaR过滤后空数组）
+
+```python
+# ✅ 正确：除零保护模式
+# 模式A：替换为NaN（推荐用于中间计算）
+result = numerator / denominator.replace(0, np.nan)
+
+# 模式B：替换为极小值（推荐用于需要非NaN结果的场景）
+result = numerator / denominator.clip(lower=1e-10)
+
+# 模式C：条件判断（推荐用于需要特殊处理的场景）
+if (denominator == 0).all():
+    return equal_weight  # 回退到等权
+result = numerator / denominator
+```
+
+**强制检查项**：
+- [ ] 所有 `/ std` 或 `/ denominator` 是否处理了零值？
+- [ ] `pct_change()` + `std()` 组合是否考虑了价格不变的情况？
+- [ ] 滚动窗口计算（rolling）是否考虑了窗口内数据恒定的情况？
+- [ ] 过滤操作（如 `returns[returns < 0]`）是否考虑了结果为空的情况？
+
+### 规则4：开源库API返回值必须查文档确认索引
+
+**来源**：formula_compiler_service.py 中 `TA-Lib BBANDS` 返回值索引错误（`[2]` 误用为 `[1]`）
+
+```python
+# ❌ 错误：凭直觉猜索引
+upper, middle, lower = talib.BBANDS(close)
+result = upper[2]  # 凭直觉以为是中轨，实际是下轨
+
+# ✅ 正确：查文档确认返回值顺序
+# TA-Lib BBANDS 返回 (upperband, middleband, lowerband)
+upper, middle, lower = talib.BBANDS(close)
+result = middle  # 直接用命名变量，不用索引
+```
+
+**原则**：
+- 多返回值的开源库函数，**必须用命名变量接收**，禁止用索引取值
+- 如果库只返回元组，**必须查文档确认顺序**，并添加注释说明
+- 特别注意：`TA-Lib`、`scipy`、`statsmodels` 的多返回值函数
+
+### 规则5：输入数据不可变 — 禁止就地修改传入的DataFrame
+
+**来源**：analysis_service.py 和 factor_effectiveness_service.py 中直接修改传入的 factor_data 字典内的 DataFrame，导致调用方数据被意外污染
+
+```python
+# ❌ 错误：df 是对原始 DataFrame 的引用，修改会污染调用方
+for stock_code, df in factor_data.items():
+    df["future_return"] = df["close"].pct_change().shift(-1)  # 调用方数据被篡改
+
+# ✅ 正确：先复制再修改
+for stock_code, df in factor_data.items():
+    df = df.copy()
+    df["future_return"] = df["close"].pct_change().shift(-1)
+```
+
+**原则**：服务层方法接收的 DataFrame/dict 参数视为只读，任何需要添加列或修改值的操作必须先 `df.copy()`。
+
+### 规则6：NaN/Inf序列化统一转为None — 禁止转为0.0
+
+**来源**：3个API路由各自实现NaN/Inf转换，行为不一致（analysis→None, portfolio→0.0, backtest→1e308），前端无法区分"值为0"和"值无效"
+
+```python
+# ❌ 错误：NaN→0.0 导致前端无法区分"零收益"和"数据缺失"
+"sharpe": 0.0  # 实际是 NaN，误导分析
+
+# ✅ 正确：NaN/Inf→None（JSON null），前端据此显示 "N/A"
+from backend.utils.serialization import sanitize_dict
+result = sanitize_dict(raw_metrics)  # NaN→None, Inf→None, np.int64→int
+```
+
+**原则**：所有API响应的数值序列化统一通过 `backend.utils.serialization.sanitize_dict()` 处理，NaN/Inf 一律转为 `None`。
+
+### 规则7：禁止裸except — 必须指定异常类型
+
+**来源**：factor_correlation_service.py 中3处 `except:` 吞掉了 KeyboardInterrupt 和 SystemExit
+
+```python
+# ❌ 错误：裸except捕获一切，程序无法Ctrl+C终止
+try:
+    result = compute_ic(factor, returns)
+except:
+    pass  # 连 KeyboardInterrupt 都被吞掉
+
+# ✅ 正确：明确捕获Exception
+try:
+    result = compute_ic(factor, returns)
+except Exception as e:
+    logger.warning(f"IC计算失败: {e}")
+```
+
+**原则**：`except:` 必须改为 `except Exception:`，需要处理特定异常时进一步缩小范围。
+
+---
+
 ## 🎨 UI/UX 设计规范
 
 ### 配置面板设计模式
@@ -384,8 +522,19 @@ def validate_preprocessing_config(config: Dict):
 - [ ] 日志记录是否充分？
 - [ ] 错误处理是否完善？
 
+在提交涉及量化计算的PR时，额外确认：
+
+- [ ] 收益率/手续费/滑点等是否保持量纲一致（比例 vs 绝对金额）？
+- [ ] shift操作是否正确区分了"获取未来收益"和"信号前视偏差"？
+- [ ] 所有除法/标准差/波动率计算是否处理了零值？
+- [ ] 开源库多返回值是否用命名变量接收而非索引取值？
+- [ ] 新增的统计/数学计算是否使用了对应的开源库？
+- [ ] 服务层方法是否就地修改了传入的DataFrame（必须先copy）？
+- [ ] API响应的NaN/Inf是否统一通过 `sanitize_dict()` 转为None？
+- [ ] 是否存在裸 `except:` （必须改为 `except Exception:`）？
+
 ---
 
-**最后更新**: 2026-06-06  
+**最后更新**: 2026-06-07  
 **维护者**: FactorHub Core Team  
 **适用版本**: v1.0.0+

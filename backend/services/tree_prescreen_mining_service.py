@@ -39,12 +39,13 @@ TREE_PRESCREEN_AVAILABLE = LGB_AVAILABLE or XGB_AVAILABLE
 if not TREE_PRESCREEN_AVAILABLE:
     logger.warning("LightGBM 和 XGBoost 均未安装，树模型预筛选功能不可用。请运行: pip install lightgbm 或 pip install xgboost")
 
+from backend.services.base_mining_service import BaseMiningService
 # ---- 下游服务延迟导入 ----
 from backend.services.factor_validation_service import factor_validation_service
 from backend.services.data_service import data_service
 
 
-class TreePrescreenMiningService:
+class TreePrescreenMiningService(BaseMiningService):
     """树模型预筛选 + 符号回归因子挖掘服务
 
     Two-stage pipeline:
@@ -55,6 +56,8 @@ class TreePrescreenMiningService:
       - "genetic": DEAP 遗传规划（默认）
       - "pysr": PySR 符号回归
     """
+
+    _service_name = "树模型预筛选"
 
     def __init__(
         self,
@@ -103,11 +106,15 @@ class TreePrescreenMiningService:
         if not TREE_PRESCREEN_AVAILABLE:
             raise ImportError("LightGBM 和 XGBoost 均未安装，请运行: pip install lightgbm 或 pip install xgboost")
 
-        self.base_factor_codes = base_factors
-        self.data = data
-        self.return_column = return_column
-        self.factor_calculator = factor_calculator
-        self.max_eval_stocks = max_eval_stocks
+        super().__init__(
+            base_factors=base_factors,
+            data=data,
+            return_column=return_column,
+            factor_calculator=factor_calculator,
+            max_eval_stocks=max_eval_stocks,
+            fitness_objective=fitness_objective,
+            cv_folds=cv_folds,
+        )
 
         # 树模型参数
         self.tree_model = tree_model
@@ -155,77 +162,16 @@ class TreePrescreenMiningService:
             cv_folds=cv_folds,
         )
 
-        self.return_values = data[return_column] if return_column in data.columns else None
-
-        # 股票池
-        self.stock_codes: List[str] = []
-        self.stock_pool_data: Dict[str, pd.DataFrame] = {}
-        self.stock_pool_return_values: Dict[str, pd.Series] = {}
-        self.stock_pool_base_factor_values: Dict[str, dict] = {}
-
-        # 预计算基础因子值
-        self.base_factor_values: Dict[str, dict] = {}
-        self._precompute_base_factors()
-
         # 结果缓存
         self._feature_importance: Optional[Dict[str, float]] = None
         self._selected_features: Optional[List[str]] = None
 
-        self.progress_callback = None
-        self._cancel_flag = False
         self._gp_service = None
         self._pysr_service = None
 
     # ------------------------------------------------------------------
-    # 股票池设置
+    # 进度回调（重写以同时取消下游子服务）
     # ------------------------------------------------------------------
-
-    def set_stock_pool(self, stock_codes: List[str], start_date: str, end_date: str):
-        """设置股票池（截面IC评估）"""
-        self.stock_codes = stock_codes
-        self.stock_pool_data = data_service.get_multiple_stocks_data(stock_codes, start_date, end_date)
-
-        for code, df in self.stock_pool_data.items():
-            if "close" in df.columns:
-                df["return"] = df["close"].pct_change()
-            self.stock_pool_return_values[code] = (
-                df[self.return_column] if self.return_column in df.columns else None
-            )
-
-            if self.factor_calculator is None:
-                from backend.services.factor_service import factor_service
-                self.factor_calculator = factor_service.calculator
-
-            stock_base_factors = {}
-            for i, factor_code in enumerate(self.base_factor_codes):
-                try:
-                    fv = self.factor_calculator.calculate(df, factor_code)
-                    if fv is not None and len(fv.dropna()) > 0:
-                        var_name = f"factor_{i}"
-                        stock_base_factors[var_name] = {
-                            "code": factor_code,
-                            "values": fv,
-                        }
-                except Exception as e:
-                    logger.warning(f"Stock {code} factor {factor_code} compute error: {e}")
-            self.stock_pool_base_factor_values[code] = stock_base_factors
-
-        logger.info(
-            f"树模型预筛选: 股票池已设置, {len(self.stock_pool_data)} 只股票"
-        )
-
-    # ------------------------------------------------------------------
-    # 进度回调
-    # ------------------------------------------------------------------
-
-    def set_progress_callback(self, callback):
-        """设置进度回调函数
-
-        Args:
-            callback: 签名为 callback(phase, current, total, message)
-                      phase: "feature_importance" 或 "symbolic_regression"
-        """
-        self.progress_callback = callback
 
     def request_cancel(self):
         """请求取消挖掘任务"""
@@ -250,35 +196,6 @@ class TreePrescreenMiningService:
             global_progress = 30.0 + (current / max(total, 1)) * 70.0
 
         self.progress_callback(phase, global_progress, 100.0, message)
-
-    # ------------------------------------------------------------------
-    # 基础因子预计算
-    # ------------------------------------------------------------------
-
-    def _precompute_base_factors(self):
-        """预计算所有基础因子值"""
-        if self.factor_calculator is None:
-            from backend.services.factor_service import factor_service
-            self.factor_calculator = factor_service.calculator
-
-        logger.info(f"树模型预筛选: 预计算 {len(self.base_factor_codes)} 个基础因子...")
-
-        for i, factor_code in enumerate(self.base_factor_codes):
-            try:
-                fv = self.factor_calculator.calculate(self.data, factor_code)
-                if fv is not None and len(fv.dropna()) > 0:
-                    var_name = f"factor_{i}"
-                    self.base_factor_values[var_name] = {
-                        "code": factor_code,
-                        "values": fv,
-                    }
-                    logger.info(f"  [{i+1}/{len(self.base_factor_codes)}] {factor_code}: {len(fv.dropna())} 个有效值")
-                else:
-                    logger.warning(f"  [{i+1}/{len(self.base_factor_codes)}] {factor_code}: 计算失败或无有效值")
-            except Exception as e:
-                logger.warning(f"  [{i+1}/{len(self.base_factor_codes)}] {factor_code}: 计算出错 - {e}")
-
-        logger.info(f"树模型预筛选: 成功预计算 {len(self.base_factor_values)} 个基础因子")
 
     # ------------------------------------------------------------------
     # Phase 1: 特征重要性计算

@@ -42,6 +42,7 @@ async def lifespan(app: FastAPI):
     print("启动FastAPI服务...")
     init_db()
     factor_service.load_preset_factors()
+    app.json_encoder = NumpyJSONEncoder
     print("数据库和预置因子加载完成")
 
     yield
@@ -70,7 +71,7 @@ def jsonable_encoder_with_numpy(obj, *args, **kwargs):
     """处理numpy类型的JSON编码器"""
     try:
         return jsonable_encoder(obj, *args, **kwargs, custom_serializer=lambda x: NumpyJSONEncoder().default(x))
-    except:
+    except Exception:
         return jsonable_encoder(obj, *args, **kwargs)
 
 
@@ -156,11 +157,6 @@ async def health_check():
 
 # 全局异常处理
 # 覆盖FastAPI的默认JSON响应编码器
-@app.on_event("startup")
-async def startup_event():
-    """应用启动事件 - 覆盖默认JSON编码器"""
-    app.json_encoder = NumpyJSONEncoder
-
 @app.exception_handler(Exception)
 async def global_exception_handler(request, exc):
     """全局异常处理"""

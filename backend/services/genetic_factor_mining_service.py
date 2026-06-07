@@ -28,6 +28,7 @@ except ImportError:
     DEAP_AVAILABLE = False
     logger.warning("DEAP库未安装，遗传算法功能将不可用")
 
+from backend.services.base_mining_service import BaseMiningService
 from backend.services.factor_generator_service import factor_generator_service
 from backend.services.factor_validation_service import factor_validation_service
 from backend.services.alphalens_analysis_service import alphalens_analysis_service
@@ -73,7 +74,7 @@ def _ensure_creator_types():
         pass
 
 
-class GeneticFactorMiningService:
+class GeneticFactorMiningService(BaseMiningService):
     """遗传算法因子挖掘服务（基于 DEAP gp.PrimitiveTree）
 
     Quality-boosting mechanisms:
@@ -87,6 +88,8 @@ class GeneticFactorMiningService:
     7. **NSGA-II Multi-objective** – maximise IC, minimise complexity. (Phase 7)
     8. **Extended Primitives** – 9→~25 operators incl. time-series windows. (Phase 7)
     """
+
+    _service_name = "遗传规划"
 
     def __init__(
         self,
@@ -118,19 +121,23 @@ class GeneticFactorMiningService:
         if not DEAP_AVAILABLE:
             raise ImportError("DEAP库未安装，请运行: pip install DEAP")
 
-        self.base_factor_codes = base_factors
-        self.data = data
-        self.return_column = return_column
+        super().__init__(
+            base_factors=base_factors,
+            data=data,
+            return_column=return_column,
+            factor_calculator=factor_calculator,
+            max_eval_stocks=max_eval_stocks,
+            fitness_objective=fitness_objective,
+            cv_folds=cv_folds,
+        )
+
         self.population_size = population_size
         self.n_generations = n_generations
         self.cx_prob = cx_prob
         self.mut_prob = mut_prob
-        self.factor_calculator = factor_calculator
-        self.max_eval_stocks = max_eval_stocks
 
         # Phase 1
         self.elite_size = min(elite_size, population_size)
-        self.fitness_objective = fitness_objective
 
         # Phase 2
         self.parsimony_coeff = parsimony_coeff
@@ -139,9 +146,6 @@ class GeneticFactorMiningService:
         self.diversity_penalty_coeff = diversity_penalty_coeff
         self.max_cache_size = max_cache_size
 
-        # Phase 6
-        self.cv_folds = cv_folds
-
         # Phase 7
         self.use_extended_primitives = use_extended_primitives
         self.max_tree_depth = max_tree_depth
@@ -149,37 +153,10 @@ class GeneticFactorMiningService:
         # NSGA-II
         self.use_nsga2 = use_nsga2
 
-        self.return_values = data[return_column] if return_column in data.columns else None
-
-        self.stock_codes: List[str] = []
-        self.stock_pool_data: Dict[str, pd.DataFrame] = {}
-        self.stock_pool_return_values: Dict[str, pd.Series] = {}
-        self.stock_pool_base_factor_values: Dict[str, dict] = {}
-
-        self._sampled_stock_codes: List[str] = []
         self._current_generation: int = 0
 
         # Phase 4: factor value cache (keyed by tree string)
         self._factor_cache: OrderedDict = OrderedDict()
-
-        # Phase 1: Generational Z-Score normalization for combined objective
-        # Collect raw IC/IR per generation → compute Z-Score stats → apply next gen
-        self._gen_ic_values: List[float] = []  # raw IC values collected in current generation
-        self._gen_ir_values: List[float] = []  # raw IR values collected in current generation
-        # Prior cold-start values based on domain knowledge of quantitative factors
-        _PRIOR_IC_MEAN = 0.03
-        _PRIOR_IC_STD = 0.02
-        _PRIOR_IR_MEAN = 0.5
-        _PRIOR_IR_STD = 0.3
-        self._zscore_ic_mean: float = _PRIOR_IC_MEAN  # μ of IC from previous generation
-        self._zscore_ic_std: float = _PRIOR_IC_STD    # σ of IC from previous generation
-        self._zscore_ir_mean: float = _PRIOR_IR_MEAN  # μ of IR from previous generation
-        self._zscore_ir_std: float = _PRIOR_IR_STD    # σ of IR from previous generation
-        self._has_zscore_stats: bool = True  # Prior values are valid from the start
-
-        # Pre-computed factor cache
-        self.base_factor_values: Dict[str, dict] = {}
-        self._precompute_base_factors()
 
         # Build tradable_mask from OHLC data (detect limit-up/down days)
         self.tradable_mask: Optional[pd.Series] = self._build_tradable_mask()
@@ -187,52 +164,6 @@ class GeneticFactorMiningService:
         # GP primitives & toolbox
         self.pset: Optional[gp.PrimitiveSet] = None
         self._setup_genetic_algorithm()
-
-    # ------------------------------------------------------------------
-    # Stock pool (cross-sectional IC evaluation support)
-    # ------------------------------------------------------------------
-
-    def set_stock_pool(self, stock_codes: List[str], start_date: str, end_date: str):
-        self.stock_codes = stock_codes
-        self.stock_pool_data = data_service.get_multiple_stocks_data(stock_codes, start_date, end_date)
-
-        for code, df in self.stock_pool_data.items():
-            if "close" in df.columns:
-                df["return"] = df["close"].pct_change()
-            self.stock_pool_return_values[code] = (
-                df[self.return_column] if self.return_column in df.columns else None
-            )
-
-            if self.factor_calculator is None:
-                from backend.services.factor_service import factor_service
-                self.factor_calculator = factor_service.calculator
-
-            stock_base_factors = {}
-            for i, factor_code in enumerate(self.base_factor_codes):
-                try:
-                    fv = self.factor_calculator.calculate(df, factor_code)
-                    if fv is not None and len(fv.dropna()) > 0:
-                        var_name = f"factor_{i}"
-                        stock_base_factors[var_name] = {
-                            "code": factor_code,
-                            "values": fv,
-                        }
-                except Exception as e:
-                    logger.warning(f"Stock {code} factor {factor_code} compute error: {e}")
-            self.stock_pool_base_factor_values[code] = stock_base_factors
-
-        self._refresh_stock_sample()
-        logger.info(
-            f"Stock pool set with {len(self.stock_pool_data)} stocks, "
-            f"eval sample={len(self._sampled_stock_codes)}: {stock_codes}"
-        )
-
-    def _refresh_stock_sample(self):
-        available = list(self.stock_pool_base_factor_values.keys())
-        if len(available) <= self.max_eval_stocks:
-            self._sampled_stock_codes = available
-        else:
-            self._sampled_stock_codes = random.sample(available, self.max_eval_stocks)
 
     # ------------------------------------------------------------------
     # Tradable mask construction (limit-up/down detection)
@@ -270,34 +201,6 @@ class GeneticFactorMiningService:
         except Exception as e:
             logger.warning(f"构建tradable_mask失败: {e}")
             return None
-
-    # ------------------------------------------------------------------
-    # Base factor precomputation
-    # ------------------------------------------------------------------
-
-    def _precompute_base_factors(self):
-        if self.factor_calculator is None:
-            from backend.services.factor_service import factor_service
-            self.factor_calculator = factor_service.calculator
-
-        logger.info(f"预计算 {len(self.base_factor_codes)} 个基础因子...")
-
-        for i, factor_code in enumerate(self.base_factor_codes):
-            try:
-                fv = self.factor_calculator.calculate(self.data, factor_code)
-                if fv is not None and len(fv.dropna()) > 0:
-                    var_name = f"factor_{i}"
-                    self.base_factor_values[var_name] = {
-                        "code": factor_code,
-                        "values": fv,
-                    }
-                    logger.info(f"  [{i+1}/{len(self.base_factor_codes)}] {factor_code}: {len(fv.dropna())} 个有效值")
-                else:
-                    logger.warning(f"  [{i+1}/{len(self.base_factor_codes)}] {factor_code}: 计算失败或无有效值")
-            except Exception as e:
-                logger.warning(f"  [{i+1}/{len(self.base_factor_codes)}] {factor_code}: 计算出错 - {e}")
-
-        logger.info(f"成功预计算 {len(self.base_factor_values)} 个基础因子")
 
     # ------------------------------------------------------------------
     # GP setup
@@ -358,22 +261,6 @@ class GeneticFactorMiningService:
         self.stats.register("min", np.min)
         self.stats.register("max", np.max)
 
-        self.progress_callback = None
-        self._cancel_flag = False
-
-    def set_progress_callback(self, callback):
-        """设置进度回调函数
-
-        Args:
-            callback: 签名为 callback(generation, total_generations, best_fitness, avg_fitness)
-        """
-        self.progress_callback = callback
-
-    def request_cancel(self):
-        """请求取消挖掘任务"""
-        self._cancel_flag = True
-        logger.info("收到取消请求，将在当前代结束后停止")
-
     # ------------------------------------------------------------------
     # Evaluation
     # ------------------------------------------------------------------
@@ -396,161 +283,6 @@ class GeneticFactorMiningService:
     def _cache_clear(self):
         """Clear the factor value cache (call once per generation)."""
         self._factor_cache.clear()
-
-    # ------------------------------------------------------------------
-    # Phase 6: Cross-validation
-    # ------------------------------------------------------------------
-
-    def _cv_penalty(self, factor_values_dict: Dict[str, pd.Series]) -> float:
-        """Compute a cross-validation penalty for over-fitting control.
-
-        Splits the time-series into *cv_folds* segments, computes IC on
-        each, and returns ``1.0 - (min_fold_ic / max_fold_ic)`` clamped
-        to [0, 1].  A factor whose IC is consistent across folds gets
-        penalty ≈ 0; one that collapses on some folds gets penalty → 1.
-        """
-        if self.cv_folds < 2:
-            return 0.0
-
-        fold_ics: List[float] = []
-        for stock_code, fv in factor_values_dict.items():
-            ret = self.stock_pool_return_values.get(stock_code)
-            if ret is None:
-                continue
-            aligned = pd.DataFrame({"factor": fv, "return": ret}).dropna()
-            if len(aligned) < self.cv_folds * 20:
-                continue
-
-            n = len(aligned)
-            fold_size = n // self.cv_folds
-            for k in range(self.cv_folds):
-                start = k * fold_size
-                end = start + fold_size if k < self.cv_folds - 1 else n
-                segment = aligned.iloc[start:end]
-                if len(segment) >= 10:
-                    ic = segment["factor"].corr(segment["return"])
-                    if not np.isnan(ic):
-                        fold_ics.append(abs(ic))
-
-        if len(fold_ics) < self.cv_folds:
-            return 0.0
-
-        min_ic = min(fold_ics)
-        max_ic = max(fold_ics)
-        if max_ic < 1e-10:
-            return 1.0
-        penalty = 1.0 - (min_ic / max_ic)
-        return max(0.0, min(penalty, 1.0))
-
-    # ------------------------------------------------------------------
-    # Phase 1: Fitness objective routing
-    # ------------------------------------------------------------------
-
-    def _route_fitness(self, ic_results: dict, factor_values_dict: Optional[Dict[str, pd.Series]] = None) -> float:
-        """Select the fitness value according to ``self.fitness_objective``.
-
-        Supported objectives:
-        - ``ic_mean``  : best absolute mean IC across Spearman/Pearson (default)
-        - ``ir_ratio`` : IC mean / IC std (information ratio)
-        - ``sharpe``   : Sharpe-like ratio of the long-short portfolio
-        - ``combined`` : weighted blend of *Z-Score normalized* ic_mean and ir_ratio
-
-        For ``combined``, IC and IR have very different scales (IC ≈ 0.01–0.10,
-        IR ≈ 0.3–2.0), which makes naive 0.6*IC + 0.4*IR meaningless (IR dominates).
-        Instead, we apply Z-Score normalization using statistics from the *previous*
-        generation's batch of evaluations, then clip to [-3, 3] and shift to [0, 1]:
-
-            z_ic = clip((IC - μ_ic) / (σ_ic + ε), -3, 3)
-            z_ir = clip((IR - μ_ir) / (σ_ir + ε), -3, 3)
-            Norm(IC) = (z_ic + 3) / 6      → maps [-3σ, +3σ] to [0, 1]
-            Norm(IR) = (z_ir + 3) / 6
-            combined  = 0.6 * Norm(IC) + 0.4 * Norm(IR)
-
-        The 60/40 weighting is now meaningful because both components are on the
-        same [0, 1] scale. Statistics are computed at generation boundaries in
-        ``_update_zscore_stats()``.
-        """
-        best_ic = 0.0
-        best_ir = 0.0
-
-        for ic_type in ["spearman_ic", "pearson_ic"]:
-            ic_type_data = ic_results.get(ic_type, {})
-            for period_key, period_stats in ic_type_data.items():
-                if not isinstance(period_stats, dict) or "error" in period_stats:
-                    continue
-                mean_ic = period_stats.get("mean_ic")
-                std_ic = period_stats.get("std_ic")
-                if mean_ic is None or std_ic is None:
-                    continue
-                mean_ic = abs(float(mean_ic))
-                std_ic = float(std_ic)
-                ir = abs(mean_ic / std_ic) if std_ic > 1e-10 else 0.0
-                if mean_ic > best_ic:
-                    best_ic = mean_ic
-                if ir > best_ir:
-                    best_ir = ir
-
-        # Collect raw IC/IR for generational Z-Score computation
-        self._gen_ic_values.append(best_ic)
-        self._gen_ir_values.append(best_ir)
-
-        if self.fitness_objective == "ir_ratio":
-            return best_ir
-        elif self.fitness_objective == "sharpe":
-            # Approximate Sharpe: use IR as proxy
-            return best_ir
-        elif self.fitness_objective == "combined":
-            # Z-Score normalize using previous generation's statistics (with prior cold-start)
-            z_ic = max(-3.0, min((best_ic - self._zscore_ic_mean) / (self._zscore_ic_std + 1e-8), 3.0))
-            z_ir = max(-3.0, min((best_ir - self._zscore_ir_mean) / (self._zscore_ir_std + 1e-8), 3.0))
-            # Map from [-3, 3] to [0, 1]
-            norm_ic = (z_ic + 3.0) / 6.0
-            norm_ir = (z_ir + 3.0) / 6.0
-            return 0.6 * norm_ic + 0.4 * norm_ir
-        else:  # ic_mean (default)
-            return best_ic
-
-    def _update_zscore_stats(self):
-        """Compute Z-Score normalization stats from the current generation's
-        collected IC/IR values.  Called at each generation boundary.
-
-        Requirements: at least 5 valid values to compute stable statistics.
-        After computing, clears the collection lists for the next generation.
-        Applies σ lower-bound protection: max(σ, max(0.01*μ, 0.005)) to
-        prevent Z-Score explosion when the population converges.
-        """
-        valid_ic = [v for v in self._gen_ic_values if v > 1e-10]
-        valid_ir = [v for v in self._gen_ir_values if v > 1e-10]
-
-        if len(valid_ic) >= 5 and len(valid_ir) >= 5:
-            ic_mean = float(np.mean(valid_ic))
-            ic_std = float(np.std(valid_ic))
-            ir_mean = float(np.mean(valid_ir))
-            ir_std = float(np.std(valid_ir))
-
-            # σ lower-bound protection: prevent Z-Score explosion on convergence
-            ic_std = max(ic_std, max(0.01 * ic_mean, 0.005))
-            ir_std = max(ir_std, max(0.01 * ir_mean, 0.005))
-
-            if ic_std < self._zscore_ic_std * 0.1 or ir_std < self._zscore_ir_std * 0.1:
-                logger.warning(
-                    f"Z-Score σ very small (IC σ={ic_std:.6f}, IR σ={ir_std:.6f}), "
-                    f"search may be stagnating"
-                )
-
-            self._zscore_ic_mean = ic_mean
-            self._zscore_ic_std = ic_std
-            self._zscore_ir_mean = ir_mean
-            self._zscore_ir_std = ir_std
-            self._has_zscore_stats = True
-            logger.debug(
-                f"Z-Score stats updated: IC μ={self._zscore_ic_mean:.4f} σ={self._zscore_ic_std:.4f}, "
-                f"IR μ={self._zscore_ir_mean:.4f} σ={self._zscore_ir_std:.4f}"
-            )
-
-        # Clear for next generation
-        self._gen_ic_values = []
-        self._gen_ir_values = []
 
     # ------------------------------------------------------------------
     # Evaluation

@@ -7,11 +7,13 @@ import numpy as np
 from typing import Dict, List, Optional, Tuple
 from datetime import datetime
 import logging
+import traceback
 import gc
 
 import vectorbt as vbt
 import empyrical
 
+from backend.services.risk_metrics import calculate_risk_metrics, _empty_metrics
 from backend.services.smart_slippage_detector import smart_slippage_detector, SlippageRecommendation
 
 logger = logging.getLogger(__name__)
@@ -714,104 +716,8 @@ class VectorBTBacktestService:
         # 计算交易次数
         trades_count = stats.get('Total Trades', 0)
 
-        # 提取交易记录（使用VectorBT的records_readable方法）
-        trades_df = None
-        try:
-            # 使用records_readable获取可读的交易记录
-            # records_readable返回的是pandas DataFrame
-            if hasattr(pf, 'trades') and hasattr(pf.trades, 'records_readable'):
-                trades_readable = pf.trades.records_readable
-
-                if trades_readable is not None and len(trades_readable) > 0:
-                    # records_readable是DataFrame，直接重命名列
-                    trades_df = trades_readable.copy()
-
-                    # 创建列名映射（英文 -> 中文）
-                    column_mapping = {
-                        'Trade Id': '交易ID',
-                        'Column': '股票代码',
-                        'Size': '数量',
-                        'Entry Timestamp': '入场时间',
-                        'Avg Entry Price': '入场价格',
-                        'Entry Fees': '入场手续费',
-                        'Exit Timestamp': '出场时间',
-                        'Avg Exit Price': '出场价格',
-                        'Exit Fees': '出场手续费',
-                        'PnL': '收益',
-                        'Return': '收益率',
-                        'Direction': '方向',
-                        'Status': '状态',
-                        'Parent Id': '父ID'
-                    }
-
-                    # 重命名列
-                    trades_df.rename(columns=column_mapping, inplace=True)
-
-                    # 转换方向和状态为中文
-                    # VectorBT records_readable: 'Long'/'Short' (字符串)
-                    if '方向' in trades_df.columns:
-                        trades_df['方向'] = trades_df['方向'].map({
-                            'Long': '做多',
-                            'Short': '做空'
-                        }).fillna('未知')
-
-                    if '状态' in trades_df.columns:
-                        trades_df['状态'] = trades_df['状态'].map({
-                            'Open': '持仓中',
-                            'Closed': '已平仓'
-                        }).fillna('未知')
-
-                    # 将入场时间设为索引（如果存在）
-                    if '入场时间' in trades_df.columns:
-                        # 如果入场时间是时间戳，转换为datetime
-                        try:
-                            trades_df['入场时间'] = pd.to_datetime(trades_df['入场时间'], errors='coerce')
-                        except Exception as e:
-                            import logging
-                            logging.getLogger(__name__).debug(f"入场时间转换失败: {e}")
-                        trades_df.set_index('入场时间', inplace=True)
-
-                    # 转换出场时间为可读格式
-                    # VectorBT返回的Exit Timestamp已经是datetime64[ns]类型
-                    if '出场时间' in trades_df.columns:
-                        try:
-                            # 创建一个新Series来存储格式化后的字符串
-                            exit_time_series = trades_df['出场时间'].copy()
-                            # 格式化非NaT值为字符串
-                            mask = exit_time_series.notna()
-                            if mask.any():
-                                # 使用apply逐个转换，确保返回字符串
-                                formatted = exit_time_series[mask].apply(lambda x: x.strftime('%Y-%m-%d') if pd.notna(x) else x)
-                                # 将整个列替换为object类型
-                                trades_df['出场时间'] = exit_time_series.astype(object)
-                                # 更新非NaT值
-                                trades_df.loc[mask, '出场时间'] = formatted.values
-                        except Exception as e:
-                            import logging
-                            logging.warning(f"Failed to convert exit time: {e}")
-
-                    # 对于单股票回测，如果股票代码列全是0，则删除该列
-                    if '股票代码' in trades_df.columns:
-                        unique_codes = trades_df['股票代码'].unique()
-                        if len(unique_codes) == 1 and (unique_codes[0] == 0 or unique_codes[0] == '0'):
-                            trades_df = trades_df.drop(columns=['股票代码'])
-
-                    # 删除不需要的列
-                    columns_to_drop = ['Exit Trade Id', 'Position Id']
-                    for col in columns_to_drop:
-                        if col in trades_df.columns:
-                            trades_df = trades_df.drop(columns=[col])
-
-                    # 计算交易价值（入场价格 * 数量）
-                    if '入场价格' in trades_df.columns and '数量' in trades_df.columns:
-                        trades_df['价值'] = trades_df['入场价格'] * trades_df['数量'].abs()
-        except Exception as e:
-            # 记录错误但继续执行
-            import logging
-            logging.warning(f"Failed to extract trades from VectorBT: {str(e)}")
-            import traceback
-            logging.warning(traceback.format_exc())
-            trades_df = None
+        # 提取交易记录
+        trades_df = self._format_trades_df(pf)
 
         return {
             "quantile_returns": quantile_returns,
@@ -874,9 +780,9 @@ class VectorBTBacktestService:
         Returns:
             Dict: 回测结果
         """
-        # 确保索引是 DatetimeIndex
+        # 确保索引是 DatetimeIndex，且无条件copy避免副作用
+        df = df.copy()
         if not isinstance(df.index, pd.DatetimeIndex):
-            df = df.copy()
             if "date" in df.columns:
                 df = df.set_index("date")
             df.index = pd.to_datetime(df.index)
@@ -1110,104 +1016,8 @@ class VectorBTBacktestService:
         # 计算交易次数（每日调仓次数）
         trades_count = stats.get('Total Trades', len(selected_stocks))
 
-        # 提取交易记录（使用VectorBT的records_readable方法）
-        trades_df = None
-        try:
-            # 使用records_readable获取可读的交易记录
-            # records_readable返回的是pandas DataFrame
-            if hasattr(pf, 'trades') and hasattr(pf.trades, 'records_readable'):
-                trades_readable = pf.trades.records_readable
-
-                if trades_readable is not None and len(trades_readable) > 0:
-                    # records_readable是DataFrame，直接重命名列
-                    trades_df = trades_readable.copy()
-
-                    # 创建列名映射（英文 -> 中文）
-                    column_mapping = {
-                        'Trade Id': '交易ID',
-                        'Column': '股票代码',
-                        'Size': '数量',
-                        'Entry Timestamp': '入场时间',
-                        'Avg Entry Price': '入场价格',
-                        'Entry Fees': '入场手续费',
-                        'Exit Timestamp': '出场时间',
-                        'Avg Exit Price': '出场价格',
-                        'Exit Fees': '出场手续费',
-                        'PnL': '收益',
-                        'Return': '收益率',
-                        'Direction': '方向',
-                        'Status': '状态',
-                        'Parent Id': '父ID'
-                    }
-
-                    # 重命名列
-                    trades_df.rename(columns=column_mapping, inplace=True)
-
-                    # 转换方向和状态为中文
-                    # VectorBT records_readable: 'Long'/'Short' (字符串)
-                    if '方向' in trades_df.columns:
-                        trades_df['方向'] = trades_df['方向'].map({
-                            'Long': '做多',
-                            'Short': '做空'
-                        }).fillna('未知')
-
-                    if '状态' in trades_df.columns:
-                        trades_df['状态'] = trades_df['状态'].map({
-                            'Open': '持仓中',
-                            'Closed': '已平仓'
-                        }).fillna('未知')
-
-                    # 将入场时间设为索引（如果存在）
-                    if '入场时间' in trades_df.columns:
-                        # 如果入场时间是时间戳，转换为datetime
-                        try:
-                            trades_df['入场时间'] = pd.to_datetime(trades_df['入场时间'], errors='coerce')
-                        except Exception as e:
-                            import logging
-                            logging.getLogger(__name__).debug(f"入场时间转换失败: {e}")
-                        trades_df.set_index('入场时间', inplace=True)
-
-                    # 转换出场时间为可读格式
-                    # VectorBT返回的Exit Timestamp已经是datetime64[ns]类型
-                    if '出场时间' in trades_df.columns:
-                        try:
-                            # 创建一个新Series来存储格式化后的字符串
-                            exit_time_series = trades_df['出场时间'].copy()
-                            # 格式化非NaT值为字符串
-                            mask = exit_time_series.notna()
-                            if mask.any():
-                                # 使用apply逐个转换，确保返回字符串
-                                formatted = exit_time_series[mask].apply(lambda x: x.strftime('%Y-%m-%d') if pd.notna(x) else x)
-                                # 将整个列替换为object类型
-                                trades_df['出场时间'] = exit_time_series.astype(object)
-                                # 更新非NaT值
-                                trades_df.loc[mask, '出场时间'] = formatted.values
-                        except Exception as e:
-                            import logging
-                            logging.warning(f"Failed to convert exit time: {e}")
-
-                    # 对于单股票回测，如果股票代码列全是0，则删除该列
-                    if '股票代码' in trades_df.columns:
-                        unique_codes = trades_df['股票代码'].unique()
-                        if len(unique_codes) == 1 and (unique_codes[0] == 0 or unique_codes[0] == '0'):
-                            trades_df = trades_df.drop(columns=['股票代码'])
-
-                    # 删除不需要的列
-                    columns_to_drop = ['Exit Trade Id', 'Position Id']
-                    for col in columns_to_drop:
-                        if col in trades_df.columns:
-                            trades_df = trades_df.drop(columns=[col])
-
-                    # 计算交易价值（入场价格 * 数量）
-                    if '入场价格' in trades_df.columns and '数量' in trades_df.columns:
-                        trades_df['价值'] = trades_df['入场价格'] * trades_df['数量'].abs()
-        except Exception as e:
-            # 记录错误但继续执行
-            import logging
-            logging.warning(f"Failed to extract trades from VectorBT: {str(e)}")
-            import traceback
-            logging.warning(traceback.format_exc())
-            trades_df = None
+        # 提取交易记录
+        trades_df = self._format_trades_df(pf)
 
         return {
             "portfolio_returns": returns,
@@ -1313,98 +1123,23 @@ class VectorBTBacktestService:
         self, returns: pd.Series, equity_curve: pd.Series = None, annual_trading_days: int = 252, risk_free_rate: float = 0.03
     ) -> Dict:
         """
-        计算性能指标
+        计算性能指标（委托risk_metrics + empyrical）
 
         Args:
             returns: 收益率序列
-            equity_curve: 净值曲线（可选），如果提供则用它计算回撤，更准确
+            equity_curve: 净值曲线（可选，当前保留参数以兼容调用方）
             annual_trading_days: 年化交易日数，默认252
             risk_free_rate: 无风险利率，默认3%
 
         Returns:
             Dict: 包含各种性能指标的字典
         """
-        # 删除NaN值
         returns_clean = returns.dropna()
 
         if len(returns_clean) == 0:
             return self._empty_metrics()
 
-        # 基础指标
-        total_return = (1 + returns_clean).prod() - 1  # 复利计算累计收益
-        n_days = len(returns_clean)
-
-        # 年化收益率（使用复利公式，与 backtest_service.py 保持一致）
-        if n_days > 0:
-            annual_return = (1 + total_return) ** (annual_trading_days / n_days) - 1
-        else:
-            annual_return = 0.0
-
-        # 波动率（年化）
-        volatility = returns_clean.std() * np.sqrt(annual_trading_days)
-
-        # 夏普比率
-        daily_rf = risk_free_rate / annual_trading_days
-        excess_returns = returns_clean - daily_rf
-        if volatility > 0:
-            sharpe_ratio = excess_returns.mean() * annual_trading_days / volatility
-        else:
-            sharpe_ratio = 0.0
-
-        # 最大回撤（优先使用净值曲线计算，更准确）
-        if equity_curve is not None and len(equity_curve) > 0:
-            # 使用传入的净值曲线计算
-            equity_array = equity_curve.values if hasattr(equity_curve, 'values') else list(equity_curve.values())
-            peak = pd.Series(equity_array).cummax()
-            drawdown = (peak - pd.Series(equity_array)) / peak
-            max_drawdown = drawdown.max()
-        else:
-            # 回退方案：从收益率序列计算净值曲线（使用复利）
-            equity = self.initial_capital * (1 + returns_clean).cumprod()
-            peak = equity.cummax()
-            drawdown = (peak - equity) / peak
-            max_drawdown = drawdown.max()
-
-        # 卡玛比率（设置最小阈值避免除零）
-        if max_drawdown > 0.0001:  # 回撤至少大于0.01%
-            calmar_ratio = annual_return / max_drawdown
-        else:
-            # 如果回撤极小，根据收益率设置卡玛比率
-            if annual_return > 0:
-                calmar_ratio = 999.99  # 接近无穷大
-            else:
-                calmar_ratio = -999.99  # 负收益且无回撤，设置为很大的负数
-
-        # 胜率
-        win_rate = (returns_clean > 0).mean()
-
-        # 索提诺比率（标准下行偏差公式）
-        daily_rf = risk_free_rate / annual_trading_days
-        downside_diff = np.minimum(returns_clean - daily_rf, 0)
-        downside_std = np.sqrt((downside_diff ** 2).mean()) * np.sqrt(annual_trading_days)
-        if downside_std > 0:
-            sortino_ratio = (excess_returns.mean() * annual_trading_days) / downside_std
-        else:
-            sortino_ratio = 0.0
-
-        # VaR (95%置信度)
-        var_95 = returns_clean.quantile(0.05)
-
-        # CVaR (条件VaR，平均损失)
-        cvar_95 = returns_clean[returns_clean <= var_95].mean()
-
-        return {
-            "total_return": total_return,
-            "annual_return": annual_return,
-            "volatility": volatility,
-            "sharpe_ratio": sharpe_ratio,
-            "max_drawdown": max_drawdown,
-            "calmar_ratio": calmar_ratio,
-            "win_rate": win_rate,
-            "sortino_ratio": sortino_ratio,
-            "var_95": var_95,
-            "cvar_95": cvar_95,
-        }
+        return calculate_risk_metrics(returns_clean, risk_free_rate, annual_trading_days)
 
     def _calculate_volatility(self, returns_clean: pd.Series | pd.DataFrame, stats: pd.Series, annual_trading_days: int = 252) -> float:
         """Calculate volatility from stats or compute manually"""
@@ -1418,35 +1153,120 @@ class VectorBTBacktestService:
 
         return returns_clean.std() * np.sqrt(annual_trading_days) if len(returns_clean) > 0 else 0.0
 
+    def _format_trades_df(self, pf) -> Optional[pd.DataFrame]:
+        """从VectorBT Portfolio提取并格式化交易记录为中文可读格式
+
+        Args:
+            pf: VectorBT Portfolio对象
+
+        Returns:
+            格式化后的交易记录DataFrame，无交易记录时返回None
+        """
+        trades_df = None
+        try:
+            if hasattr(pf, 'trades') and hasattr(pf.trades, 'records_readable'):
+                trades_readable = pf.trades.records_readable
+
+                if trades_readable is not None and len(trades_readable) > 0:
+                    trades_df = trades_readable.copy()
+
+                    # 创建列名映射（英文 -> 中文）
+                    column_mapping = {
+                        'Trade Id': '交易ID',
+                        'Column': '股票代码',
+                        'Size': '数量',
+                        'Entry Timestamp': '入场时间',
+                        'Avg Entry Price': '入场价格',
+                        'Entry Fees': '入场手续费',
+                        'Exit Timestamp': '出场时间',
+                        'Avg Exit Price': '出场价格',
+                        'Exit Fees': '出场手续费',
+                        'PnL': '收益',
+                        'Return': '收益率',
+                        'Direction': '方向',
+                        'Status': '状态',
+                        'Parent Id': '父ID'
+                    }
+
+                    # 重命名列
+                    trades_df.rename(columns=column_mapping, inplace=True)
+
+                    # 转换方向和状态为中文
+                    if '方向' in trades_df.columns:
+                        trades_df['方向'] = trades_df['方向'].map({
+                            'Long': '做多',
+                            'Short': '做空'
+                        }).fillna('未知')
+
+                    if '状态' in trades_df.columns:
+                        trades_df['状态'] = trades_df['状态'].map({
+                            'Open': '持仓中',
+                            'Closed': '已平仓'
+                        }).fillna('未知')
+
+                    # 将入场时间设为索引
+                    if '入场时间' in trades_df.columns:
+                        try:
+                            trades_df['入场时间'] = pd.to_datetime(trades_df['入场时间'], errors='coerce')
+                        except Exception as e:
+                            logger.debug(f"入场时间转换失败: {e}")
+                        trades_df.set_index('入场时间', inplace=True)
+
+                    # 转换出场时间为可读格式
+                    if '出场时间' in trades_df.columns:
+                        try:
+                            exit_time_series = trades_df['出场时间'].copy()
+                            mask = exit_time_series.notna()
+                            if mask.any():
+                                formatted = exit_time_series[mask].apply(
+                                    lambda x: x.strftime('%Y-%m-%d') if pd.notna(x) else x
+                                )
+                                trades_df['出场时间'] = exit_time_series.astype(object)
+                                trades_df.loc[mask, '出场时间'] = formatted.values
+                        except Exception as e:
+                            logger.warning(f"出场时间格式化失败: {e}")
+
+                    # 对于单股票回测，如果股票代码列全是0，则删除该列
+                    if '股票代码' in trades_df.columns:
+                        unique_codes = trades_df['股票代码'].unique()
+                        if len(unique_codes) == 1 and (unique_codes[0] == 0 or unique_codes[0] == '0'):
+                            trades_df = trades_df.drop(columns=['股票代码'])
+
+                    # 删除不需要的列
+                    for col in ['Exit Trade Id', 'Position Id']:
+                        if col in trades_df.columns:
+                            trades_df = trades_df.drop(columns=[col])
+
+                    # 计算交易价值（入场价格 * 数量）
+                    if '入场价格' in trades_df.columns and '数量' in trades_df.columns:
+                        trades_df['价值'] = trades_df['入场价格'] * trades_df['数量'].abs()
+        except Exception as e:
+            logger.warning(f"提取VectorBT交易记录失败: {e}")
+            logger.debug(traceback.format_exc())
+            trades_df = None
+
+        return trades_df
+
     def _calculate_var_cvar(self, returns_clean: pd.Series | pd.DataFrame) -> tuple[float, float]:
-        """Calculate VaR and CVaR from returns"""
+        """Calculate VaR and CVaR from returns, with defensive empty-check for CVaR"""
         if len(returns_clean) == 0:
             return 0.0, 0.0
 
         if isinstance(returns_clean, pd.DataFrame):
             portfolio_returns = returns_clean.mean(axis=1)
             var_95 = portfolio_returns.quantile(0.05)
-            cvar_95 = portfolio_returns[portfolio_returns <= var_95].mean()
+            tail = portfolio_returns[portfolio_returns <= var_95]
+            cvar_95 = float(tail.mean()) if len(tail) > 0 else 0.0
         else:
             var_95 = returns_clean.quantile(0.05)
-            cvar_95 = returns_clean[returns_clean <= var_95].mean()
+            tail = returns_clean[returns_clean <= var_95]
+            cvar_95 = float(tail.mean()) if len(tail) > 0 else 0.0
 
         return var_95, cvar_95
 
     def _empty_metrics(self) -> Dict:
         """返回空的性能指标字典"""
-        return {
-            "total_return": 0.0,
-            "annual_return": 0.0,
-            "volatility": 0.0,
-            "sharpe_ratio": 0.0,
-            "max_drawdown": 0.0,
-            "calmar_ratio": 0.0,
-            "win_rate": 0.0,
-            "sortino_ratio": 0.0,
-            "var_95": 0.0,
-            "cvar_95": 0.0,
-        }
+        return _empty_metrics()
 
 
 def check_vectorbt_available() -> bool:

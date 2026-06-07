@@ -53,12 +53,10 @@ class EnhancedAnalysisService:
         n = len(valid_data)
         # t统计量计算
         # t = r * sqrt(n-2) / sqrt(1-r^2)
-        if abs(ic) >= 1:
-            t_statistic = 0
-            p_value = 1.0
-        else:
-            t_statistic = ic * np.sqrt(n - 2) / np.sqrt(1 - ic**2)
-            p_value = 2 * (1 - stats.t.cdf(abs(t_statistic), df=n - 2))
+        # 将 ic clip 到 [-0.9999, 0.9999] 避免数值问题
+        ic_clipped = np.clip(ic, -0.9999, 0.9999)
+        t_statistic = ic_clipped * np.sqrt(n - 2) / np.sqrt(1 - ic_clipped**2)
+        p_value = 2 * (1 - stats.t.cdf(abs(t_statistic), df=n - 2))
 
         # 计算置信区间
         alpha = 1 - confidence_level

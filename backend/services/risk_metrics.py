@@ -53,10 +53,8 @@ def calculate_risk_metrics(
             returns_arr, period='daily', annualization=annual_trading_days
         )),
         "win_rate": float((returns_arr > 0).mean()),
-        "var_95": float(np.percentile(returns_arr, 5)),
-        "cvar_95": float(
-            returns_arr[returns_arr <= np.percentile(returns_arr, 5)].mean()
-        ) if (returns_arr <= np.percentile(returns_arr, 5)).any() else 0.0,
+        "var_95": float(empyrical.value_at_risk(returns_arr, cutoff=0.05)),
+        "cvar_95": float(empyrical.conditional_value_at_risk(returns_arr, cutoff=0.05)),
     }
 
 

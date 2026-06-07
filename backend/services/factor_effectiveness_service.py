@@ -7,6 +7,8 @@ import pandas as pd
 from typing import Dict, List, Optional, Any
 from scipy.stats import pearsonr, spearmanr
 
+from backend.utils.returns import calculate_future_returns
+
 logger = logging.getLogger(__name__)
 
 from backend.services.alphalens_analysis_service import alphalens_analysis_service
@@ -71,12 +73,11 @@ class FactorEffectivenessService:
 
         for stock_code, df in factor_data.items():
             if factor_name in df.columns and "close" in df.columns:
-                df_copy = df.copy()
-                df_copy["future_return"] = df_copy["close"].shift(-1) / df_copy["close"] - 1
-                valid_data = df_copy[[factor_name, "future_return"]].dropna()
-                valid_data = valid_data[~np.isinf(valid_data["future_return"])]
+                df_copy = calculate_future_returns(df[[factor_name, "close"]], periods=[1])
+                valid_data = df_copy[[factor_name, "future_return_1"]].dropna()
+                valid_data = valid_data[~np.isinf(valid_data["future_return_1"])]
                 factor_values.extend(valid_data[factor_name].tolist())
-                returns.extend(valid_data["future_return"].tolist())
+                returns.extend(valid_data["future_return_1"].tolist())
 
         if len(factor_values) < 2:
             return {"error": "数据不足以计算相关性"}
@@ -108,8 +109,8 @@ class FactorEffectivenessService:
         all_data = []
         for stock_code, df in factor_data.items():
             if factor_name in df.columns and "close" in df.columns:
-                df_copy = df.copy()
-                df_copy["future_return"] = df_copy["close"].shift(-1) / df_copy["close"] - 1
+                df_copy = calculate_future_returns(df[[factor_name, "close"]], periods=[1])
+                df_copy = df_copy.rename(columns={"future_return_1": "future_return"})
                 df_copy["stock_code"] = stock_code
                 all_data.append(df_copy[[factor_name, "future_return", "stock_code"]])
 
@@ -294,10 +295,9 @@ class FactorEffectivenessService:
         low_threshold = float(factor_values.quantile(1 - threshold_percentile))
 
         for stock_code, df in factor_data.items():
+            df = calculate_future_returns(df[[factor_name, "close"]], periods=holding_periods)
             if factor_name not in df.columns or "close" not in df.columns:
                 continue
-            for period in holding_periods:
-                df[f"future_return_{period}"] = df["close"].shift(-period) / df["close"] - 1
 
             high_events = df[df[factor_name] > threshold_value].index
             for event_date in high_events:
@@ -354,7 +354,8 @@ class FactorEffectivenessService:
             for stock_code, df in factor_data.items():
                 if factor_name not in df.columns or "close" not in df.columns:
                     continue
-                future_returns = df["close"].shift(-period) / df["close"] - 1
+                df_with_returns = calculate_future_returns(df[[factor_name, "close"]], periods=[period])
+                future_returns = df_with_returns[f"future_return_{period}"]
                 temp_df = pd.DataFrame({
                     "factor": df[factor_name],
                     "return": future_returns,

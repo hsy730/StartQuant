@@ -641,27 +641,29 @@ class FactorPreprocessingPipeline:
                         unique_inds = sorted(industries.unique())
                         
                         if len(unique_inds) >= 2:
-                            y = factor_vals[valid_mask].values
                             industry_dummies = pd.get_dummies(
                                 industries, drop_first=True
                             ).astype(float)
-                            
+
                             X = np.column_stack([
                                 log_mc.values,
                                 industry_dummies.values
                             ])
-                            
+
+                            y = factor_vals[valid_mask].values
                             model = LinearRegression()
                             model.fit(X, y)
-                            
+
                             residuals = y - model.predict(X)
                             factor_vals.loc[valid_mask] = residuals
                         else:
+                            # 行业数不足2，仅做市值中性化
                             if has_market_cap and valid_mask.sum() >= self.config.min_samples:
                                 X_mc = log_mc.values.reshape(-1, 1)
+                                y_mc = factor_vals[valid_mask].values
                                 model = LinearRegression()
-                                model.fit(X_mc, y)
-                                residuals = y - model.predict(X_mc)
+                                model.fit(X_mc, y_mc)
+                                residuals = y_mc - model.predict(X_mc)
                                 factor_vals.loc[valid_mask] = residuals
                     else:
                         logger.debug(f"日期组样本不足({valid_mask.sum()}), 跳过中性化")
@@ -717,7 +719,10 @@ class FactorPreprocessingPipeline:
 
             return factor_vals
 
-        result = df.groupby(date_column, group_keys=False).apply(process_group, include_groups=False)
+        # 抑制 pandas FutureWarning（groupby.apply 对分组列的操作警告）
+        # 必须在线程入口设置，catch_warnings 在子线程中不生效
+        warnings.simplefilter("ignore", FutureWarning)
+        result = df.groupby(df[date_column], group_keys=False).apply(process_group)
         stats["dates_processed"] = df[date_column].nunique()
 
         return result, stats

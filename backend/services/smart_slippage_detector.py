@@ -15,18 +15,10 @@ from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
 from enum import Enum
 import logging
-import re
+
+from backend.core.market_board import MarketBoard, detect_market_board, get_board_slippage_multiplier
 
 logger = logging.getLogger(__name__)
-
-
-class MarketBoard(str, Enum):
-    """市场板块枚举"""
-    MAIN = "main"              # 主板 (60xxxx, 00xxxx)
-    CHINEXT = "chinext"        # 创业板 (30xxxx)
-    STAR = "star"              # 科创板 (68xxxx)
-    BEIJING = "beijing"        # 北交所 (8xxxx, 4xxxx)
-    MIXED = "mixed"            # 混合
 
 
 class LiquidityLevel(str, Enum):
@@ -113,14 +105,14 @@ class SmartSlippageDetector:
             "description": "科创板市场",
             "typical_spread_bps": 25,
         },
-        MarketBoard.BEIJING: {
+        MarketBoard.BSE: {
             "base_slippage": 0.003,      # 基础滑点 0.3%
             "volatility_factor": 1.6,
             "liquidity_premium": 0.001,
             "description": "北交所市场",
             "typical_spread_bps": 30,
         },
-        MarketBoard.MIXED: {
+        MarketBoard.UNKNOWN: {
             "base_slippage": 0.0018,     # 混合市场取中间值
             "volatility_factor": 1.2,
             "liquidity_premium": 0.0003,
@@ -138,12 +130,8 @@ class SmartSlippageDetector:
     }
     
     def __init__(self):
-        self._board_patterns = {
-            MarketBoard.STAR: r"^68\d{4}",           # 科创板优先匹配（688xxx）
-            MarketBoard.CHINEXT: r"^3\d{5}",          # 创业板
-            MarketBoard.BEIJING: r"^(8\d{5}|4\d{5})", # 北交所
-            MarketBoard.MAIN: r"^(6[0-7]\d{4}|0\d{5})", # 主板（排除68开头的科创板）
-        }
+        # 板块识别已委托给 backend.core.market_board.detect_market_board
+        pass
 
     def analyze_market(
         self,
@@ -177,7 +165,7 @@ class SmartSlippageDetector:
         board_distribution = self._detect_board_distribution(stock_codes)
         
         # 判断主导板块：单一板块占比>60%才认为是该板块，否则为混合
-        dominant_board = MarketBoard.MIXED
+        dominant_board = MarketBoard.UNKNOWN
         if board_distribution:
             max_board, max_ratio = max(board_distribution.items(), key=lambda x: x[1])
             if max_ratio > 0.6:  # 单一板块占比超过60%
@@ -253,21 +241,17 @@ class SmartSlippageDetector:
 
     def _detect_board_distribution(self, stock_codes: List[str]) -> Dict[MarketBoard, float]:
         """检测各市场板块占比"""
-        board_counts = {board: 0 for board in MarketBoard if board != MarketBoard.MIXED}
-        
+        board_counts: Dict[MarketBoard, int] = {}
+
         for code in stock_codes:
-            pure_code = code.replace(".SZ", "").replace(".SH", "")
-            
-            for board, pattern in self._board_patterns.items():
-                if re.match(pattern, pure_code):
-                    board_counts[board] += 1
-                    break
-        
+            board = detect_market_board(code)
+            board_counts[board] = board_counts.get(board, 0) + 1
+
         # 转换为占比
         total = sum(board_counts.values())
         if total == 0:
-            return {MarketBoard.MIXED: 1.0}
-        
+            return {MarketBoard.UNKNOWN: 1.0}
+
         distribution = {board: count / total for board, count in board_counts.items()}
         return distribution
 
@@ -333,7 +317,7 @@ class SmartSlippageDetector:
         reasoning_parts = []
         
         # ==================== 1️⃣ 基础滑点（基于市场板块）====================
-        base_config = self._BOARD_BASE_CONFIG.get(chars.market_board, self._BOARD_BASE_CONFIG[MarketBoard.MIXED])
+        base_config = self._BOARD_BASE_CONFIG.get(chars.market_board, self._BOARD_BASE_CONFIG[MarketBoard.UNKNOWN])
         base_slippage = base_config["base_slippage"]
         vol_factor = base_config["volatility_factor"]
         
@@ -584,8 +568,8 @@ class SmartSlippageDetector:
             MarketBoard.MAIN: "主板",
             MarketBoard.CHINEXT: "创业板",
             MarketBoard.STAR: "科创板",
-            MarketBoard.BEIJING: "北交所",
-            MarketBoard.MIXED: "混合板块",
+            MarketBoard.BSE: "北交所",
+            MarketBoard.UNKNOWN: "混合板块",
         }
         return names.get(board, "未知")
 
@@ -597,7 +581,7 @@ class SmartSlippageDetector:
         return MarketCharacteristics(
             stock_codes=stock_codes or [],
             n_stocks=len(stock_codes) if stock_codes else 0,
-            market_board=MarketBoard.MIXED,
+            market_board=MarketBoard.UNKNOWN,
             board_distribution={},
             avg_market_cap=0,
             median_market_cap=0,

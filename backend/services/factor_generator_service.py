@@ -651,31 +651,13 @@ def calculate_factor(df):
                 if pd.isna(ic) or abs(ic) < ic_threshold:
                     continue
 
-                # 计算IR（IC均值/IC标准差）- 使用正确的滚动相关系数计算方法
+                # 计算IR（IC均值/IC标准差）- 使用向量化滚动相关系数
                 window = 20
                 min_periods = 10
-                rolling_ic_values = []
-
-                for i in range(len(aligned_data)):
-                    start_idx = max(0, i - window + 1)
-                    end_idx = i + 1
-
-                    window_factor = aligned_data["factor"].iloc[start_idx:end_idx]
-                    window_return = aligned_data["return"].iloc[start_idx:end_idx]
-
-                    valid_data = pd.DataFrame({
-                        "factor": window_factor,
-                        "return": window_return
-                    }).dropna()
-
-                    if len(valid_data) >= min_periods:
-                        ic_val = valid_data["factor"].corr(valid_data["return"])
-                        if not pd.isna(ic_val):
-                            rolling_ic_values.append(ic_val)
-                        else:
-                            rolling_ic_values.append(np.nan)
-                    else:
-                        rolling_ic_values.append(np.nan)
+                rolling_ic_series = aligned_data["factor"].rolling(
+                    window=window, min_periods=min_periods
+                ).corr(aligned_data["return"])
+                rolling_ic_values = rolling_ic_series.tolist()
 
                 if rolling_ic_values:
                     ic_mean = np.nanmean(rolling_ic_values)
@@ -729,31 +711,14 @@ def calculate_factor(df):
         # 计算IC
         ic = aligned_data["factor"].corr(aligned_data["return"])
 
-        # 计算滚动IR - 使用正确的两变量滚动相关系数计算方法
+        # 计算滚动IR - 使用向量化滚动相关系数
         window = 20
         min_periods = 10
-        rolling_ic_values = []
+        rolling_ic_series = aligned_data["factor"].rolling(
+            window=window, min_periods=min_periods
+        ).corr(aligned_data["return"])
 
-        for i in range(len(aligned_data)):
-            start_idx = max(0, i - window + 1)
-            end_idx = i + 1
-
-            window_factor = aligned_data["factor"].iloc[start_idx:end_idx]
-            window_return = aligned_data["return"].iloc[start_idx:end_idx]
-
-            valid_data = pd.DataFrame({
-                "factor": window_factor,
-                "return": window_return
-            }).dropna()
-
-            if len(valid_data) >= min_periods:
-                ic_val = valid_data["factor"].corr(valid_data["return"])
-                if not pd.isna(ic_val):
-                    rolling_ic_values.append(ic_val)
-            else:
-                rolling_ic_values.append(np.nan)
-
-        rolling_ic = pd.Series(rolling_ic_values, index=aligned_data.index)
+        rolling_ic = rolling_ic_series
 
         ic_mean = rolling_ic.mean()
         ic_std = rolling_ic.std()

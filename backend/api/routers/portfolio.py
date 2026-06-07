@@ -6,32 +6,10 @@ from pydantic import BaseModel
 from typing import List, Dict, Optional
 import numpy as np
 
+from backend.utils.serialization import safe_numeric_value, sanitize_dict
 from backend.services.portfolio_analysis_service import portfolio_analysis_service
 
 router = APIRouter()
-
-
-def convert_numpy_types(obj):
-    """
-    递归转换 numpy 类型为 Python 原生类型
-    """
-    if isinstance(obj, np.integer):
-        return int(obj)
-    elif isinstance(obj, np.floating):
-        # 处理特殊值
-        if np.isnan(obj):
-            return 0.0
-        elif np.isinf(obj):
-            return 0.0
-        return float(obj)
-    elif isinstance(obj, np.ndarray):
-        return [convert_numpy_types(x) for x in obj]
-    elif isinstance(obj, dict):
-        return {k: convert_numpy_types(v) for k, v in obj.items()}
-    elif isinstance(obj, (list, tuple)):
-        return [convert_numpy_types(x) for x in obj]
-    else:
-        return obj
 
 
 # ========== 数据模型 ==========
@@ -195,7 +173,8 @@ async def optimize_weights(request: OptimizeWeightsRequest):
                 weights = {f: 1.0/n_factors for f in request.factors}
 
         elif request.method == "max_sharpe":
-            # 最大夏普比率：简化实现，使用IC/波动率作为代理
+            # 注意：此处仅有IC数据，无法构建EfficientFrontier（需要价格数据），
+            # 因此使用简化权重计算。如有价格数据，应使用 pyportfolioopt。
             sharpe_values = {}
             for factor_name, values in factor_values.items():
                 # 对齐数据
@@ -261,7 +240,8 @@ async def optimize_weights(request: OptimizeWeightsRequest):
                 weights = {f: 1.0/n_factors for f in request.factors}
 
         elif request.method == "min_variance":
-            # 最小方差：根据因子值的方差反向加权（波动率越小权重越大）
+            # 注意：此处仅有IC数据，无法构建EfficientFrontier（需要价格数据），
+            # 因此使用简化权重计算。如有价格数据，应使用 pyportfolioopt。
             variance_values = {}
             for factor_name, values in factor_values.items():
                 # 计算因子方差
@@ -383,8 +363,8 @@ async def optimize_weights(request: OptimizeWeightsRequest):
                 composite_stats = {}
 
             # 转换 numpy 类型
-            composite_score = convert_numpy_types(composite_score)
-            composite_stats = convert_numpy_types(composite_stats)
+            composite_score = sanitize_dict(composite_score)
+            composite_stats = sanitize_dict(composite_stats)
 
         except Exception as e:
             print(f"[WARNING] 计算综合得分失败: {e}")
@@ -396,7 +376,7 @@ async def optimize_weights(request: OptimizeWeightsRequest):
         result["composite_stats"] = composite_stats
 
         # 转换 numpy 类型为 Python 原生类型，以避免 JSON 序列化错误
-        result = convert_numpy_types(result)
+        result = sanitize_dict(result)
 
         return {
             "success": True,
@@ -475,7 +455,7 @@ async def calculate_composite_score(request: CompositeScoreRequest):
             score_list = {"values": list(result)}
 
         # 转换 numpy 类型为 Python 原生类型，以避免 JSON 序列化错误
-        score_list = convert_numpy_types(score_list)
+        score_list = sanitize_dict(score_list)
 
         return {
             "success": True,
@@ -596,7 +576,8 @@ async def compare_weight_methods(request: CompareMethodsRequest):
                         weights = {f: 1.0/len(request.factors) for f in request.factors}
 
                 elif method == "max_sharpe":
-                    # 最大夏普：简化为使用IC/波动率
+                    # 注意：此处仅有IC数据，无法构建EfficientFrontier（需要价格数据），
+                    # 因此使用简化权重计算。如有价格数据，应使用 pyportfolioopt。
                     sharpe_values = {}
                     for factor_name, factor_values in factor_data.items():
                         aligned = pd.DataFrame({
@@ -644,7 +625,8 @@ async def compare_weight_methods(request: CompareMethodsRequest):
                         weights = {f: 1.0/len(request.factors) for f in request.factors}
 
                 elif method == "min_variance":
-                    # 最小方差：根据因子方差反向加权
+                    # 注意：此处仅有IC数据，无法构建EfficientFrontier（需要价格数据），
+                    # 因此使用简化权重计算。如有价格数据，应使用 pyportfolioopt。
                     variance_values = {}
                     for factor_name, factor_values in factor_data.items():
                         var = factor_values.var()
@@ -691,6 +673,9 @@ async def compare_weight_methods(request: CompareMethodsRequest):
                     ic_std = ic_series.std()
                     ir = ic_mean / ic_std if ic_std > 0 else 0
 
+                    # 注意：此处计算的是IC代理指标，非真实投资组合收益率，
+                    # 无法直接使用 empyrical（需要真实收益率序列）。
+                    # 如有真实组合收益率，应通过 risk_metrics.calculate_risk_metrics() 计算。
                     results[method] = {
                         "ic_mean": float(ic_mean),
                         "ic_std": float(ic_std),
