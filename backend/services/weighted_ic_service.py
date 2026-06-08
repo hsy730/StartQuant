@@ -221,6 +221,10 @@ class WeightedICService:
                 "interpretation": {...}
             }
         """
+        # 防御性检查：避免修改传入数据
+        if factor_ic_dict is None:
+            return {"error": "没有提供因子IC数据"}
+        factor_ic_dict = {k: v.copy() for k, v in factor_ic_dict.items()}
         try:
             importance_scores = {}
             
