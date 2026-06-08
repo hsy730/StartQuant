@@ -68,9 +68,21 @@ class EqualWeightStrategy(BaseStrategy):
         weights = pd.Series(0.0, index=df.index)
 
         # 有信号时，等权配置（1/N）
+        # 关键：必须按日期分组计算每期的股票数，而非用全局行数
         mask = signals == 1
-        n_stocks = mask.sum()
-        if n_stocks > 0:
-            weights[mask] = 1.0 / n_stocks
+        if not mask.any():
+            return weights
+
+        # 检查是否为MultiIndex（多股票场景：date + asset）
+        if isinstance(df.index, pd.MultiIndex):
+            # 多股票场景：按日期分组，每期等权分配
+            for date in df.index.get_level_values(0).unique():
+                date_mask = (df.index.get_level_values(0) == date) & mask.values
+                n_stocks_date = date_mask.sum()
+                if n_stocks_date > 0:
+                    weights[date_mask] = 1.0 / n_stocks_date
+        else:
+            # 单股票场景：满仓
+            weights[mask] = 1.0
 
         return weights

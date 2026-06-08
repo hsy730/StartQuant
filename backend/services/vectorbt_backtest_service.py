@@ -291,6 +291,8 @@ class VectorBTBacktestService:
             quantile_returns[f"Q{q + 1}"] = layer_returns
 
         # VectorBT 回测
+        # 使用 size_type='percent' + size=1.0 投入全部可用资金
+        # 旧版 size=shares_per_trade(100) 导致仅投入极小比例资金，所有绩效指标失真
         pf = vbt.Portfolio.from_signals(
             close=df["close"],
             entries=entries,
@@ -300,7 +302,8 @@ class VectorBTBacktestService:
             cash_sharing=False,
             fees=self.commission_rate,
             slippage=self.slippage,
-            size=shares_per_trade,
+            size=1.0,
+            size_type="percent",
         )
 
         equity = pf.value()
@@ -615,7 +618,7 @@ class VectorBTBacktestService:
         percentile: int = 50,
         direction: str = "long",
         n_quantiles: int = 5,
-        shares_per_trade: int = 100,
+        shares_per_trade: int = None,
         use_tradable_mask: bool = True,
         freq: str = "D",
         use_chunking: str = "auto",
@@ -629,7 +632,7 @@ class VectorBTBacktestService:
             percentile: 分位数阈值（0-100），用于做多/做空判断
             direction: 交易方向，"long"做多或"short"做空
             n_quantiles: 分层数量，默认5层
-            shares_per_trade: 每次交易手数（股），默认100
+            shares_per_trade: 已弃用，保留参数仅为向后兼容，实际使用percent模式投入全部资金
             use_tradable_mask: 是否使用Mask-First可交易性掩码（默认True）
             freq: 数据频率，支持 "D"(日频)/"5min"/"15min"/"30min"/"60min"
             use_chunking: 分块模式，"auto"(自动)/"force"(强制)/"off"(禁用)

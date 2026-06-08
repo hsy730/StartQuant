@@ -107,47 +107,75 @@ class FactorReturnAnalysisService:
         """
         try:
             all_records = []
-            
+
             for stock_code, df in factor_data.items():
                 if factor_name not in df.columns or price_column not in df.columns:
                     continue
-                    
+
                 df_copy = df.copy()
-                
+
                 if len(df_copy) < self.config.forward_period + 1:
                     continue
-                
+
                 df_copy["future_return"] = (
-                    df_copy[price_column].shift(-self.config.forward_period) / 
+                    df_copy[price_column].shift(-self.config.forward_period) /
                     df_copy[price_column] - 1
                 )
-                
+
                 df_copy["stock_code"] = stock_code
-                
+                # 保留日期索引信息，用于截面分位计算
+                if isinstance(df_copy.index, pd.DatetimeIndex):
+                    df_copy["date"] = df_copy.index
+                elif "date" in df_copy.columns:
+                    df_copy["date"] = pd.to_datetime(df_copy["date"])
+                else:
+                    df_copy["date"] = pd.NaT
+
                 valid_data = df_copy[
-                    [factor_name, "future_return", "stock_code"] + 
+                    [factor_name, "future_return", "stock_code", "date"] +
                     (["market_cap"] if "market_cap" in df_copy.columns else [])
-                ].dropna()
-                
+                ].dropna(subset=[factor_name, "future_return"])
+
                 if len(valid_data) > 0:
                     all_records.append(valid_data)
-            
+
             if not all_records:
                 return {"error": "没有有效的数据用于计算分组收益"}
-            
+
             merged_df = pd.concat(all_records, ignore_index=True)
-            
+
             if len(merged_df) < self.config.n_quantiles * self.config.min_samples_per_group:
                 return {
                     "error": f"数据不足，需要至少{self.config.n_quantiles * self.config.min_samples_per_group}个样本"
                 }
-            
-            merged_df["quantile"] = pd.qcut(
-                merged_df[factor_name],
-                q=self.config.n_quantiles,
-                labels=False,
-                duplicates="drop"
-            )
+
+            # 截面分位：按日期分组，每个截面内独立做qcut
+            # 全局qcut无法回答"因子高的股票是否比因子低的收益更高"这个选股问题
+            merged_df["quantile"] = np.nan
+            if "date" in merged_df.columns and merged_df["date"].notna().any():
+                for date, group in merged_df.groupby("date"):
+                    if len(group) >= self.config.n_quantiles:
+                        try:
+                            merged_df.loc[group.index, "quantile"] = pd.qcut(
+                                group[factor_name],
+                                q=self.config.n_quantiles,
+                                labels=False,
+                                duplicates="drop"
+                            )
+                        except ValueError:
+                            # 分位数相同时无法切分，跳过该截面
+                            pass
+            else:
+                # 无日期信息时退化为全局分位（单股票场景）
+                merged_df["quantile"] = pd.qcut(
+                    merged_df[factor_name],
+                    q=self.config.n_quantiles,
+                    labels=False,
+                    duplicates="drop"
+                )
+
+            # 排除无法分位的行
+            merged_df = merged_df.dropna(subset=["quantile"])
             
             quantile_returns = []
             quantile_stats = []

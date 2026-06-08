@@ -134,12 +134,19 @@ class WeightOptimizer:
         return {"weights": weights, "method": "ir_weight"}
 
     def _max_sharpe(self, factor_values, factor_names, returns) -> Dict:
-        """最大夏普比率 — 使用pyportfolioopt（规则0）"""
+        """最大夏普比率 — 使用pyportfolioopt（规则0）
+
+        注意：因子值不是价格，pct_change()无意义。
+        正确做法是使用因子值的一阶差分(diff)作为因子收益代理，
+        或要求调用方传入实际收益率。
+        """
         try:
             from pypfopt import EfficientFrontier, risk_models, expected_returns
             # 构建因子收益矩阵
+            # 因子值不是价格，不能对因子值求pct_change（如Z-score从-1到1，pct_change=-200%无意义）
+            # 使用diff()（一阶差分）作为因子收益的代理指标
             factor_df = pd.DataFrame(factor_values)
-            factor_returns = factor_df[factor_names].pct_change().dropna()
+            factor_returns = factor_df[factor_names].diff().dropna()
             if len(factor_returns) < 20:
                 return self._equal_weight(factor_names)
 
@@ -156,11 +163,14 @@ class WeightOptimizer:
             return self._equal_weight(factor_names)
 
     def _min_variance(self, factor_values, factor_names) -> Dict:
-        """最小方差 — 使用pyportfolioopt（规则0）"""
+        """最小方差 — 使用pyportfolioopt（规则0）
+
+        注意：因子值不是价格，使用diff()而非pct_change()
+        """
         try:
             from pypfopt import EfficientFrontier, risk_models
             factor_df = pd.DataFrame(factor_values)
-            factor_returns = factor_df[factor_names].pct_change().dropna()
+            factor_returns = factor_df[factor_names].diff().dropna()
             if len(factor_returns) < 20:
                 return self._equal_weight(factor_names)
 
@@ -176,11 +186,14 @@ class WeightOptimizer:
             return self._equal_weight(factor_names)
 
     def _risk_parity(self, factor_values, factor_names) -> Dict:
-        """风险平价 — 使用pyportfolioopt HRPOpt（规则0）"""
+        """风险平价 — 使用pyportfolioopt HRPOpt（规则0）
+
+        注意：因子值不是价格，使用diff()而非pct_change()
+        """
         try:
             from pypfopt import HRPOpt
             factor_df = pd.DataFrame(factor_values)
-            factor_returns = factor_df[factor_names].pct_change().dropna()
+            factor_returns = factor_df[factor_names].diff().dropna()
             if len(factor_returns) < 20:
                 return self._equal_weight(factor_names)
 

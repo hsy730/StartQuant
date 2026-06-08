@@ -70,6 +70,10 @@ def calculate_rolling_ic(
         return pd.Series(dtype=float)
 
     if method == "spearman":
-        return aligned["factor"].rolling(window).corr(aligned["returns"].rolling(window).rank())
+        # Spearman相关 = 两个变量排名的Pearson相关
+        # 必须对factor和returns都做排名，而非只对returns排名
+        factor_rank = aligned["factor"].rank()
+        returns_rank = aligned["returns"].rank()
+        return factor_rank.rolling(window).corr(returns_rank)
     else:
         return aligned["factor"].rolling(window).corr(aligned["returns"])

@@ -446,16 +446,25 @@ class AnalysisService:
                 logger.info("Alphalens多股票IC计算成功")
                 return result
             else:
-                logger.warning("Alphalens返回空结果")
+                logger.warning("Alphalens返回空结果，尝试手动回退方法")
         except Exception as e:
-            logger.error(f"Alphalens多股票IC计算失败: {e}", exc_info=True)
+            logger.warning(f"Alphalens多股票IC计算失败: {e}，尝试手动回退方法")
 
-        logger.error("Alphalens计算失败，无法进行横截面IC分析")
+        # Alphalens失败时，回退到手动横截面IC计算
+        try:
+            result = self._calculate_multi_stock_ic_manual(factor_data_copy, factor_names, stock_codes)
+            if result.get("ic_stats"):
+                logger.info("手动横截面IC计算成功（Alphalens回退）")
+                return result
+        except Exception as e:
+            logger.error(f"手动横截面IC计算也失败: {e}", exc_info=True)
+
+        logger.error("Alphalens和手动方法均失败，无法进行横截面IC分析")
         return {
             "ic_stats": {},
             "monthly_ic": {},
             "rolling_ir": {},
-            "error": "Alphalens计算失败",
+            "error": "Alphalens和手动方法均失败",
         }
 
     def _calculate_multi_stock_ic_manual(
@@ -791,10 +800,14 @@ class AnalysisService:
             min_periods = max(1, window // 4)
             rolling_mean = ic_s.rolling(window=window, min_periods=min_periods).mean()
             rolling_std = ic_s.rolling(window=window, min_periods=min_periods).std()
-            # 避免除零：std为0时IR设为0
-            safe_std = rolling_std.replace(0, np.nan)
-            ir = rolling_mean / safe_std
-            rolling_ir[factor_name] = ir.fillna(0)
+            # IC完全稳定(std=0)时，IR应趋向极大值而非0
+            # 使用safe_ir统一处理：std=0且mean≠0时返回abs(mean)*1e6
+            ir = pd.Series(np.nan, index=rolling_mean.index)
+            for idx in rolling_mean.index:
+                if not np.isnan(rolling_mean[idx]):
+                    ir_val = safe_ir(float(rolling_mean[idx]), float(rolling_std[idx]), default=0.0)
+                    ir[idx] = ir_val
+            rolling_ir[factor_name] = ir
         return rolling_ir
 
     def _detect_lookahead_bias_for_all_factors(

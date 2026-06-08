@@ -368,9 +368,7 @@ class FactorStabilityService:
         logger = logging.getLogger(__name__)
 
         # 规则5：禁止就地修改传入的数据，必须先copy
-        all_factor_data = [
-            {**item, 'data': item['data'].copy()} for item in all_factor_data
-        ]
+        # 注意：此行必须在all_factor_data赋值之后执行，已移至L404之后
 
         try:
             logger.info(
@@ -443,19 +441,51 @@ class FactorStabilityService:
                         'factor_series': factor_series.dropna()
                     })
 
-                    # 计算该股票的滚动IC序列
-                    ic_series = stock_df['factor'].rolling(20).corr(
-                        stock_df['future_return']
-                    ).dropna()
-                    
-                    if len(ic_series) > 0:
-                        all_ic_series.append(ic_series)
+                    # 注意：不再计算单股票的时序IC序列
+                    # 时序相关衡量的是"因子能否预测同一只股票未来收益"（择时），
+                    # 而截面IC衡量的是"因子能否区分不同股票收益"（选股）。
+                    # 截面IC需要在所有股票数据收集完毕后，按日期截面计算。
 
                 except Exception as e:
                     logger.warning(f"处理股票 {stock_code} 时出错: {e}")
                     continue
 
-            # 4. 验证数据有效性
+            # 规则5：防御性复制，避免修改原始数据
+            all_factor_data = [
+                {**item, 'data': item['data'].copy()} for item in all_factor_data
+            ]
+
+            # 4. 计算截面IC序列（按日期截面，对多只股票的因子值和收益率计算Spearman相关）
+            all_ic_series = []
+            if len(all_factor_data) >= 3:
+                # 构建面板数据：date × stock_code
+                panel_data = {}
+                for item in all_factor_data:
+                    stock_code = item['stock_code']
+                    stock_df = item['data']
+                    for date, row in stock_df.iterrows():
+                        if date not in panel_data:
+                            panel_data[date] = {'factor': [], 'return': []}
+                        panel_data[date]['factor'].append(row['factor'])
+                        panel_data[date]['return'].append(row['future_return'])
+
+                # 对每个日期截面计算Spearman IC
+                from scipy.stats import spearmanr
+                ic_dates = []
+                ic_values = []
+                for date in sorted(panel_data.keys()):
+                    factors = panel_data[date]['factor']
+                    returns = panel_data[date]['return']
+                    if len(factors) >= 3:  # 至少3只股票才有统计意义
+                        ic, _ = spearmanr(factors, returns)
+                        if not np.isnan(ic):
+                            ic_dates.append(date)
+                            ic_values.append(ic)
+
+                if len(ic_values) > 0:
+                    all_ic_series = [pd.Series(ic_values, index=ic_dates)]
+
+            # 5. 验证数据有效性
             if len(all_factor_data) == 0:
                 raise ValueError(
                     "未能获取任何有效的因子数据。"
@@ -464,15 +494,15 @@ class FactorStabilityService:
                 )
 
             if len(all_ic_series) == 0:
-                raise ValueError("未能计算有效的IC序列，数据可能不足")
+                raise ValueError("未能计算有效的截面IC序列，数据可能不足（需至少3只股票）")
 
             logger.info(
                 f"成功获取 {len(all_factor_data)} 只股票的有效数据, "
-                f"{len(all_ic_series)} 个IC序列"
+                f"截面IC序列长度={len(all_ic_series[0]) if all_ic_series else 0}"
             )
 
-            # 5. 合并所有IC序列（跨股票平均）
-            combined_ic = pd.concat(all_ic_series, axis=1).mean(axis=1)
+            # 6. 截面IC序列（已经是按日期截面计算的Spearman IC）
+            combined_ic = all_ic_series[0]
 
             # 横截面方式分析：在每个日期截面上对多只股票计算统计量
             # 构建横截面因子值面板（date × stock_code）

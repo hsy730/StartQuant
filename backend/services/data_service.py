@@ -522,28 +522,28 @@ class DataService:
             df["is_suspended"] = False
 
         # Step 1: 缺失值填充
+        # 注意：ffill会在停牌期间产生虚假价格，下游因子计算需结合tradable_mask使用
         if settings.DATA_FILL_MISSING:
             df = df.ffill()
 
-        # Step 2: 异常值检测与处理（使用MAD法，比3σ更抗异常值）
+        # Step 2: 异常值检测与处理
+        # 重要：不对原始OHLC价格做去极值！价格是客观事实，篡改价格会导致回测不可信。
+        # 去极值应仅应用于因子值（在factor_preprocessing_pipeline中执行）。
+        # 此处仅对成交量做异常值检测，因为成交量异常可能是数据错误（如单位错误）
         if settings.DATA_OUTLIER_DETECTION:
-            price_columns = ["open", "high", "low", "close"]
-            window = 20
-            n_sigma = settings.DATA_OUTLIER_N_SIGMA
-            for col in price_columns:
-                if col not in df.columns:
-                    continue
-                rolling_median = df[col].rolling(window=window, min_periods=1).median()
-                # TODO: 滚动MAD的当前实现是近似值——每个偏差值使用的是不同滚动窗口的中位数，
-                # 而非同一个窗口中位数。严格MAD应为：对同一窗口计算median，
-                # 再计算 |x - median| 的median。向量化实现标准滚动MAD较复杂，
-                # 当前近似在大多数场景下误差可接受，后续应考虑使用更精确的实现。
-                mad = (df[col] - rolling_median).abs().rolling(window=window, min_periods=1).median() * 1.4826
-                mad = mad.replace(0, float("nan")).ffill().bfill()
+            volume_col = "volume"
+            if volume_col in df.columns:
+                window = 20
+                n_sigma = settings.DATA_OUTLIER_N_SIGMA
+                rolling_median = df[volume_col].rolling(window=window, min_periods=1).median()
+                mad = (df[volume_col] - rolling_median).abs().rolling(window=window, min_periods=1).median() * 1.4826
+                mad = mad.replace(0, float("nan")).ffill()
+                # 注意：不对MAD做bfill，避免引入前视偏差
                 lower_bound = rolling_median - n_sigma * mad
                 upper_bound = rolling_median + n_sigma * mad
-                df.loc[df[col] < lower_bound, col] = lower_bound[df[col] < lower_bound]
-                df.loc[df[col] > upper_bound, col] = upper_bound[df[col] > upper_bound]
+                # 成交量异常值用边界值替换
+                df.loc[df[volume_col] < lower_bound, volume_col] = lower_bound[df[volume_col] < lower_bound]
+                df.loc[df[volume_col] > upper_bound, volume_col] = upper_bound[df[volume_col] > upper_bound]
 
         return df
 

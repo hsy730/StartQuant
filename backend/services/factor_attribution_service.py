@@ -232,7 +232,9 @@ class FactorAttributionService:
             if factor_name not in df.columns or "close" not in df.columns:
                 continue
             df_copy = df.copy()
-            df_copy["return"] = df_copy["close"].pct_change(1)
+            # 使用未来收益（shift(-1)），避免前视偏差
+            # 同期收益(pct_change(1))会导致"先看到收益再选股"的前视偏差
+            df_copy["return"] = df_copy["close"].pct_change(1).shift(-1)
             valid = df_copy[[factor_name, "return"]].dropna()
             for date, row in valid.iterrows():
                 if date not in date_portfolio_returns:

@@ -941,8 +941,8 @@ class FactorService:
             "风险指标": [
                 {
                     "name": "downside_risk",
-                    "code": "np.log(close / close.shift(1)).clip(upper=0).rolling(window=20).std()",
-                    "description": "下行风险（仅计算负收益的标准差）",
+                    "code": "np.log(close / close.shift(1)).pipe(lambda x: x[x < 0]).rolling(window=20).std()",
+                    "description": "下行风险（仅计算负收益的标准差，半离差）",
                 },
                 {
                     "name": "skewness_20",
@@ -956,8 +956,8 @@ class FactorService:
                 },
                 {
                     "name": "max_drawdown_20",
-                    "code": "close.rolling(window=20).apply(lambda x: (x - x.cummax()).min() / x.cummax().max())",
-                    "description": "20日最大回撤",
+                    "code": "close.rolling(window=20).apply(lambda x: ((x - x.cummax()) / x.cummax()).min())",
+                    "description": "20日最大回撤（百分比）",
                 },
                 {
                     "name": "var_95_20",

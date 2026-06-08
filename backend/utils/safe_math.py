@@ -63,12 +63,28 @@ def safe_ir(ic_mean: float, ic_std: float, default: Optional[float] = None) -> O
 
     统一处理IC标准差为0/NaN/极小值的情况，替代各处自行实现的IR计算。
 
+    特殊处理：当IC完全稳定（std=0但mean≠0）时，IR应趋向极大值，
+    而非返回default=0。因为IC完全稳定意味着因子预测能力极其稳定。
+
     Args:
         ic_mean: IC均值
         ic_std: IC标准差
-        default: 标准差无效时的返回值
+        default: 标准差无效且IC均值为0时的返回值
 
     Returns:
-        IR值，或default（标准差无效时）
+        IR值，或default（标准差无效且均值为0时）
     """
+    # 处理NaN输入
+    if ic_mean is None or (isinstance(ic_mean, float) and np.isnan(ic_mean)):
+        return default
+    if ic_std is None or (isinstance(ic_std, float) and np.isnan(ic_std)):
+        return default
+
+    # IC完全稳定：std=0但mean≠0 → IR趋向极大值
+    if abs(ic_std) < 1e-10:
+        if abs(ic_mean) < 1e-10:
+            return default  # 均值和标准差都为0，无法判断
+        # 用sign(mean) * abs(mean) * 1e6 作为极大IR的近似
+        return float(np.sign(ic_mean)) * abs(ic_mean) * 1e6
+
     return safe_divide(ic_mean, ic_std, default=default)
