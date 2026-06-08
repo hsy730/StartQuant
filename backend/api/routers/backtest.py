@@ -5,13 +5,14 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import List, Optional, Dict
 import numpy as np
+import asyncio
 
 from backend.utils.serialization import safe_numeric_value, sanitize_dict
 from backend.services.vectorbt_backtest_service import VectorBTBacktestService, check_vectorbt_available
 from backend.services.risk_metrics import calculate_sharpe, calculate_volatility
 from backend.repositories.backtest_repository import BacktestRepository
 from backend.repositories.factor_repository import FactorRepository
-from backend.core.database import get_db_session
+from backend.core.database import get_db
 
 router = APIRouter()
 
@@ -69,7 +70,7 @@ async def run_single_backtest(request: SingleBacktestRequest):
         from backend.services.data_service import data_service
         from backend.services.factor_service import factor_service
         from backend.repositories.factor_repository import FactorRepository
-        from backend.core.database import get_db_session
+        from backend.core.database import get_db
         import pandas as pd
 
         # 确定要使用的因子列表
@@ -104,18 +105,22 @@ async def run_single_backtest(request: SingleBacktestRequest):
             # 根据频率选择日线或分钟线数据源
             if request.freq.upper() != "D":
                 minute_period = (request.period or request.freq).lower().replace("min", "").replace("t", "")
-                stock_data = data_service.get_stock_minute_data(
+                raw_data = data_service.get_stock_minute_data(
                     stock_code,
                     request.start_date,
                     request.end_date,
                     period=minute_period if minute_period.isdigit() else "5",
-                ).copy()
+                )
             else:
-                stock_data = data_service.get_stock_data(
+                raw_data = data_service.get_stock_data(
                     stock_code,
                     request.start_date,
                     request.end_date
-                ).copy()
+                )
+
+            if raw_data is None or len(raw_data) == 0:
+                continue
+            stock_data = raw_data.copy()
 
             if stock_data is not None and len(stock_data) > 0:
                 # 计算所有选中的因子
@@ -162,7 +167,8 @@ async def run_single_backtest(request: SingleBacktestRequest):
         if request.strategy_type == "single_factor":
             if is_single_stock:
                 df = list(all_factor_data.values())[0].copy()
-                result = backtest_service.single_factor_backtest(
+                result = await asyncio.to_thread(
+                    backtest_service.single_factor_backtest,
                     df=df,
                     factor_name=primary_factor_name,
                     percentile=request.percentile,
@@ -184,7 +190,8 @@ async def run_single_backtest(request: SingleBacktestRequest):
 
                 df = pd.concat(merged_list, ignore_index=True)
                 top_percentile = (100 - request.percentile) / 100.0
-                result = backtest_service.cross_sectional_backtest(
+                result = await asyncio.to_thread(
+                    backtest_service.cross_sectional_backtest,
                     df=df,
                     factor_name=primary_factor_name,
                     top_percentile=top_percentile,
@@ -194,7 +201,8 @@ async def run_single_backtest(request: SingleBacktestRequest):
         else:
             # 多因子回测
             df = list(all_factor_data.values())[0].copy()
-            result = backtest_service.multi_factor_backtest(
+            result = await asyncio.to_thread(
+                backtest_service.multi_factor_backtest,
                 df=df,
                 factor_names=factor_names_to_use,
                 method=request.weight_method,
@@ -225,6 +233,7 @@ async def run_single_backtest(request: SingleBacktestRequest):
 
         # 清理结果中的NaN和inf值，确保JSON可序列化
         # 添加详细的图表数据
+        CHART_DATA_LIMIT = 500  # 最多返回500个数据点
         chart_data = {}
 
         # 为每只股票生成图表数据（单股票和多股票模式都支持）
@@ -235,6 +244,10 @@ async def run_single_backtest(request: SingleBacktestRequest):
                 if "date" in df.columns:
                     df = df.set_index("date")
                 df.index = pd.to_datetime(df.index)
+
+            # 限制图表数据点数量，只保留最近的数据
+            if len(df) > CHART_DATA_LIMIT:
+                df = df.iloc[-CHART_DATA_LIMIT:]
 
             # 清理因子数据中的NaN和Inf值
             def clean_factor_values(series):
@@ -355,10 +368,16 @@ async def run_single_backtest(request: SingleBacktestRequest):
             # 净值曲线 - 使用result中的equity_curve，或者基于信号生成模拟的
             if "equity_curve" in result_serializable and is_single_stock:
                 # 单股票模式使用回测结果的净值曲线
-                equity_dates = result["equity_curve"].index.strftime('%Y-%m-%d').tolist()
+                eq_curve = result["equity_curve"]
+                eq_values = result_serializable["equity_curve"]
+                eq_dates = eq_curve.index.strftime('%Y-%m-%d').tolist()
+                # 限制净值曲线数据点
+                if len(eq_dates) > CHART_DATA_LIMIT:
+                    eq_dates = eq_dates[-CHART_DATA_LIMIT:]
+                    eq_values = eq_values[-CHART_DATA_LIMIT:]
                 stock_chart_data["equity"] = {
-                    "dates": equity_dates,
-                    "values": result_serializable["equity_curve"]
+                    "dates": eq_dates,
+                    "values": eq_values
                 }
             else:
                 # 多股票模式或没有equity_curve时，生成基于收盘价的基准曲线
@@ -411,7 +430,7 @@ async def run_strategy_comparison(request: ComparisonRequest):
                 request.start_date,
                 request.end_date
             )
-            if not data.empty:
+            if data is not None and not data.empty:
                 all_data[stock_code] = data
 
         if not all_data:
@@ -440,10 +459,9 @@ async def run_strategy_comparison(request: ComparisonRequest):
             strategy_name = config.get("name", "未命名策略")
 
             # 从数据库获取因子定义
-            db = get_db_session()
-            repo = FactorRepository(db)
-            factor_def = repo.get_by_name(config["factor"])
-            db.close()
+            with get_db() as db:
+                repo = FactorRepository(db)
+                factor_def = repo.get_by_name(config["factor"])
 
             if not factor_def:
                 continue
@@ -505,8 +523,7 @@ async def run_strategy_comparison(request: ComparisonRequest):
 
                     # 计算夏普比率（委托risk_metrics统一入口，符合规则2）
                     sharpe = calculate_sharpe(returns_series, risk_free_rate=0.03)
-                    results[strategy_name]["sharpe"] = sharpe if sharpe is not None else None
-                    results[strategy_name]["sharpe_ratio"] = sharpe if sharpe is not None else 0.0
+                    results[strategy_name]["sharpe_ratio"] = sharpe if sharpe is not None else None
 
         results_clean = sanitize_dict(results)
 

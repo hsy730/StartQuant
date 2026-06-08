@@ -141,7 +141,9 @@ class BaseMiningService(ABC):
     def set_stock_pool(self, stock_codes: List[str], start_date: str, end_date: str):
         """设置股票池用于截面IC评估"""
         self.stock_codes = stock_codes
-        self.stock_pool_data = data_service.get_multiple_stocks_data(stock_codes, start_date, end_date)
+        raw_data = data_service.get_multiple_stocks_data(stock_codes, start_date, end_date)
+        # 规则3：防御性copy，避免就地修改data_service返回的DataFrame
+        self.stock_pool_data = {k: v.copy() for k, v in raw_data.items()}
 
         for code, df in self.stock_pool_data.items():
             if "close" in df.columns:

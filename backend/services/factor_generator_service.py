@@ -168,9 +168,8 @@ class FactorGeneratorService:
                         expr = f"{special_functions[stat_func]}({factor})"
                         expressions.append(expr)
                     elif stat_func == "zscore":
-                        # zscore需要特殊处理: (x - mean) / std
-                        # NOTE: +1e-8 in eval string — safe_divide not applicable in formula templates
-                        expr = f"(({factor} - {factor}.rolling(252, min_periods=1).mean()) / ({factor}.rolling(252, min_periods=1).std() + 1e-8))"
+                        # zscore需要特殊处理: (x - mean) / std，std为0时结果为NaN
+                        expr = f"(({factor} - {factor}.rolling(252, min_periods=1).mean()) / {factor}.rolling(252, min_periods=1).std().replace(0, np.nan))"
                         expressions.append(expr)
                 elif stat_func in no_window_functions:
                     # 直接调用方法
@@ -496,8 +495,8 @@ class FactorGeneratorService:
         if expression.strip().startswith("zscore("):
             inner = expression.strip()[len("zscore("):-1]
             parsed_inner = parse_and_replace(inner)
-            # NOTE: +1e-8 in eval string — safe_divide not applicable in formula templates
-            code = f"({parsed_inner} - ({parsed_inner}).rolling(252, min_periods=1).mean()) / (({parsed_inner}).rolling(252, min_periods=1).std() + 1e-8)"
+            # zscore: (x - mean) / std，std为0时结果为NaN
+            code = f"({parsed_inner} - ({parsed_inner}).rolling(252, min_periods=1).mean()) / ({parsed_inner}).rolling(252, min_periods=1).std().replace(0, np.nan)"
         else:
             code = parse_and_replace(expression)
 

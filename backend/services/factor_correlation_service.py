@@ -278,8 +278,8 @@ class FactorCorrelationService:
         if not daily_pearson:
             return {'error': '有效天数不足'}
         
-        avg_p = sum(daily_pearson) / len(daily_pearson)
-        avg_s = sum(daily_spearman) / len(daily_spearman)
+        avg_p = pd.concat(daily_pearson).groupby(level=0).mean()
+        avg_s = pd.concat(daily_spearman).groupby(level=0).mean()
         
         return {
             'method': 'cross_sectional',

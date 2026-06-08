@@ -298,37 +298,80 @@ class FactorOrchestrator:
         results = {}
         summary_rows = []
 
-        for expr in expressions:
-            factor_name = self._derive_factor_name(expr)
-            try:
-                result = self.validate(
-                    expression=expr,
-                    stock_codes=stock_codes,
-                    start_date=start_date,
-                    end_date=end_date,
-                    factor_name=factor_name,
-                )
-                results[factor_name] = result
-                summary_rows.append({
-                    "factor_name": factor_name,
-                    "expression": expr[:50],
-                    "status": result["status"],
-                    "score": result.get("summary", {}).get("overall_score", 0),
-                    "ic_mean": result.get("stages", {}).get("ic_analysis", {}).get("result", {}).get("ic_mean", 0),
-                    "ir": result.get("stages", {}).get("ic_analysis", {}).get("result", {}).get("ir", 0),
-                    "risk_level": result.get("stages", {}).get("lookahead_detection", {}).get("result", {}).get("risk_level", "N/A"),
-                })
-            except Exception as e:
-                results[factor_name] = {"status": "ERROR", "error": str(e)}
-                summary_rows.append({
-                    "factor_name": factor_name,
-                    "expression": expr[:50],
-                    "status": "ERROR",
-                    "score": 0,
-                    "ic_mean": 0,
-                    "ir": 0,
-                    "risk_level": "ERROR",
-                })
+        if parallel and len(expressions) > 1:
+            # 并行执行
+            with ThreadPoolExecutor(max_workers=min(len(expressions), 4)) as executor:
+                future_to_expr = {
+                    executor.submit(
+                        self.validate,
+                        expression=expr,
+                        stock_codes=stock_codes,
+                        start_date=start_date,
+                        end_date=end_date,
+                        factor_name=self._derive_factor_name(expr),
+                    ): expr
+                    for expr in expressions
+                }
+                for future in as_completed(future_to_expr):
+                    expr = future_to_expr[future]
+                    factor_name = self._derive_factor_name(expr)
+                    try:
+                        result = future.result()
+                        results[factor_name] = result
+                        summary_rows.append({
+                            "factor_name": factor_name,
+                            "expression": expr[:50],
+                            "status": result["status"],
+                            "score": result.get("summary", {}).get("overall_score", 0),
+                            "ic_mean": result.get("stages", {}).get("ic_analysis", {}).get("result", {}).get("ic_mean", 0),
+                            "ir": result.get("stages", {}).get("ic_analysis", {}).get("result", {}).get("ir", 0),
+                            "risk_level": result.get("stages", {}).get("lookahead_detection", {}).get("result", {}).get("risk_level", "N/A"),
+                        })
+                    except Exception as e:
+                        logger.warning(f"并行验证失败: {expr}, 错误: {e}")
+                        results[factor_name] = {"status": "ERROR", "error": str(e)}
+                        summary_rows.append({
+                            "factor_name": factor_name,
+                            "expression": expr[:50],
+                            "status": "ERROR",
+                            "score": 0,
+                            "ic_mean": 0,
+                            "ir": 0,
+                            "risk_level": "ERROR",
+                        })
+        else:
+            # 顺序执行
+            for expr in expressions:
+                factor_name = self._derive_factor_name(expr)
+                try:
+                    result = self.validate(
+                        expression=expr,
+                        stock_codes=stock_codes,
+                        start_date=start_date,
+                        end_date=end_date,
+                        factor_name=factor_name,
+                    )
+                    results[factor_name] = result
+                    summary_rows.append({
+                        "factor_name": factor_name,
+                        "expression": expr[:50],
+                        "status": result["status"],
+                        "score": result.get("summary", {}).get("overall_score", 0),
+                        "ic_mean": result.get("stages", {}).get("ic_analysis", {}).get("result", {}).get("ic_mean", 0),
+                        "ir": result.get("stages", {}).get("ic_analysis", {}).get("result", {}).get("ir", 0),
+                        "risk_level": result.get("stages", {}).get("lookahead_detection", {}).get("result", {}).get("risk_level", "N/A"),
+                    })
+                except Exception as e:
+                    results[factor_name] = {"status": "ERROR", "error": str(e)}
+                    summary_rows.append({
+                        "factor_name": factor_name,
+                        "expression": expr[:50],
+                        "status": "ERROR",
+                        "score": 0,
+                        "ic_mean": 0,
+                        "ir": 0,
+                        "risk_level": "ERROR",
+                    })
 
         # 按综合得分排序
         summary_rows.sort(key=lambda x: x["score"], reverse=True)
@@ -366,6 +409,7 @@ class FactorOrchestrator:
                     if df is None or len(df) == 0:
                         continue
 
+                    df = df.copy()
                     fv = factor_service.calculator.calculate(df, expression)
                     if fv is not None and len(fv.dropna()) > 10:
                         df[factor_name] = fv

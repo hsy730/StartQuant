@@ -115,15 +115,22 @@ class SmartPreprocessingDetector:
         Returns:
             数据特征描述对象
         """
-        # 合并所有股票数据用于全局分析
+        # 合并所有股票数据用于全局分析（仅复制需要的列，避免全量复制）
         all_dfs = []
         for stock_code, df in factor_data.items():
             if len(df) > 0:
-                df_copy = df.copy()
+                needed_cols = [c for c in factor_names if c in df.columns]
+                if market_cap_column in df.columns and market_cap_column not in needed_cols:
+                    needed_cols.append(market_cap_column)
+                if industry_column in df.columns and industry_column not in needed_cols:
+                    needed_cols.append(industry_column)
+                if not needed_cols:
+                    continue
+                df_copy = df[needed_cols].copy()
                 df_copy["stock_code"] = stock_code
                 # factor_service 返回的 DataFrame 使用 DatetimeIndex，需显式添加 date 列
                 if "date" not in df_copy.columns:
-                    df_copy["date"] = df_copy.index
+                    df_copy["date"] = df.index
                 all_dfs.append(df_copy)
 
         if not all_dfs:
@@ -148,7 +155,7 @@ class SmartPreprocessingDetector:
                 avg_mc = valid_mc.mean()
                 mc_std = valid_mc.std()
 
-        # 4️⃣ 因子分布特征（使用第一个因子的统计）
+        # 4️⃣ 因子分布特征（分析所有因子，使用最保守的统计）
         factor_vol = 0
         skewness = 0
         kurtosis = 0
@@ -156,30 +163,35 @@ class SmartPreprocessingDetector:
         outlier_ratio = 0
         is_fat_tail = False
         
-        if factor_names and factor_names[0] in merged_df.columns:
-            factor_col = merged_df[factor_names[0]].dropna()
-            
-            if len(factor_col) > 10:
-                # 横截面波动率（每日标准差的均值）
-                if "date" in merged_df.columns:
-                    daily_std = factor_col.groupby(merged_df["date"]).std()
-                    factor_vol = daily_std.mean()
-                else:
-                    factor_vol = factor_col.std()
-                
-                skewness = float(factor_col.skew())
-                kurtosis = float(factor_col.kurtosis())
-                
-                # 异常值检测（MAD法）
-                median = factor_col.median()
-                mad = 1.4826 * np.median(np.abs(factor_col - median))
-                if mad > 0:
-                    outliers = np.abs(factor_col - median) > 3 * mad
-                    has_outliers = outliers.any()
-                    outlier_ratio = outliers.sum() / len(factor_col)
-                
-                # 肥尾检测（pandas kurtosis()返回超额峰度，正态分布=0，>0表示肥尾）
-                is_fat_tail = kurtosis > 0
+        all_factor_stats = []
+        for factor_name in factor_names:
+            if factor_name in merged_df.columns:
+                factor_col = merged_df[factor_name].dropna()
+                if len(factor_col) > 10:
+                    stats = {
+                        "skewness": float(factor_col.skew()),
+                        "kurtosis": float(factor_col.kurtosis()),
+                        "outlier_ratio": float(((factor_col - factor_col.mean()).abs() > 3 * factor_col.std()).mean()),
+                    }
+                    all_factor_stats.append((factor_name, stats))
+
+        if all_factor_stats:
+            # 使用峰度绝对值最大的因子（最肥尾）作为基准，确保最保守的参数选择
+            factor_name_selected, factor_col_stats = max(all_factor_stats, key=lambda x: abs(x[1]["kurtosis"]))
+            skewness = factor_col_stats["skewness"]
+            kurtosis = factor_col_stats["kurtosis"]
+            outlier_ratio = factor_col_stats["outlier_ratio"]
+            has_outliers = outlier_ratio > 0
+            is_fat_tail = kurtosis > 0
+
+            # 横截面波动率（使用最保守因子的统计）
+            if factor_name_selected in merged_df.columns and "date" in merged_df.columns:
+                factor_col_for_vol = merged_df[factor_name_selected].dropna()
+                daily_std = factor_col_for_vol.groupby(merged_df["date"]).std()
+                factor_vol = daily_std.mean()
+            elif factor_name_selected in merged_df.columns:
+                factor_col_for_vol = merged_df[factor_name_selected].dropna()
+                factor_vol = factor_col_for_vol.std()
 
         # 5️⃣ 行业结构分析
         n_industries = 0

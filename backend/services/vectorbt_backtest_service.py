@@ -223,6 +223,7 @@ class VectorBTBacktestService:
         shares_per_trade: int,
         use_tradable_mask: bool,
         fc: Dict,
+        skip_copy: bool = False,
     ) -> Dict:
         """
         共享的 VectorBT 核心回测逻辑：因子排名 → 信号生成 → 回测执行
@@ -233,6 +234,7 @@ class VectorBTBacktestService:
         Args:
             df: 已确保 DatetimeIndex 的 DataFrame（内部会copy，不污染调用方数据）
             factor_name, percentile, direction, n_quantiles, shares_per_trade, use_tradable_mask, fc: 同上
+            skip_copy: 如果调用方已做过copy，设为True避免重复复制
 
         Returns:
             Dict 包含:
@@ -246,7 +248,8 @@ class VectorBTBacktestService:
                 returns (Series): 收益率序列
         """
         # 规则5：禁止就地修改传入的DataFrame，必须先copy
-        df = df.copy()
+        if not skip_copy:
+            df = df.copy()
 
         # Mask-First
         tradable_mask = None
@@ -596,12 +599,12 @@ class VectorBTBacktestService:
             "slippage_info": self.get_slippage_info(),
             "mask_statistics": {
                 "total_days": len(df),
-                "tradable_days": len(df),
-                "tradable_ratio": 1.0,
-                "limit_up_days": 0,
-                "limit_down_days": 0,
-                "suspended_days": 0,
-                "mask_applied": False,
+                "tradable_days": int(df["tradable_mask"].sum()) if "tradable_mask" in df.columns else len(df),
+                "tradable_ratio": float(df["tradable_mask"].mean()) if "tradable_mask" in df.columns else 1.0,
+                "limit_up_days": int((df.get("limit_up_mask", pd.Series(dtype=bool)) == True).sum()) if "limit_up_mask" in df.columns else 0,
+                "limit_down_days": int((df.get("limit_down_mask", pd.Series(dtype=bool)) == True).sum()) if "limit_down_mask" in df.columns else 0,
+                "suspended_days": int((df["tradable_mask"] == False).sum()) if "tradable_mask" in df.columns else 0,
+                "mask_applied": "tradable_mask" in df.columns,
             },
             "chunking_info": {
                 "chunked": True,
@@ -657,8 +660,10 @@ class VectorBTBacktestService:
         logger.info(f"回测频率: {fc['description']} (vbt_freq={fc['vbt_freq']}, 年化bar数={fc['annual_bars']})")
 
         # 确保索引是 DatetimeIndex
+        already_copied = False
         if not isinstance(df.index, pd.DatetimeIndex):
             df = df.copy()
+            already_copied = True
             if "date" in df.columns:
                 df = df.set_index("date")
             df.index = pd.to_datetime(df.index)
@@ -675,6 +680,7 @@ class VectorBTBacktestService:
             logger.warning("⚠️ VectorBT Backtest: 未找到tradable_mask列！")
 
         # 委托给共享核心逻辑（因子排名 → 信号 → VBT回测）
+        # skip_copy: 仅在上方已对df做过copy时跳过，避免双重复制
         core = self._run_vbt_core(
             df=df,
             factor_name=factor_name,
@@ -684,6 +690,7 @@ class VectorBTBacktestService:
             shares_per_trade=shares_per_trade,
             use_tradable_mask=use_tradable_mask,
             fc=fc,
+            skip_copy=already_copied,
         )
 
         pf = core["pf"]
@@ -1222,9 +1229,7 @@ class VectorBTBacktestService:
                             exit_time_series = trades_df['出场时间'].copy()
                             mask = exit_time_series.notna()
                             if mask.any():
-                                formatted = exit_time_series[mask].apply(
-                                    lambda x: x.strftime('%Y-%m-%d') if pd.notna(x) else x
-                                )
+                                formatted = exit_time_series[mask].dt.strftime('%Y-%m-%d')
                                 trades_df['出场时间'] = exit_time_series.astype(object)
                                 trades_df.loc[mask, '出场时间'] = formatted.values
                         except Exception as e:

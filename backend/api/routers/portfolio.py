@@ -56,7 +56,7 @@ async def optimize_weights(request: OptimizeWeightsRequest):
         from backend.services.data_service import data_service
         from backend.services.factor_service import factor_service
         from backend.repositories.factor_repository import FactorRepository
-        from backend.core.database import get_db_session
+        from backend.core.database import get_db
         import pandas as pd
         import numpy as np
 
@@ -71,14 +71,13 @@ async def optimize_weights(request: OptimizeWeightsRequest):
             raise HTTPException(status_code=404, detail="未获取到数据")
 
         # 从数据库获取因子定义
-        db = get_db_session()
-        repo = FactorRepository(db)
-        factor_defs = {}
-        for factor_name in request.factors:
-            factor = repo.get_by_name(factor_name)
-            if factor:
-                factor_defs[factor_name] = factor
-        db.close()
+        with get_db() as db:
+            repo = FactorRepository(db)
+            factor_defs = {}
+            for factor_name in request.factors:
+                factor = repo.get_by_name(factor_name)
+                if factor:
+                    factor_defs[factor_name] = factor
 
         if not factor_defs:
             raise HTTPException(status_code=400, detail="未找到任何有效的因子定义")
@@ -127,9 +126,6 @@ async def optimize_weights(request: OptimizeWeightsRequest):
                 weighted_factor += factor_df[factor_name].fillna(0) * weight
 
         weighted_factor = weighted_factor.dropna()
-
-        # 计算次日收益率（用于IC计算，IC衡量因子对未来收益的预测力）
-        returns = calculate_future_return(stock_data)  # 次日收益率（预测目标）
 
         # 对齐数据 - 使用共同的索引
         common_index = weighted_factor.index.intersection(returns.index)
@@ -237,7 +233,7 @@ async def calculate_composite_score(request: CompositeScoreRequest):
         from backend.services.data_service import data_service
         from backend.services.factor_service import factor_service
         from backend.repositories.factor_repository import FactorRepository
-        from backend.core.database import get_db_session
+        from backend.core.database import get_db
         import pandas as pd
 
         # 获取股票数据
@@ -251,14 +247,13 @@ async def calculate_composite_score(request: CompositeScoreRequest):
             raise HTTPException(status_code=404, detail="未获取到数据")
 
         # 从数据库获取因子定义
-        db = get_db_session()
-        repo = FactorRepository(db)
-        factor_defs = {}
-        for factor_name in request.factors:
-            factor = repo.get_by_name(factor_name)
-            if factor:
-                factor_defs[factor_name] = factor
-        db.close()
+        with get_db() as db:
+            repo = FactorRepository(db)
+            factor_defs = {}
+            for factor_name in request.factors:
+                factor = repo.get_by_name(factor_name)
+                if factor:
+                    factor_defs[factor_name] = factor
 
         if not factor_defs:
             raise HTTPException(status_code=400, detail="未找到任何有效的因子定义")
@@ -314,7 +309,7 @@ async def compare_weight_methods(request: CompareMethodsRequest):
         from backend.services.data_service import data_service
         from backend.services.factor_service import factor_service
         from backend.repositories.factor_repository import FactorRepository
-        from backend.core.database import get_db_session
+        from backend.core.database import get_db
         import pandas as pd
         import numpy as np
 
@@ -329,14 +324,13 @@ async def compare_weight_methods(request: CompareMethodsRequest):
             raise HTTPException(status_code=404, detail="未获取到数据")
 
         # 从数据库获取因子定义
-        db = get_db_session()
-        repo = FactorRepository(db)
-        factor_defs = {}
-        for factor_name in request.factors:
-            factor = repo.get_by_name(factor_name)
-            if factor:
-                factor_defs[factor_name] = factor
-        db.close()
+        with get_db() as db:
+            repo = FactorRepository(db)
+            factor_defs = {}
+            for factor_name in request.factors:
+                factor = repo.get_by_name(factor_name)
+                if factor:
+                    factor_defs[factor_name] = factor
 
         if not factor_defs:
             raise HTTPException(status_code=400, detail="未找到任何有效的因子定义")
@@ -361,6 +355,12 @@ async def compare_weight_methods(request: CompareMethodsRequest):
         # 对每种权重方法进行测试（委托WeightOptimizer统一入口，消除代码重复）
         optimizer = WeightOptimizer()
         results = {}
+
+        # 构建因子DataFrame（循环外一次性构建，避免重复创建）
+        factor_df = pd.DataFrame(index=stock_data.index)
+        for factor_name, values in factor_data.items():
+            factor_df[factor_name] = values
+
         for method in request.methods:
             try:
                 # 1. 计算该方法的因子权重
@@ -369,10 +369,7 @@ async def compare_weight_methods(request: CompareMethodsRequest):
                 )
                 weights = result_weights["weights"]
 
-                # 2. 构建加权组合因子
-                factor_df = pd.DataFrame(index=stock_data.index)
-                for factor_name, values in factor_data.items():
-                    factor_df[factor_name] = values
+                # 2. 构建加权组合因子（factor_df已在循环外构建）
 
                 # 计算加权组合
                 weighted_factor = pd.Series(0.0, index=factor_df.index)

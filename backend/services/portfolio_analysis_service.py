@@ -313,36 +313,28 @@ class PortfolioAnalysisService:
             weights = pd.Series(1.0 / n_factors, index=factor_returns.columns)
             extra_info["note"] = "等权重分配"
 
-        # 2. IC加权（基于因子均值和夏普比率）
+        # 2. IC加权（基于因子均值收益作为IC代理）
         elif method == "ic_weight":
-            # 计算每个因子的IC（均值和IR）
-            factor_stats = {}
+            # 计算每个因子的IC（因子值与收益的横截面相关系数）
+            # 由于此处只有因子收益率序列，使用均值收益作为IC代理
+            ic_values = {}
             for factor in factor_returns.columns:
-                returns = factor_returns[factor].dropna()
-                if len(returns) > 0:
-                    mean_return = returns.mean()
-                    std_return = returns.std()
-                    ir = safe_ir(float(mean_return), float(std_return), default=0.0)
+                ic_series = factor_returns[factor].dropna()
+                if len(ic_series) > 1:
+                    # 使用均值收益作为IC代理，IC为负时权重为0
+                    ic_mean = ic_series.mean()
+                    ic_values[factor] = max(0, ic_mean)
+                else:
+                    ic_values[factor] = 0.0
 
-                    factor_stats[factor] = {
-                        "mean": mean_return,
-                        "std": std_return,
-                        "ir": ir
-                    }
-
-            # 基于IR加权（IR为负的设为0）
-            ir_values = pd.Series({
-                factor: max(0, stats["ir"])
-                for factor, stats in factor_stats.items()
-            })
-
-            if ir_values.sum() == 0:
-                # 如果所有IR都<=0，回退到等权重
-                weights = pd.Series(1.0 / n_factors, index=factor_returns.columns)
+            ic_series = pd.Series(ic_values)
+            total_ic = ic_series.sum()
+            if total_ic > 0:
+                weights = (ic_series / total_ic)
             else:
-                weights = ir_values / ir_values.sum()
+                weights = pd.Series(1.0 / n_factors, index=factor_returns.columns)
 
-            extra_info["factor_stats"] = factor_stats
+            extra_info["ic_values"] = ic_values
 
         # 3. 风险平价
         elif method == "risk_parity":
@@ -417,8 +409,8 @@ class PortfolioAnalysisService:
         portfolio_variance = np.dot(weights.T, np.dot(cov_matrix.values, weights))
         weighted_volatility = np.sqrt(portfolio_variance)
 
-        # 计算夏普比率
-        sharpe_ratio = (weighted_return - risk_free_rate) / weighted_volatility if weighted_volatility > 0 else 0
+        # 计算夏普比率（不可计算时返回None，符合规则6）
+        sharpe_ratio = safe_divide(weighted_return - risk_free_rate, weighted_volatility, default=None)
 
         # 构建返回结果
         result = {
@@ -525,10 +517,10 @@ class PortfolioAnalysisService:
                 results[method] = {
                     "annual_return": optimization_result["expected_return"],
                     "volatility": optimization_result["expected_volatility"],
-                    "sharpe_ratio": (
-                        (optimization_result["expected_return"] - risk_free_rate) / optimization_result["expected_volatility"]
-                        if optimization_result["expected_volatility"] > 0
-                        else 0
+                    "sharpe_ratio": safe_divide(
+                        optimization_result["expected_return"] - risk_free_rate,
+                        optimization_result["expected_volatility"],
+                        default=None,
                     ),
                 }
 

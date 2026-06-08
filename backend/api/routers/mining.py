@@ -16,6 +16,7 @@ import asyncio
 import numpy as np
 import math
 import json
+import time
 import logging
 from datetime import datetime
 
@@ -119,9 +120,40 @@ class GeneticMiningRequest(BaseModel):
 
 
 # ========== 任务存储（内存） ==========
+MAX_TASKS = 100
+TASK_TTL_SECONDS = 86400  # 24 hours
+MAX_FITNESS_HISTORY_ENTRIES = 1000
+
 mining_tasks = {}
 # 挖掘服务实例引用（用于取消）
 mining_services = {}
+
+
+def _cleanup_old_tasks():
+    """清理过期和超量的挖掘任务，防止内存泄漏"""
+    now = time.time()
+    # 1. 移除超过TTL的已完成/失败/取消任务
+    expired_ids = []
+    for task_id, task in mining_tasks.items():
+        created_at = task.get("created_at", 0)
+        if created_at and (now - created_at) > TASK_TTL_SECONDS:
+            status = task.get("status", "")
+            if status in ("completed", "failed", "cancelled"):
+                expired_ids.append(task_id)
+    for task_id in expired_ids:
+        mining_tasks.pop(task_id, None)
+        mining_services.pop(task_id, None)
+
+    # 2. 如果仍然超过MAX_TASKS，移除最旧的任务
+    if len(mining_tasks) > MAX_TASKS:
+        sorted_tasks = sorted(
+            mining_tasks.items(),
+            key=lambda x: x[1].get("created_at", 0)
+        )
+        excess = len(mining_tasks) - MAX_TASKS
+        for task_id, _ in sorted_tasks[:excess]:
+            mining_tasks.pop(task_id, None)
+            mining_services.pop(task_id, None)
 
 
 # ========== API端点 ==========
@@ -133,12 +165,16 @@ async def start_genetic_mining(request: GeneticMiningRequest, background_tasks: 
         import uuid
         task_id = str(uuid.uuid4())
 
+        # 清理过期和超量任务，防止内存泄漏
+        _cleanup_old_tasks()
+
         mining_tasks[task_id] = {
             "status": "pending",
             "progress": 0,
             "result": None,
             "error": None,
             "algorithm": request.algorithm,
+            "created_at": time.time(),
         }
 
         # 持久化到数据库
@@ -637,6 +673,12 @@ def _update_progress(task_id, gen, total_gen, best_fitness, avg_fitness, algorit
     mining_tasks[task_id]["fitness_history"]["best"].append(_safe_float(best_fitness))
     mining_tasks[task_id]["fitness_history"]["average"].append(_safe_float(avg_fitness))
 
+    # 限制fitness_history长度，防止无限增长
+    fh = mining_tasks[task_id]["fitness_history"]
+    if len(fh["best"]) > MAX_FITNESS_HISTORY_ENTRIES:
+        fh["best"] = fh["best"][-MAX_FITNESS_HISTORY_ENTRIES:]
+        fh["average"] = fh["average"][-MAX_FITNESS_HISTORY_ENTRIES:]
+
     # 同步进度到数据库（每5代同步一次，减少IO）
     if gen % 5 == 0 or gen == total_gen:
         _sync_task_to_db(task_id, progress=progress, current_generation=gen,
@@ -887,6 +929,11 @@ def _finalize_task(task_id: str, result: dict, request: GeneticMiningRequest,
         else:
             fitness_history = {"best": [], "average": []}
 
+    # 限制fitness_history长度，防止无限增长
+    if len(fitness_history.get("best", [])) > MAX_FITNESS_HISTORY_ENTRIES:
+        fitness_history["best"] = fitness_history["best"][-MAX_FITNESS_HISTORY_ENTRIES:]
+        fitness_history["average"] = fitness_history["average"][-MAX_FITNESS_HISTORY_ENTRIES:]
+
     result_data = {
         "factors": discovered_factors,
         "best_fitness": _safe_float(discovered_factors[0]["fitness"]) if discovered_factors else 0.0,
@@ -955,6 +1002,11 @@ async def _run_simulated_mining(task_id: str, request: GeneticMiningRequest, dat
 
         fitness_history["best"].append(current_best_fitness)
         fitness_history["average"].append(current_avg_fitness)
+
+        # 限制fitness_history长度，防止无限增长
+        if len(fitness_history["best"]) > MAX_FITNESS_HISTORY_ENTRIES:
+            fitness_history["best"] = fitness_history["best"][-MAX_FITNESS_HISTORY_ENTRIES:]
+            fitness_history["average"] = fitness_history["average"][-MAX_FITNESS_HISTORY_ENTRIES:]
 
         mining_tasks[task_id]["current_generation"] = gen + 1
         mining_tasks[task_id]["total_generations"] = n_generations

@@ -99,11 +99,19 @@ class MarketCapStrategy(BaseStrategy):
             total_mcap = df.loc[valid_mask, self.market_cap_column].groupby(
                 date_grouper[valid_mask]
             ).transform("sum")
-            weights[valid_mask] = df.loc[valid_mask, self.market_cap_column] / total_mcap
+            weights[valid_mask] = safe_divide(
+                df.loc[valid_mask, self.market_cap_column].values,
+                total_mcap.values,
+                default=0.0,
+            )
         else:
             # 无日期级别时，全局市值加权
             total_mcap = df.loc[valid_mask, self.market_cap_column].sum()
             if total_mcap > 0:
-                weights[valid_mask] = df.loc[valid_mask, self.market_cap_column] / total_mcap
+                weights[valid_mask] = safe_divide(
+                    df.loc[valid_mask, self.market_cap_column].values,
+                    total_mcap,
+                    default=0.0,
+                )
 
         return weights

@@ -1,11 +1,28 @@
 """
 数据管理API路由
 """
+import logging
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional, List
 from backend.services.data_service import data_service
 from backend.utils.serialization import sanitize_dict
+
+logger = logging.getLogger(__name__)
+
+AKSHARE_TIMEOUT = 30  # akshare API调用超时时间（秒）
+
+
+def _call_akshare_with_timeout(func, *args, **kwargs):
+    """带超时的akshare API调用"""
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(func, *args, **kwargs)
+        try:
+            return future.result(timeout=AKSHARE_TIMEOUT)
+        except FuturesTimeoutError:
+            logger.warning(f"akshare API调用超时: {func.__name__}")
+            return None
 
 router = APIRouter()
 
@@ -133,9 +150,6 @@ async def get_stock_pool_stocks(pool_id: str):
     - pool_id: 股票池ID (hs300, zz500, zz1000, sz50, cyb50)
     """
     import akshare as ak
-    import logging
-
-    logger = logging.getLogger(__name__)
 
     if pool_id not in STOCK_POOLS:
         raise HTTPException(status_code=404, detail=f"股票池 {pool_id} 不存在")
@@ -156,7 +170,7 @@ async def get_stock_pool_stocks(pool_id: str):
         name_col = None
 
         try:
-            df = ak.index_stock_cons(symbol=symbol)
+            df = _call_akshare_with_timeout(ak.index_stock_cons, symbol=symbol)
             if df is not None and len(df) > 0:
                 # 列名: 品种代码, 品种名称, 纳入日期
                 for col in df.columns:

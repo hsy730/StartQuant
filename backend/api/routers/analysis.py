@@ -12,6 +12,9 @@ import traceback
 from backend.utils.serialization import safe_numeric_value, sanitize_dict
 
 
+logger = logging.getLogger(__name__)
+
+
 from backend.services.analysis_service import analysis_service
 from backend.services.factor_stability_service import factor_stability_service
 from backend.services.enhanced_analysis_service import enhanced_analysis_service
@@ -70,7 +73,7 @@ class MultiPeriodRequest(BaseModel):
 @router.post("/calculate")
 async def calculate_factor(request: CalculateRequest):
     """计算因子值"""
-    logger = logging.getLogger(__name__)
+
 
     try:
         from backend.services.data_service import data_service
@@ -201,7 +204,7 @@ async def calculate_factor(request: CalculateRequest):
 @router.post("/ic")
 async def calculate_ic(request: ICAnalysisRequest):
     """计算IC/IR"""
-    logger = logging.getLogger(__name__)
+
 
     try:
         logger.info(f"开始IC分析: {request.factor_name}, 股票: {request.stock_codes}, 时间: {request.start_date} - {request.end_date}")
@@ -280,6 +283,7 @@ async def stability_test(request: StabilityRequest):
             "data": result
         })
     except Exception as e:
+        logger.error(f"稳定性检验失败: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -300,6 +304,7 @@ async def multi_period_analysis(request: MultiPeriodRequest):
             "data": result
         })
     except Exception as e:
+        logger.error(f"多周期分析失败: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -326,35 +331,41 @@ async def decay_analysis(request: ICAnalysisRequest):
         decay_periods = [1, 3, 5, 10, 20]  # 1日, 3日, 5日, 10日, 20日
         decay_results = []
 
+        # 预取所有股票数据，避免在 period x stock 嵌套循环中重复 IO
+        stock_data_cache = {}
+        for stock_code in request.stock_codes:
+            if request.freq.upper() != "D":
+                minute_period = (request.period or request.freq).lower().replace("min", "").replace("t", "")
+                data = data_service.get_stock_minute_data(
+                    stock_code,
+                    request.start_date,
+                    request.end_date,
+                    period=minute_period if minute_period.isdigit() else "5",
+                )
+            else:
+                data = data_service.get_stock_data(
+                    stock_code,
+                    request.start_date,
+                    request.end_date
+                )
+            if data is not None and len(data) > 0:
+                data = data.copy()
+                # 预计算因子值（同一因子只需计算一次）
+                factor_series = factor_service.calculator.calculate(data, factor.code)
+                if factor_series is not None:
+                    data[request.factor_name] = factor_series
+                    stock_data_cache[stock_code] = data
+
         for period in decay_periods:
             all_ics = []
-            for stock_code in request.stock_codes:
-                if request.freq.upper() != "D":
-                    minute_period = (request.period or request.freq).lower().replace("min", "").replace("t", "")
-                    data = data_service.get_stock_minute_data(
-                        stock_code,
-                        request.start_date,
-                        request.end_date,
-                        period=minute_period if minute_period.isdigit() else "5",
-                    )
-                else:
-                    data = data_service.get_stock_data(
-                        stock_code,
-                        request.start_date,
-                        request.end_date
-                    )
-                if data is not None and len(data) > 0:
-                    # 复制数据避免污染缓存
-                    data = data.copy()
-                    # 计算因子
-                    factor_series = factor_service.calculator.calculate(data, factor.code)
-                    if factor_series is not None:
-                        # 计算未来收益率
-                        future_returns = data["close"].pct_change(period).shift(-period)
-                        # 计算IC
-                        ic = factor_series.rolling(20).corr(future_returns)
-                        if not ic.empty and ic.dropna().count() > 0:
-                            all_ics.append(ic.dropna().mean())
+            for stock_code, data in stock_data_cache.items():
+                factor_series = data[request.factor_name]
+                # 计算未来收益率
+                future_returns = data["close"].pct_change(period).shift(-period)
+                # 计算IC
+                ic = factor_series.rolling(20).corr(future_returns)
+                if not ic.empty and ic.dropna().count() > 0:
+                    all_ics.append(ic.dropna().mean())
 
             if all_ics:
                 mean_ic = np.mean(all_ics)
@@ -380,7 +391,7 @@ async def decay_analysis(request: ICAnalysisRequest):
 @router.post("/exposure")
 async def exposure_analysis(request: CalculateRequest):
     """因子暴露度分析"""
-    logger = logging.getLogger(__name__)
+
 
     try:
         from backend.services.data_service import data_service
@@ -430,7 +441,7 @@ async def exposure_analysis(request: CalculateRequest):
 @router.post("/effectiveness")
 async def effectiveness_analysis(request: ICAnalysisRequest):
     """因子有效性分析"""
-    logger = logging.getLogger(__name__)
+
 
     try:
         from backend.services.data_service import data_service
@@ -480,7 +491,7 @@ async def effectiveness_analysis(request: ICAnalysisRequest):
 @router.post("/attribution")
 async def attribution_analysis(request: ICAnalysisRequest):
     """因子贡献度分解"""
-    logger = logging.getLogger(__name__)
+
 
     try:
         from backend.services.data_service import data_service
@@ -530,7 +541,7 @@ async def attribution_analysis(request: ICAnalysisRequest):
 @router.post("/monitoring")
 async def monitoring_analysis(request: ICAnalysisRequest):
     """时间序列动态监测"""
-    logger = logging.getLogger(__name__)
+
 
     try:
         from backend.services.data_service import data_service
@@ -602,7 +613,7 @@ async def enhanced_correlation_analysis(request: CorrelationAnalysisRequest):
     
     符合专业量化研究的10个关键要求
     """
-    logger = logging.getLogger(__name__)
+
     
     try:
         from backend.services.data_service import data_service
@@ -717,7 +728,7 @@ async def correlation_interpretation(request: CorrelationAnalysisRequest):
     注意：此功能已内置在 /correlation/enhanced 的返回结果中
     本端点提供独立的解读服务（如果已有相关性矩阵）
     """
-    logger = logging.getLogger(__name__)
+
     
     try:
         from backend.services.factor_correlation_service import factor_correlation_service
@@ -762,7 +773,7 @@ async def mixed_type_correlation_analysis(request: CorrelationAnalysisRequest):
     
     如果未安装phik，将使用scipy的ANOVA作为降级方案
     """
-    logger = logging.getLogger(__name__)
+
     
     try:
         from backend.services.phik_correlation_service import get_phik_service
@@ -822,7 +833,7 @@ async def quantile_returns_analysis(request: QuantileReturnsRequest):
     
     对比表状态更新：❌ → ✅ 已实现
     """
-    logger = logging.getLogger(__name__)
+
     
     try:
         from backend.services.data_service import data_service
@@ -902,7 +913,7 @@ async def cumulative_returns_analysis(request: QuantileReturnsRequest):
     
     对比表状态更新：❌ → ✅ 已实现
     """
-    logger = logging.getLogger(__name__)
+
     
     try:
         from backend.services.data_service import data_service
@@ -976,7 +987,7 @@ async def turnover_analysis(request: ICAnalysisRequest):
     
     对比表状态更新：⚠️ → ✅ 已完善
     """
-    logger = logging.getLogger(__name__)
+
     
     try:
         from backend.services.data_service import data_service
@@ -1052,7 +1063,7 @@ async def full_tear_sheet(request: QuantileReturnsRequest):
     
     对比表状态更新：⚠️ → ✅ 升级完成
     """
-    logger = logging.getLogger(__name__)
+
     
     try:
         from backend.services.data_service import data_service
@@ -1142,7 +1153,7 @@ async def weighted_ic_analysis(request: WeightedICRequest):
     
     对比表状态更新：❌ → ✅ 已实现
     """
-    logger = logging.getLogger(__name__)
+
     
     try:
         from backend.services.data_service import data_service
@@ -1260,7 +1271,7 @@ async def factor_importance_analysis(request: WeightedICRequest):
     
     对比表状态更新：❌ → ✅ 已实现
     """
-    logger = logging.getLogger(__name__)
+
     
     try:
         from backend.services.data_service import data_service
@@ -1357,7 +1368,7 @@ async def detect_lookahead_bias(request: LookaheadBiasRequest):
 
     对比表状态更新：❌ → ✅ 已实现
     """
-    logger = logging.getLogger(__name__)
+
 
     try:
         from backend.services.data_service import data_service

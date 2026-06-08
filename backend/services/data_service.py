@@ -113,7 +113,7 @@ class DataService:
             cache_key = self._get_cache_key(stock_code, start_date, end_date)
             cached_data = self._load_from_cache(cache_key)
             if cached_data is not None:
-                return cached_data
+                return cached_data.copy()
 
         # 从 akshare 获取数据
         try:
@@ -597,7 +597,7 @@ class DataService:
         if settings.AKSHARE_CACHE_ENABLED:
             cached_data = self._load_from_cache(cache_key)
             if cached_data is not None:
-                return cached_data
+                return cached_data.copy()
 
         df = self.get_stock_data(stock_code, start_date, end_date, use_cache=True)
         df = df.copy()

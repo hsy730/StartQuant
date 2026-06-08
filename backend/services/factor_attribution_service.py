@@ -139,12 +139,9 @@ class FactorAttributionService:
                 df_copy["future_return"] = df_copy["close"].shift(-1) / df_copy["close"] - 1
                 valid = df_copy[[factor_name, "future_return"]].dropna()
                 valid = valid[~np.isinf(valid["future_return"])]
-                for date, row in valid.iterrows():
-                    if date not in factor_panel:
-                        factor_panel[date] = []
-                        return_panel[date] = []
-                    factor_panel[date].append(row[factor_name])
-                    return_panel[date].append(row["future_return"])
+                for date, group in valid.groupby(valid.index):
+                    factor_panel[date] = group[factor_name].tolist()
+                    return_panel[date] = group["future_return"].tolist()
 
         # 每日横截面Rank IC
         daily_ics = []
@@ -236,11 +233,11 @@ class FactorAttributionService:
             # 同期收益(pct_change(1))会导致"先看到收益再选股"的前视偏差
             df_copy["return"] = df_copy["close"].pct_change(1).shift(-1)
             valid = df_copy[[factor_name, "return"]].dropna()
-            for date, row in valid.iterrows():
+            for date, group in valid.groupby(valid.index):
                 if date not in date_portfolio_returns:
                     date_portfolio_returns[date] = {"factor": [], "return": []}
-                date_portfolio_returns[date]["factor"].append(row[factor_name])
-                date_portfolio_returns[date]["return"].append(row["return"])
+                date_portfolio_returns[date]["factor"].extend(group[factor_name].tolist())
+                date_portfolio_returns[date]["return"].extend(group["return"].tolist())
 
         portfolio_daily_returns = {}
         for date in sorted(date_portfolio_returns.keys()):

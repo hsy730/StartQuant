@@ -290,7 +290,9 @@ class DeepFactorMiningService:
     def set_stock_pool(self, stock_codes: List[str], start_date: str, end_date: str):
         """设置股票池，用于横截面 IC 评估"""
         self.stock_codes = stock_codes
-        self.stock_pool_data = data_service.get_multiple_stocks_data(stock_codes, start_date, end_date)
+        raw_data = data_service.get_multiple_stocks_data(stock_codes, start_date, end_date)
+        # 规则3：防御性copy，避免就地修改data_service返回的DataFrame
+        self.stock_pool_data = {k: v.copy() for k, v in raw_data.items()}
 
         for code, df in self.stock_pool_data.items():
             if "close" in df.columns:
@@ -653,13 +655,20 @@ class DeepFactorMiningService:
         X_tensor = torch.FloatTensor(X_norm).to(self.device)
         all_factors = []
 
-        with torch.no_grad():
-            for start in range(0, len(X_tensor) - self.seq_length + 1):
-                window = X_tensor[start: start + self.seq_length].unsqueeze(0)
-                _, latent = model(window)
-                # 取最后一个时间步的隐因子
-                last_step_factors = latent[0, -1, :].cpu().numpy()
-                all_factors.append(last_step_factors)
+        n_samples = len(X_tensor) - self.seq_length + 1
+        if n_samples > 0:
+            # 批量构建滑动窗口，替代逐样本循环推理
+            windows = torch.stack([
+                X_tensor[start: start + self.seq_length]
+                for start in range(n_samples)
+            ])  # (n_samples, seq_length, n_features)
+            # 分块推理，避免单次前向传播显存溢出
+            chunk_size = 256
+            with torch.no_grad():
+                for i in range(0, n_samples, chunk_size):
+                    chunk = windows[i:i + chunk_size]
+                    _, latent = model(chunk)
+                    all_factors.extend(latent[:, -1, :].cpu().numpy().tolist())
 
         if not all_factors:
             logger.warning("未能提取任何隐因子")

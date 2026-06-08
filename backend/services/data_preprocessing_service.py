@@ -94,6 +94,9 @@ class DataPreprocessingService:
             else:  # std
                 mean = df[column].mean()
                 std = df[column].std()
+                if std == 0 or pd.isna(std):
+                    # 常数列无异常值，直接返回原数据
+                    return df
                 lower_bound = mean - n_sigma * std
                 upper_bound = mean + n_sigma * std
             df.loc[df[column] < lower_bound, column] = lower_bound

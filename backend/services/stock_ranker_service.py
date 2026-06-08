@@ -27,6 +27,7 @@ from typing import Dict, List, Optional, Any, Tuple
 from dataclasses import dataclass, field
 from enum import Enum
 from datetime import datetime
+from collections import OrderedDict
 import pandas as pd
 import numpy as np
 
@@ -104,6 +105,41 @@ class RankTrainingResult:
     train_period: str = ""
 
 
+MAX_LOADED_MODELS = 10
+
+
+class _LRUModelCache:
+    """LRU缓存，用于限制内存中加载的模型数量"""
+
+    def __init__(self, max_size=MAX_LOADED_MODELS):
+        self._cache: OrderedDict[str, Any] = OrderedDict()
+        self._max_size = max_size
+
+    def get(self, model_id: str):
+        if model_id in self._cache:
+            self._cache.move_to_end(model_id)
+            return self._cache[model_id]
+        return None
+
+    def put(self, model_id: str, model):
+        if model_id in self._cache:
+            self._cache.move_to_end(model_id)
+        else:
+            if len(self._cache) >= self._max_size:
+                self._cache.popitem(last=False)
+        self._cache[model_id] = model
+
+    def remove(self, model_id: str):
+        if model_id in self._cache:
+            del self._cache[model_id]
+
+    def __contains__(self, model_id: str):
+        return model_id in self._cache
+
+    def __len__(self):
+        return len(self._cache)
+
+
 class StockRankerService:
     """
     GBDT 排序学习服务（替代 BigQuant StockRanker）
@@ -153,7 +189,7 @@ class StockRankerService:
 
         self.model_registry = model_registry
         self.default_config = default_config or RankTrainingConfig()
-        self._loaded_models: Dict[str, xgb.Booster] = {}  # 内存缓存
+        self._loaded_models = _LRUModelCache()  # LRU内存缓存
 
     def train(
         self,
@@ -713,14 +749,15 @@ class StockRankerService:
             self._file_based_save(model, model_id, metadata)
 
         # 缓存到内存
-        self._loaded_models[model_id] = model
+        self._loaded_models.put(model_id, model)
 
         return model_id
 
     def _load_model(self, model_id: str) -> xgb.Booster:
         """加载模型（优先从内存缓存）"""
-        if model_id in self._loaded_models:
-            return self._loaded_models[model_id]
+        cached = self._loaded_models.get(model_id)
+        if cached is not None:
+            return cached
 
         if self.model_registry:
             model = self.model_registry.load(model_id)
@@ -728,7 +765,7 @@ class StockRankerService:
             model = self._file_based_load(model_id)
 
         if model is not None:
-            self._loaded_models[model_id] = model
+            self._loaded_models.put(model_id, model)
         return model
 
     def _get_model_metadata(self, model_id: str) -> Dict:
@@ -786,7 +823,7 @@ class StockRankerService:
                 os.remove(path)
                 deleted = True
         if model_id in self._loaded_models:
-            del self._loaded_models[model_id]
+            self._loaded_models.remove(model_id)
         return deleted
 
     # ==================== 特征预处理辅助 ====================

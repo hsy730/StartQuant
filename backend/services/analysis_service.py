@@ -161,7 +161,7 @@ class AnalysisService:
                     # 尝试解析字符串索引为 datetime
                     try:
                         result["ic_ir"]["rolling_ir"][k] = pd.Series(
-                            v.values(),
+                            list(v.values()),
                             index=pd.to_datetime(list(v.keys()))
                         )
                     except Exception as e:
@@ -801,12 +801,16 @@ class AnalysisService:
             rolling_mean = ic_s.rolling(window=window, min_periods=min_periods).mean()
             rolling_std = ic_s.rolling(window=window, min_periods=min_periods).std()
             # IC完全稳定(std=0)时，IR应趋向极大值而非0
-            # 使用safe_ir统一处理：std=0且mean≠0时返回abs(mean)*1e6
+            # 向量化计算 IR，替代逐元素 Python 循环
+            valid_mask = rolling_std > 1e-10
             ir = pd.Series(np.nan, index=rolling_mean.index)
-            for idx in rolling_mean.index:
-                if not np.isnan(rolling_mean[idx]):
-                    ir_val = safe_ir(float(rolling_mean[idx]), float(rolling_std[idx]), default=0.0)
-                    ir[idx] = ir_val
+            ir[valid_mask] = rolling_mean[valid_mask] / rolling_std[valid_mask]
+            # std≈0 但 mean≠0 的情况，IR设为极大值
+            zero_std_nonzero_mean = (~valid_mask) & (rolling_mean.abs() > 1e-10)
+            ir[zero_std_nonzero_mean] = rolling_mean[zero_std_nonzero_mean].abs() * 1e6
+            # std≈0 且 mean≈0 的情况，IR设为0
+            zero_both = (~valid_mask) & (rolling_mean.abs() <= 1e-10)
+            ir[zero_both] = 0.0
             rolling_ir[factor_name] = ir
         return rolling_ir
 
@@ -843,14 +847,18 @@ class AnalysisService:
                             continue
                         if "future_return_1" not in df.columns:
                             continue
-                        for date_idx, (date, row) in enumerate(df.iterrows()):
-                            fv = row.get(factor_name)
-                            ret = row.get("future_return_1")
-                            if pd.notna(fv) and pd.notna(ret) and not np.isinf(fv) and not np.isinf(ret):
-                                all_factor_rows.append({"date": date, "stock_code": stock_code, factor_name: float(fv), "return": float(ret)})
+                        # 向量化过滤替代 iterrows，避免逐行创建 Series 对象
+                        valid_mask = df[factor_name].notna() & df["future_return_1"].notna()
+                        valid_mask &= ~np.isinf(df[factor_name]) & ~np.isinf(df["future_return_1"])
+                        if valid_mask.sum() >= 50:
+                            valid_df = df.loc[valid_mask, [factor_name, "future_return_1"]].copy()
+                            valid_df["date"] = valid_df.index
+                            valid_df["stock_code"] = stock_code
+                            valid_df = valid_df.rename(columns={"future_return_1": "return"})
+                            all_factor_rows.append(valid_df)
 
                     if len(all_factor_rows) >= 50:
-                        bias_df = pd.DataFrame(all_factor_rows)
+                        bias_df = pd.concat(all_factor_rows, ignore_index=True)
                         # factor_df仅包含date/stock_code/factor_value，避免与return_df的return列冲突
                         detection_result = lookahead_bias_detector.detect_cross_sectional(
                             factor_df=bias_df[["date", "stock_code", factor_name]].rename(columns={factor_name: "factor_value"}),

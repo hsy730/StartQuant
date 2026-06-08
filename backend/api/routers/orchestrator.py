@@ -14,6 +14,7 @@ from fastapi import APIRouter, HTTPException, BackgroundTasks
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 import traceback
+import asyncio
 
 import logging
 
@@ -83,7 +84,8 @@ async def orchestrator_validate(request: OrchestratorValidateRequest):
 
         orchestrator = FactorOrchestrator(config=config)
 
-        result = orchestrator.validate(
+        result = await asyncio.to_thread(
+            orchestrator.validate,
             expression=request.expression,
             stock_codes=request.stock_codes,
             start_date=request.start_date,
@@ -111,7 +113,8 @@ async def orchestrator_batch_validate(request: OrchestratorBatchRequest):
         )
 
         orchestrator = FactorOrchestrator()
-        result = orchestrator.batch_validate(
+        result = await asyncio.to_thread(
+            orchestrator.batch_validate,
             expressions=request.expressions,
             stock_codes=request.stock_codes,
             start_date=request.start_date,

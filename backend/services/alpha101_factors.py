@@ -1,5 +1,5 @@
-# NOTE: Alpha101因子公式中的 +1e-10 是表达式模板，在eval中执行，
-# 无法使用safe_divide。这些是业界标准公式，保留原样。
+# NOTE: Alpha101因子公式中的除零保护使用 .clip(lower=1e-10) 替代 +1e-10 hack，
+# 避免当分母接近零时产生极大值。
 from typing import Dict, List
 
 
@@ -140,7 +140,7 @@ def get_alpha101_factors() -> Dict[str, List[Dict]]:
             },
             {
                 "name": "alpha053",
-                "code": "-1 * DELTA(((close - low - (high - close)) / (close - low + 1e-10)) * volume, 1)",
+                "code": "-1 * DELTA(((close - low - (high - close)) / (close - low).clip(lower=1e-10)) * volume, 1)",
                 "description": "Alpha#53: 日内价格位置加权成交量变化",
             },
             {
@@ -291,12 +291,12 @@ def get_alpha101_factors() -> Dict[str, List[Dict]]:
         "Alpha101-综合信号": [
             {
                 "name": "alpha024",
-                "code": "IF(np.abs(DELTA(AVE(close, 100), 100) / (REF(close, 100) + 1e-10)) <= 0.05, -1 * (close - LLV(close, 100)), -1 * DELTA(close, 3))",
+                "code": "IF(np.abs(DELTA(AVE(close, 100), 100) / REF(close, 100).clip(lower=1e-10)) <= 0.05, -1 * (close - LLV(close, 100)), -1 * DELTA(close, 3))",
                 "description": "Alpha#24: 横盘时用价格位置，趋势时用短期动量",
             },
             {
                 "name": "alpha054",
-                "code": "-1 * (low - close) ** 2 * volume / ((low - high) ** 2 + 1e-10)",
+                "code": "-1 * (low - close) ** 2 * volume / ((low - high) ** 2).clip(lower=1e-10)",
                 "description": "Alpha#54: 低价偏离度加权成交量反转",
             },
             {
@@ -331,7 +331,7 @@ def get_alpha101_factors() -> Dict[str, List[Dict]]:
             },
             {
                 "name": "alpha101",
-                "code": "(close - open) / ((high - low) + 1e-10) * volume",
+                "code": "(close - open) / (high - low).clip(lower=1e-10) * volume",
                 "description": "Alpha#101: 日内方向强度加权成交量",
             },
         ],
