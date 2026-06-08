@@ -206,8 +206,12 @@ class SmartPreprocessingDetector:
                     .std()
                 )
                 if len(rolling_vol.dropna()) > 10:
-                    vol_of_vol = safe_divide(float(rolling_vol.std()), float(rolling_vol.mean()), default=0.0)
-                    time_varying_vol = vol_of_vol > 0.3  # 波动率的变异系数>30%
+                    vol_mean = float(rolling_vol.mean())
+                    if abs(vol_mean) < 1e-10:
+                        time_varying_vol = False  # 均值接近0，无法计算变异系数
+                    else:
+                        vol_of_vol = safe_divide(float(rolling_vol.std()), vol_mean, default=0.0)
+                        time_varying_vol = vol_of_vol > 0.3  # 波动率的变异系数>30%
 
         return DataCharacteristics(
             n_stocks=n_stocks,

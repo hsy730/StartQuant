@@ -93,6 +93,8 @@ class StrategyComparisonService:
 
         df = pd.DataFrame(metrics_list)
         df = df.set_index("strategy")
+        # 填充缺失值，避免后续分析因 NaN 出错
+        df = df.fillna(0.0)
 
         return df
 

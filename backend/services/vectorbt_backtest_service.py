@@ -15,6 +15,7 @@ import vectorbt as vbt
 from backend.services.risk_metrics import calculate_risk_metrics, calculate_volatility as _calc_volatility, _empty_metrics
 from backend.services.smart_slippage_detector import smart_slippage_detector, SlippageRecommendation
 from backend.utils.return_calculator import calculate_future_return
+from backend.utils.safe_math import safe_divide
 
 logger = logging.getLogger(__name__)
 
@@ -665,6 +666,7 @@ class VectorBTBacktestService:
             tradable_mask = df["tradable_mask"]
             logger.info(f"✅ VectorBT Backtest: 使用Mask-First设计，可交易比例 {tradable_mask.mean():.1%}")
             if tradable_mask.sum() == 0:
+                logger.error("tradable_mask全为False！所有日期都不可交易")
                 raise ValueError("tradable_mask全为False！所有日期都不可交易")
         elif use_tradable_mask and "tradable_mask" not in df.columns:
             logger.warning("⚠️ VectorBT Backtest: 未找到tradable_mask列！")
@@ -860,14 +862,14 @@ class VectorBTBacktestService:
                 norm_factor = f"{factor_name}_normalized"
                 # 滚动波动率，shift(1)避免前视
                 rolling_vol = df[norm_factor].rolling(vol_window, min_periods=20).std().shift(1)
-                inv_vol = 1.0 / rolling_vol.replace(0, np.nan)
+                inv_vol = safe_divide(1.0, rolling_vol, default=np.nan)
                 vol_weight_frames.append(inv_vol)
 
             # 逐行计算归一化权重和复合得分
             vol_weight_sum = sum(vol_weight_frames)
             composite_parts = []
             for nf, vw_f in zip(normalized_factors, vol_weight_frames):
-                safe_weight = vw_f / vol_weight_sum.replace(0, 1.0 / len(normalized_factors))
+                safe_weight = safe_divide(vw_f, vol_weight_sum, default=1.0 / len(normalized_factors))
                 composite_parts.append(df[nf] * safe_weight.fillna(1.0 / len(normalized_factors)))
             df["composite_score"] = sum(composite_parts)
 
@@ -1126,6 +1128,8 @@ class VectorBTBacktestService:
                 price_pivot = price_data.pivot(index=date_col, columns=ticker_col, values="close")
                 price_pivot.index = pd.to_datetime(price_pivot.index)
                 returns = price_pivot.pct_change().mean(axis=1).dropna()
+                if len(returns) == 0:
+                    return {"error": "权重回测fallback失败：无法计算收益率", "success": False}
                 equity_curve = (1 + returns).cumprod()
                 metrics = self.calculate_metrics(returns, equity_curve)
                 return {

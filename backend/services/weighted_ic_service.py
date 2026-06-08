@@ -87,14 +87,14 @@ class WeightedICService:
     ) -> Dict[str, Any]:
         """
         计算加权IC
-        
+
         根据配置的加权方法，将多个因子的IC序列合成为加权IC。
-        
+
         Args:
             factor_ic_dict: {factor_name: IC序列} 字典
             return_series: 收益率序列（可选，用于计算最优权重）
             factor_correlation_matrix: 因子相关性矩阵（可选，用于相关性调整）
-            
+
         Returns:
             {
                 "weighted_ic": {...},
@@ -103,6 +103,8 @@ class WeightedICService:
                 ...
             }
         """
+        # 防御性复制：避免修改传入数据
+        factor_ic_dict = {k: v.copy() for k, v in factor_ic_dict.items()}
         try:
             if not factor_ic_dict or len(factor_ic_dict) == 0:
                 return {"error": "没有提供因子IC数据"}
@@ -483,15 +485,15 @@ class WeightedICService:
         ics = np.array(ics)
         stds = np.array(stds)
         
-        inv_variances = 1.0 / (stds ** 2)
+        inv_variances = safe_divide(1.0, stds ** 2, default=0.0)
         
         raw_weights = np.abs(ics) * inv_variances
         total = raw_weights.sum()
         
         if total > 0:
-            optimal_weights = raw_weights / total
+            optimal_weights = safe_divide(raw_weights, total, default=1.0 / len(valid_names))
         else:
-            optimal_weights = np.ones(len(valid_names)) / len(valid_names)
+            optimal_weights = np.full(len(valid_names), safe_divide(1.0, len(valid_names), default=0.0))
         
         return dict(zip(valid_names, optimal_weights.tolist()))
 
@@ -513,7 +515,7 @@ class WeightedICService:
         if overall_std == 0:
             return 1.0
         
-        change_score = 1.0 - min(abs(second_mean - first_mean) / overall_std, 1.0)
+        change_score = 1.0 - min(safe_divide(abs(second_mean - first_mean), overall_std, default=0.0), 1.0)
         
         rolling_std = ic_series.rolling(window=20).std()
         cv_of_std = safe_divide(float(rolling_std.std()), float(rolling_std.mean()), default=1.0)

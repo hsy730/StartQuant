@@ -5,7 +5,7 @@ import logging
 import numpy as np
 import pandas as pd
 from typing import Dict, List, Optional, Any
-from scipy import stats
+
 
 from backend.utils.safe_math import safe_divide
 from backend.utils.factor_data_utils import find_longest_stock
@@ -75,9 +75,8 @@ class FactorExposureService:
         current_value = float(time_series.iloc[-1])
 
         # 时间序列分位数：每个时间点的值在整个时间区间内的分位数
-        percentile_series = time_series.apply(
-            lambda x: float(stats.percentileofscore(time_series.values, x))
-        )
+        # 使用 rank(pct=True) 替代逐个调用 percentileofscore，提升效率
+        percentile_series = time_series.rank(pct=True) * 100.0
 
         # 当前值的时间序列分位数
         percentile = float(percentile_series.iloc[-1])

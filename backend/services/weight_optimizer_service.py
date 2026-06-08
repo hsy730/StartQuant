@@ -42,6 +42,9 @@ class WeightOptimizer:
             logger.warning(f"未知权重方法: {method}，回退到等权")
             method = "equal_weight"
 
+        # 防御性复制：避免修改传入数据
+        factor_values = {k: v.copy() for k, v in factor_values.items()}
+
         if method == "equal_weight":
             return self._equal_weight(factor_names)
         elif method == "ic_weight":

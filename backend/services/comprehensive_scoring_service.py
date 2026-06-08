@@ -54,6 +54,9 @@ class ComprehensiveScoringService:
                 "turnover": 0.15,
             }
 
+        # 防御性复制：避免修改传入数据
+        factor_metrics = factor_metrics.copy()
+
         total_score = 0.0
         details = {}
 

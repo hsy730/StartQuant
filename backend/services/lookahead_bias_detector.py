@@ -79,8 +79,8 @@ class LookaheadBiasDetector:
         detector = LookaheadBiasDetector()
         result = detector.detect(factor_values=factor_series, return_values=return_series)
         if result.has_bias:
-            print(f"风险等级: {result.risk_level}")
-            print(result.summary)
+            logger.info(f"风险等级: {result.risk_level}")
+            logger.info(result.summary)
     """
 
     # ========== 默认阈值配置（基于A股市场经验值）==========
@@ -164,6 +164,7 @@ class LookaheadBiasDetector:
         # ---- 基础校验 ----
         factor_clean = factor_values.dropna()
         if len(factor_clean) < 20:
+            logger.warning(f"[未来函数检测] 因子 {factor_name} 有效数据不足 (n={len(factor_clean)} < 20)，跳过检测")
             return self._insufficient_data_result(factor_name, len(factor_clean))
 
         # ---- 维度 1: IC 异常检测 ----
@@ -279,8 +280,19 @@ class LookaheadBiasDetector:
             if valid.sum() < 5:
                 continue
 
-            ic = fv[valid].corr(ret[valid])
-            rank_ic = fv[valid].rank().corr(ret[valid].rank())
+            fv_valid = fv[valid]
+            ret_valid = ret[valid]
+
+            # 防止常数值导致 corr 返回 NaN
+            if fv_valid.nunique() < 2 or ret_valid.nunique() < 2:
+                continue
+
+            try:
+                ic = fv_valid.corr(ret_valid)
+                rank_ic = fv_valid.rank().corr(ret_valid.rank())
+            except Exception as e:
+                logger.debug(f"IC计算异常: {e}")
+                continue
 
             if pd.notna(ic) and not np.isinf(ic):
                 daily_ics.append(ic)
@@ -319,8 +331,8 @@ class LookaheadBiasDetector:
 
             # 检测 2: IR 过高
             ic_std = ic_series.std()
-            if ic_std > 1e-8:
-                ir = safe_ir(float(abs(mean_ic)), float(ic_std), default=999.0)
+            ir = safe_ir(float(abs(mean_ic)), float(ic_std), default=None)
+            if ir is not None:
                 ir_threshold = self.thresholds["ir_max"]
                 checks.append(BiasCheckResult(
                     check_name="cross_sectional_ir",
@@ -441,8 +453,9 @@ class LookaheadBiasDetector:
 
         ic_mean = rolling_ic.mean()
         ic_std = rolling_ic.std()
-        ir = safe_ir(float(abs(ic_mean)), float(ic_std), default=999.0)
-        ir = min(ir, 99.0)  # cap
+        ir = safe_ir(float(abs(ic_mean)), float(ic_std), default=None)
+        if ir is None:
+            return self._skip_result("ir_magnitude", "IR无法计算（IC标准差为0）")
         threshold = self.thresholds["ir_max"]
 
         return BiasCheckResult(
