@@ -279,11 +279,11 @@ class TestSharpeZeroProtection:
     """标准差为零时的 Sharpe/Sortino 保护"""
 
     def test_sharpe_zero_returns(self):
-        """全零收益率序列应返回 Sharpe=0"""
+        """全零收益率序列应返回None（不可计算）"""
         from backend.services.risk_metrics import calculate_risk_metrics
 
         metrics = calculate_risk_metrics(pd.Series([0.0] * 100), risk_free_rate=0.03)
-        assert metrics["sharpe_ratio"] == 0.0
+        assert metrics["sharpe_ratio"] is None
 
     def test_sharpe_constant_returns(self):
         """恒定收益率序列（std=0）应返回有限值"""
@@ -309,11 +309,11 @@ class TestSharpeZeroProtection:
         assert result == 0.0
 
     def test_empty_metrics_all_zero(self):
-        """空指标字典所有值应为 0.0"""
+        """空指标字典所有值应为None（不可计算）"""
         from backend.services.risk_metrics import _empty_metrics
 
         metrics = _empty_metrics()
-        assert all(v == 0.0 for v in metrics.values())
+        assert all(v is None for v in metrics.values())
 
     def test_risk_metrics_empty_series(self):
         """空收益率序列应返回空指标"""
@@ -338,22 +338,18 @@ class TestVectorBtRfConversion:
     """vectorbt_backtest_service 的 risk_free 转换"""
 
     def test_vectorbt_sharpe_uses_daily_rf(self):
-        """验证 vectorbt_backtest_service 代码中 empyrical 调用使用日频 rf"""
-        # 直接读取源码验证 rf 转换逻辑
+        """验证 vectorbt_backtest_service 通过 calculate_risk_metrics 使用日频 rf"""
+        from backend.services.risk_metrics import calculate_risk_metrics
         import inspect
-        from backend.services.vectorbt_backtest_service import VectorBTBacktestService
-
-        source = inspect.getsource(VectorBTBacktestService)
-        # 验证 sharpe_ratio 调用中 risk_free 除以了 annual_bars
-        assert 'risk_free_rate / fc["annual_bars"]' in source, \
-            "vectorbt_backtest_service 中 sharpe_ratio 的 risk_free 未除以 annual_bars"
+        # 验证 calculate_risk_metrics 中 rf 转换逻辑
+        source = inspect.getsource(calculate_risk_metrics)
+        assert 'risk_free_rate / annual_trading_days' in source or 'risk_free_rate/annual_trading_days' in source, \
+            "calculate_risk_metrics 中 risk_free 未除以 annual_trading_days"
 
     def test_vectorbt_sortino_uses_daily_rf(self):
-        """验证 vectorbt_backtest_service 中 sortino_ratio 使用日频 required_return"""
+        """验证 calculate_risk_metrics 中 sortino 使用日频 required_return"""
+        from backend.services.risk_metrics import calculate_risk_metrics
         import inspect
-        from backend.services.vectorbt_backtest_service import VectorBTBacktestService
-
-        source = inspect.getsource(VectorBTBacktestService)
-        # 验证 sortino_ratio 调用中 required_return 除以了 annual_bars
-        assert 'risk_free_rate / fc["annual_bars"]' in source, \
-            "vectorbt_backtest_service 中 sortino_ratio 的 required_return 未除以 annual_bars"
+        source = inspect.getsource(calculate_risk_metrics)
+        assert 'risk_free_rate / annual_trading_days' in source or 'risk_free_rate/annual_trading_days' in source, \
+            "calculate_risk_metrics 中 required_return 未除以 annual_trading_days"

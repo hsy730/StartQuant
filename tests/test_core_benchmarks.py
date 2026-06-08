@@ -464,11 +464,12 @@ class TestAnalysisService:
         """rolling_ir不应产生inf值（Bug#4修复验证）"""
         from backend.services.analysis_service import AnalysisService
         service = AnalysisService()
-        # 构造IC全为0的序列（会导致std=0）
         ic_series = {"factor1": pd.Series([0.0] * 100)}
         result = service._calculate_rolling_ir(ic_series, window=20)
         assert not np.isinf(result["factor1"]).any(), "rolling_ir不应包含inf"
-        assert not np.isnan(result["factor1"]).any(), "rolling_ir不应包含NaN（除首部外）"
+        # 滚动窗口前 min_periods-1 个位置为NaN是正常的，排除首部
+        min_periods = max(1, 20 // 4)
+        assert not np.isnan(result["factor1"].iloc[min_periods:]).any(), "rolling_ir不应包含NaN（除首部外）"
 
     def test_single_stock_ic_calculation(self):
         """单股票IC计算应返回有效结果"""
@@ -571,21 +572,21 @@ class TestBacktestService:
         assert 0 <= metrics["win_rate"] <= 1
 
     def test_calculate_metrics_empty_returns(self):
-        """空收益序列应返回零指标"""
+        """空收益序列应返回None指标（不可计算）"""
         from backend.services.backtest_service import BacktestService
         service = BacktestService()
         returns = pd.Series(dtype=float)
         metrics = service.calculate_metrics(returns)
-        assert metrics["sharpe_ratio"] == 0.0
-        assert metrics["total_return"] == 0.0
+        assert metrics["sharpe_ratio"] is None
+        assert metrics["total_return"] is None
 
     def test_drawdown_calculation(self):
-        """回撤计算应正确"""
+        """回撤计算应正确（返回负值，与empyrical约定一致）"""
         from backend.services.backtest_service import BacktestService
         service = BacktestService()
         equity = pd.Series([100, 110, 105, 115, 100, 120])
         dd = service.calculate_drawdown(equity)
-        assert dd.max() > 0, "应存在回撤"
+        assert dd.min() < 0, "应存在回撤（负值）"
         assert dd.iloc[1] == 0, "新高点回撤应为0"
 
     def test_benchmark_metrics(self):
@@ -656,14 +657,14 @@ class TestSmartSlippageDetector:
         from backend.services.smart_slippage_detector import SmartSlippageDetector, MarketBoard
         detector = SmartSlippageDetector()
         chars = detector.analyze_market(["830001", "830002", "430001"])
-        assert chars.market_board == MarketBoard.BEIJING
+        assert chars.market_board == MarketBoard.BSE
 
     def test_board_detection_mixed(self):
-        """混合板块应正确识别"""
+        """混合板块无主导时应返回UNKNOWN"""
         from backend.services.smart_slippage_detector import SmartSlippageDetector, MarketBoard
         detector = SmartSlippageDetector()
         chars = detector.analyze_market(["600000", "300001", "688001"])
-        assert chars.market_board == MarketBoard.MIXED
+        assert chars.market_board == MarketBoard.UNKNOWN
 
     def test_slippage_recommendation_range(self):
         """滑点推荐值应在合理范围内"""

@@ -42,10 +42,14 @@ def safe_divide(
         else:
             invalid = (np.abs(denominator) < min_threshold) | np.isnan(denominator)
 
-        result = numerator / denominator
-        if isinstance(result, pd.Series):
+        if isinstance(denominator, pd.Series):
+            result = numerator / denominator
             result = result.mask(invalid, default)
         else:
+            # numpy数组：先替换无效分母为1（避免RuntimeWarning），再除法，最后覆盖无效位置
+            safe_denominator = denominator.copy()
+            safe_denominator[invalid] = 1.0
+            result = numerator / safe_denominator
             result[invalid] = default
         return result
     else:
@@ -63,16 +67,16 @@ def safe_ir(ic_mean: float, ic_std: float, default: Optional[float] = None) -> O
 
     统一处理IC标准差为0/NaN/极小值的情况，替代各处自行实现的IR计算。
 
-    特殊处理：当IC完全稳定（std=0但mean≠0）时，IR应趋向极大值，
-    而非返回default=0。因为IC完全稳定意味着因子预测能力极其稳定。
+    当IC标准差为0或极小值时，IR不可计算（常数序列通常意味着数据问题），
+    此时返回default值，而非极大值。
 
     Args:
         ic_mean: IC均值
         ic_std: IC标准差
-        default: 标准差无效且IC均值为0时的返回值
+        default: 标准差无效时的返回值
 
     Returns:
-        IR值，或default（标准差无效且均值为0时）
+        IR值，或default（标准差无效时）
     """
     # 处理NaN输入
     if ic_mean is None or (isinstance(ic_mean, float) and np.isnan(ic_mean)):
@@ -80,11 +84,8 @@ def safe_ir(ic_mean: float, ic_std: float, default: Optional[float] = None) -> O
     if ic_std is None or (isinstance(ic_std, float) and np.isnan(ic_std)):
         return default
 
-    # IC完全稳定：std=0但mean≠0 → IR趋向极大值
+    # 标准差为0或极小值时，IR不可计算
     if abs(ic_std) < 1e-10:
-        if abs(ic_mean) < 1e-10:
-            return default  # 均值和标准差都为0，无法判断
-        # 用sign(mean) * abs(mean) * 1e6 作为极大IR的近似
-        return float(np.sign(ic_mean)) * abs(ic_mean) * 1e6
+        return default
 
     return safe_divide(ic_mean, ic_std, default=default)

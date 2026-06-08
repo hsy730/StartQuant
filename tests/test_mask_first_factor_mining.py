@@ -297,11 +297,12 @@ def test_genetic_mining_with_mask():
         use_masked=True  # ✅ 启用Mask-First
     )
     
-    print(f"   原语数量: {len(pset.primitives)}")
-    print(f"   终端数量: {len(pset.terminals)}")
+    print(f"   原语数量: {sum(len(v) for v in pset.primitives.values())}")
+    print(f"   终端数量: {sum(len(v) for v in pset.terminals.values())}")
     
     # 列出时间序列窗口算子
-    ts_operators = [name for name, _ in pset.primitives if name.startswith("ts_")]
+    all_primitives = [p for plist in pset.primitives.values() for p in plist]
+    ts_operators = [p.name for p in all_primitives if p.name.startswith("ts_")]
     print(f"   时间序列算子 ({len(ts_operators)}个): {ts_operators}")
     
     # 4. 配置并启动因子挖掘（小规模快速测试）
@@ -334,13 +335,12 @@ def test_genetic_mining_with_mask():
         })
         print(f"   📈 代数 {gen}/{total} | 最优适应度: {best_fit:.4f} | 平均适应度: {avg_fit:.4f}")
     
-    mining_config["progress_callback"] = on_progress
-    
     # 执行因子挖掘
     start_time = time.time()
     
     try:
         mining_service = create_genetic_mining_service(**mining_config)
+        mining_service.set_progress_callback(on_progress)
         result = mining_service.mine_factors()
         elapsed_time = time.time() - start_time
         

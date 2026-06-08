@@ -328,7 +328,6 @@ class StockRankerService:
             "reg_alpha": cfg.reg_alpha,
             "reg_lambda": cfg.reg_lambda,
             "eval_metric": eval_metric,
-            "early_stopping_rounds": cfg.early_stopping_rounds,
             "verbosity": 1,
             "seed": 42,
         }
@@ -346,6 +345,7 @@ class StockRankerService:
             evals=[(dtrain, "train"), (dvalid, "valid")],
             evals_result=eval_result,
             verbose_eval=False,
+            early_stopping_rounds=cfg.early_stopping_rounds,
         )
 
         # ---- 特征重要性 ----
@@ -360,9 +360,11 @@ class StockRankerService:
 
         duration = time.time() - t0
 
+        best_iter = getattr(model, "best_iteration", cfg.n_estimators - 1)
+
         logger.info(
             f"[StockRanker] 训练完成: model_id={model_id}, "
-            f"best_iteration={model.best_iteration}, "
+            f"best_iteration={best_iter}, "
             f"best_score={eval_result['valid'][eval_metric][-1] if eval_result.get('valid') else 'N/A'}, "
             f"耗时={duration:.1f}s"
         )
@@ -372,7 +374,7 @@ class StockRankerService:
             status=ModelStatus.READY,
             config=cfg,
             training_metrics={
-                "best_iteration": int(model.best_iteration),
+                "best_iteration": int(best_iter),
                 "train_score": float(eval_result["train"][eval_metric][-1]) if eval_result.get("train") else 0,
                 "valid_score": float(eval_result["valid"][eval_metric][-1]) if eval_result.get("valid") else 0,
                 "eval_history": {

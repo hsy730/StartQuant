@@ -7,11 +7,16 @@ P0/P1 改造验证测试脚本
   P1: 行业+市值联合中性化 → 一次回归
   P1: MAD 缩放因子 1.4826
   P1: FactorEffectivenessService 委托 Alphalens
+
+注意：此脚本使用自定义测试框架，请通过 python tests/test_refactoring.py 独立运行。
 """
 import sys
 import os
 import numpy as np
 import pandas as pd
+import pytest
+
+pytestmark = pytest.mark.skip(reason="自定义测试框架，请通过 python tests/test_refactoring.py 独立运行")
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 

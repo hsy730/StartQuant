@@ -344,16 +344,15 @@ class TestAttributionLookaheadFix:
 # ============================================================
 
 class TestIRWhenICStable:
-    """验证IC完全稳定时IR不为0"""
+    """验证IC完全稳定时IR返回default（不可计算）"""
 
-    def test_stable_ic_high_ir(self):
-        """IC完全稳定（std=0）时，IR应趋向极大值"""
+    def test_stable_ic_returns_default(self):
+        """IC完全稳定（std=0）时，IR不可计算，返回default"""
         from backend.utils.safe_math import safe_ir
 
-        # IC均值=0.05，标准差=0（完全稳定）
+        # IC均值=0.05，标准差=0（完全稳定）→ IR不可计算
         ir = safe_ir(0.05, 0.0, default=0.0)
-        assert ir != 0.0, "IC完全稳定时IR不应为0"
-        assert abs(ir) > 1.0, f"IC完全稳定时IR应很大，实际为{ir}"
+        assert ir == 0.0, "IC完全稳定时IR应返回default值0.0"
 
     def test_normal_ic_ir(self):
         """正常IC的IR计算"""
@@ -477,16 +476,16 @@ class TestSafeIR:
     """验证safe_ir对边界条件的处理"""
 
     def test_std_zero_mean_positive(self):
-        """std=0, mean>0 → IR应为极大正值"""
+        """std=0, mean>0 → IR不可计算，返回default"""
         from backend.utils.safe_math import safe_ir
         result = safe_ir(0.05, 0.0, default=0.0)
-        assert result > 0, "正IC零std应返回正IR"
+        assert result == 0.0, "正IC零std应返回default值"
 
     def test_std_zero_mean_negative(self):
-        """std=0, mean<0 → IR应为极大负值"""
+        """std=0, mean<0 → IR不可计算，返回default"""
         from backend.utils.safe_math import safe_ir
         result = safe_ir(-0.05, 0.0, default=0.0)
-        assert result < 0, "负IC零std应返回负IR"
+        assert result == 0.0, "负IC零std应返回default值"
 
     def test_std_zero_mean_zero(self):
         """std=0, mean=0 → IR应为0"""

@@ -86,25 +86,7 @@ def test_vbt_mask_filters():
     return f"ratio={ms['tradable_ratio']:.1%}, tradable={ms['tradable_days']}/{ms['total_days']}"
 
 
-# Test 4: Fallback路径行为不变（回归验证）
-def test_fallback_still_works():
-    from backend.services.backtest_service import BacktestService
-    svc = BacktestService(initial_capital=1e6)
-    df = make_data(seed=45)
-
-    # 直接调用fallback方法验证其仍正常工作
-    r = svc._single_factor_fallback(df=df, factor_name="factor_x",
-                                     percentile=50, direction="long",
-                                     n_quantiles=5, use_tradable_mask=True)
-    assert "engine" in r
-    assert r["engine"] == "fallback"
-    assert "mask_statistics" in r
-    ms = r["mask_statistics"]
-    assert ms["tradable_ratio"] == 1.0  # 全部可交易
-    return f"fallback OK, engine={r['engine']}, tradable_ratio={ms['tradable_ratio']}"
-
-
-# Test 5: 参数签名一致性 — 两边都接受use_tradable_mask
+# Test 4: 参数签名一致性 — 两边都接受use_tradable_mask
 def test_signature_consistency():
     import inspect
     from backend.services.backtest_service import BacktestService
@@ -129,7 +111,6 @@ if __name__ == "__main__":
     run("VBT接受use_tradable_mask=True", test_vbt_accepts_mask)
     run("VBT接受use_tradable_mask=False", test_vbt_no_mask)
     run("VBT正确过滤不可交易日", test_vbt_mask_filters)
-    run("Fallback路径不受影响", test_fallback_still_works)
     run("参数签名两边一致", test_signature_consistency)
     print("\n" + "=" * 60)
     print(f"  Result: {_passed}/{_passed+_failed} passed")

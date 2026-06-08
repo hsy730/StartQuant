@@ -246,8 +246,8 @@ class FactorStabilityService:
                     "window": window,
                     "mean_ic": float(ic_series.mean()),
                     "std_ic": float(ic_series.std()),
-                    "ir": float(ic_series.mean() / ic_series.std()) if ic_series.std() > 0 else np.nan,
-                    "cv": float(ic_series.std() / ic_series.mean()) if ic_series.mean() != 0 else np.nan,
+                    "ir": safe_ir(float(ic_series.mean()), float(ic_series.std()), default=None),
+                    "cv": safe_divide(float(ic_series.std()), float(ic_series.mean()), default=None),
                 }
 
         return results
@@ -292,30 +292,21 @@ class FactorStabilityService:
             labels=['bear', 'flat', 'bull']
         )
 
-        # 将连续相同regime合并为区间
-        regimes = []
-        current_regime = None
-        regime_start = None
-
-        for i, regime in enumerate(regime_labels):
-            if pd.isna(regime):
-                continue
-            if regime != current_regime:
-                if current_regime is not None:
-                    regimes.append({"start": regime_start, "end": i - 1, "regime": current_regime})
-                current_regime = regime
-                regime_start = i
-
-        # 记录最后一个regime
-        if current_regime is not None:
-            regimes.append({"start": regime_start, "end": len(factor_data) - 1, "regime": current_regime})
-
-        # 计算各环境下的IC
+        # 将连续相同regime合并为区间（向量化替代逐行循环）
+        regime_series = pd.Series(regime_labels, index=rolling_return.index)
+        # 去除NaN
+        regime_series = regime_series.dropna()
+        if len(regime_series) == 0:
+            return {}
+        # 找到regime变化的边界点
+        regime_change = regime_series != regime_series.shift(1)
+        group_ids = regime_change.cumsum()
+        # 对每个连续区间计算IC
         regime_performance = {}
-        for regime_info in regimes:
-            regime = regime_info["regime"]
-            start_idx = regime_info["start"]
-            end_idx = regime_info["end"]
+        for group_id, group_indices in regime_series.groupby(group_ids).groups.items():
+            regime = regime_series.loc[group_indices[0]]
+            start_idx = factor_data.index.get_loc(group_indices[0])
+            end_idx = factor_data.index.get_loc(group_indices[-1]) + 1
 
             regime_data = factor_data.iloc[start_idx:end_idx]
 
@@ -368,7 +359,7 @@ class FactorStabilityService:
         logger = logging.getLogger(__name__)
 
         # 规则5：禁止就地修改传入的数据，必须先copy
-        # 注意：此行必须在all_factor_data赋值之后执行，已移至L404之后
+        # 注意：防御性复制在循环内完成，确保后续处理不会修改原始数据
 
         try:
             logger.info(
@@ -425,12 +416,12 @@ class FactorStabilityService:
                     df_with_returns = calculate_future_returns(data[['close']], periods=[20])
                     future_return = df_with_returns['future_return_20']
                     
-                    # 构建该股票的分析数据框
+                    # 构建该股票的分析数据框（立即复制，避免后续修改影响原始数据）
                     stock_df = pd.DataFrame({
                         'factor': factor_series,
                         'future_return': future_return,
                         'close': data['close']
-                    }).dropna()
+                    }).dropna().copy()
 
                     if len(stock_df) < 30:
                         continue
@@ -450,34 +441,24 @@ class FactorStabilityService:
                     logger.warning(f"处理股票 {stock_code} 时出错: {e}")
                     continue
 
-            # 规则5：防御性复制，避免修改原始数据
-            all_factor_data = [
-                {**item, 'data': item['data'].copy()} for item in all_factor_data
-            ]
-
             # 4. 计算截面IC序列（按日期截面，对多只股票的因子值和收益率计算Spearman相关）
             all_ic_series = []
             if len(all_factor_data) >= 3:
-                # 构建面板数据：date × stock_code
-                panel_data = {}
+                # 向量化构建面板数据：concat一次，pivot一次（替代iterrows逐行遍历）
+                panel_frames = []
                 for item in all_factor_data:
-                    stock_code = item['stock_code']
-                    stock_df = item['data']
-                    for date, row in stock_df.iterrows():
-                        if date not in panel_data:
-                            panel_data[date] = {'factor': [], 'return': []}
-                        panel_data[date]['factor'].append(row['factor'])
-                        panel_data[date]['return'].append(row['future_return'])
+                    stock_df = item['data'][['factor', 'future_return']].copy()
+                    stock_df['stock_code'] = item['stock_code']
+                    panel_frames.append(stock_df)
+                panel_df = pd.concat(panel_frames)
 
-                # 对每个日期截面计算Spearman IC
+                # 对每个日期截面计算Spearman IC（按日期分组向量化）
                 from scipy.stats import spearmanr
                 ic_dates = []
                 ic_values = []
-                for date in sorted(panel_data.keys()):
-                    factors = panel_data[date]['factor']
-                    returns = panel_data[date]['return']
-                    if len(factors) >= 3:  # 至少3只股票才有统计意义
-                        ic, _ = spearmanr(factors, returns)
+                for date, group in panel_df.groupby(panel_df.index):
+                    if len(group) >= 3:  # 至少3只股票才有统计意义
+                        ic, _ = spearmanr(group['factor'].values, group['future_return'].values)
                         if not np.isnan(ic):
                             ic_dates.append(date)
                             ic_values.append(ic)

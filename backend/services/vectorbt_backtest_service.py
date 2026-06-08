@@ -698,10 +698,11 @@ class VectorBTBacktestService:
 
         # 从 stats Series 中提取指标
         # VectorBT 返回的百分比值需要除以100转换为小数
-        total_return = stats.get('Total Return [%]', 0) / 100.0
+        # 注意: stats.get() 的默认值仅在 key 不存在时生效，key 存在但值为 None 时需额外保护
+        total_return = (stats.get('Total Return [%]', 0) or 0) / 100.0
 
         # 年化收益率：如果VectorBT返回0或NaN，则手动计算
-        annual_return = stats.get('Annual Return [%]', 0) / 100.0
+        annual_return = (stats.get('Annual Return [%]', 0) or 0) / 100.0
         if annual_return == 0 or np.isnan(annual_return):
             # 手动计算年化收益率 = (1 + 总收益率)^(年化bar数/交易bar数) - 1
             n_days = len(returns_clean)
@@ -715,17 +716,17 @@ class VectorBTBacktestService:
         # 使用统一的calculate_metrics计算Sharpe/Sortino（扣除无风险利率3%）
         # VectorBT默认rf=0，此处统一为rf=3%以保持与分块回测一致
         metrics = self.calculate_metrics(returns_clean, equity_curve=(1 + returns_clean).cumprod(), annual_trading_days=fc["annual_bars"])
-        sharpe_ratio = metrics["sharpe_ratio"]
-        sortino_ratio = metrics["sortino_ratio"]
-        max_drawdown = stats.get('Max Drawdown [%]', 0) / 100.0
-        calmar_ratio = stats.get('Calmar Ratio', 0)
-        win_rate = stats.get('Win Rate [%]', 0) / 100.0
+        sharpe_ratio = metrics["sharpe_ratio"] or 0
+        sortino_ratio = metrics["sortino_ratio"] or 0
+        max_drawdown = (stats.get('Max Drawdown [%]', 0) or 0) / 100.0
+        calmar_ratio = stats.get('Calmar Ratio', 0) or 0
+        win_rate = (stats.get('Win Rate [%]', 0) or 0) / 100.0
 
         # VaR 和 CVaR 需要自己计算
         var_95, cvar_95 = self._calculate_var_cvar(returns_clean)
 
         # 计算交易次数
-        trades_count = stats.get('Total Trades', 0)
+        trades_count = stats.get('Total Trades', 0) or 0
 
         # 提取交易记录
         trades_df = self._format_trades_df(pf)
@@ -738,13 +739,13 @@ class VectorBTBacktestService:
             "trades": trades_df,
             # 手动计算的指标
             "total_return": float(total_return),
-            "annual_return": float(annual_return),
+            "annual_return": float(annual_return or 0),
             "sharpe_ratio": float(sharpe_ratio),
             "sortino_ratio": float(sortino_ratio),
             "max_drawdown": float(max_drawdown),
             "calmar_ratio": float(calmar_ratio),
             "win_rate": float(win_rate),
-            "volatility": float(volatility),
+            "volatility": float(volatility or 0),
             "var_95": float(var_95),
             "cvar_95": float(cvar_95),
             # 滑点信息
@@ -933,59 +934,42 @@ class VectorBTBacktestService:
         # 1. 计算收益率
         returns_df = price_df.pct_change()
 
-        # 2. 每日选择股票（横截面排名）
-        selected_stocks = {}
-        for date in factor_df.index:
-            # 计算该日期所有股票的因子排名
-            factor_values = factor_df.loc[date].dropna()
-            ranks = factor_values.rank(pct=True)
+        # 2. 向量化选择股票（替代逐日循环，性能提升数十倍）
+        ranks = factor_df.rank(pct=True, axis=1)
+        if direction == "long":
+            selected_mask = ranks >= (1 - top_percentile)
+        else:
+            selected_mask = ranks <= top_percentile
+        # NaN位置标记为未选中
+        selected_mask = selected_mask & factor_df.notna()
 
-            # 选择股票
-            if direction == "long":
-                # 做多：选择排名前 (1-top_percentile) 的股票
-                selected = ranks[ranks >= (1 - top_percentile)].index.tolist()
-            else:
-                # 做空：选择排名后 top_percentile 的股票
-                selected = ranks[ranks <= top_percentile].index.tolist()
-
-            selected_stocks[date] = selected
-
-        # 3. 创建变化驱动信号矩阵（只在持仓实际变化时才生成交易信号）
-        dates_list = list(selected_stocks.keys())
-        n_dates = len(dates_list)
-
+        # 3. 变化驱动信号矩阵（向量化计算入场/出场）
         entries = pd.DataFrame(False, index=price_df.index, columns=price_df.columns, dtype=bool)
         exits = pd.DataFrame(False, index=price_df.index, columns=price_df.columns, dtype=bool)
 
-        for i, date in enumerate(dates_list):
-            current_set = set(selected_stocks[date])
+        if len(selected_mask) > 0:
+            # 首日建仓
+            first_date = selected_mask.index[0]
+            entries.loc[first_date] = entries.loc[first_date] | selected_mask.loc[first_date]
 
-            if i == 0:
-                # 首个交易日：所有入选股票为入场信号（建仓）
-                if current_set:
-                    entries.loc[date, list(current_set)] = True
-            else:
-                prev_set = set(selected_stocks[dates_list[i - 1]])
+            # 后续日期：新增→入场，被剔除→出场（向量化diff）
+            if len(selected_mask) > 1:
+                newly_selected = selected_mask & ~selected_mask.shift(1).fillna(False)
+                newly_deselected = ~selected_mask & selected_mask.shift(1).fillna(False)
+                # 排除首日（已单独处理）
+                entries.iloc[1:] = entries.iloc[1:] | newly_selected.iloc[1:]
+                exits.iloc[1:] = exits.iloc[1:] | newly_deselected.iloc[1:]
 
-                # 新增入选 → 入场
-                new_stocks = current_set - prev_set
-                if new_stocks:
-                    entries.loc[date, list(new_stocks)] = True
+            # 最后一个交易日：平掉所有剩余持仓
+            last_date = selected_mask.index[-1]
+            exits.loc[last_date] = exits.loc[last_date] | selected_mask.loc[last_date]
 
-                # 被剔除 → 出场
-                removed_stocks = prev_set - current_set
-                if removed_stocks:
-                    exits.loc[date, list(removed_stocks)] = True
-
-        # 最后一个交易日：平掉所有剩余持仓（避免持仓未结算影响指标）
-        if n_dates > 0:
-            final_held = set(selected_stocks[dates_list[-1]])
-            if final_held:
-                exits.loc[dates_list[-1], list(final_held)] = True
-
+        n_dates = len(selected_mask)
+        n_entries = int(entries.sum().sum())
+        n_exits = int(exits.sum().sum())
         logger.info(
             f"横截面信号: {n_dates}个交易日, "
-            f"入场{entries.sum().sum()}次, 出场{exits.sum().sum()}次 "
+            f"入场{n_entries}次, 出场{n_exits}次 "
             f"(旧逻辑每日全换手={n_dates * len(price_df.columns)}次)"
         )
 
@@ -1011,10 +995,11 @@ class VectorBTBacktestService:
 
         # 从 stats Series 中提取指标
         # VectorBT 返回的百分比值需要除以100转换为小数
-        total_return = stats.get('Total Return [%]', 0) / 100.0
+        # 注意: stats.get() 的默认值仅在 key 不存在时生效，key 存在但值为 None 时需额外保护
+        total_return = (stats.get('Total Return [%]', 0) or 0) / 100.0
 
         # 年化收益率：如果VectorBT返回0或NaN，则手动计算
-        annual_return = stats.get('Annual Return [%]', 0) / 100.0
+        annual_return = (stats.get('Annual Return [%]', 0) or 0) / 100.0
         if annual_return == 0 or np.isnan(annual_return):
             # 手动计算年化收益率 = (1 + 总收益率)^(年化bar数/交易bar数) - 1
             n_days = len(returns_clean)
@@ -1028,17 +1013,17 @@ class VectorBTBacktestService:
         # 使用统一的calculate_metrics计算Sharpe/Sortino（扣除无风险利率3%）
         # VectorBT默认rf=0，此处统一为rf=3%以保持与分块回测一致
         metrics = self.calculate_metrics(returns_clean, equity_curve=(1 + returns_clean).cumprod(), annual_trading_days=fc["annual_bars"])
-        sharpe_ratio = metrics["sharpe_ratio"]
-        sortino_ratio = metrics["sortino_ratio"]
-        max_drawdown = stats.get('Max Drawdown [%]', 0) / 100.0
-        calmar_ratio = stats.get('Calmar Ratio', 0)
-        win_rate = stats.get('Win Rate [%]', 0) / 100.0
+        sharpe_ratio = metrics["sharpe_ratio"] or 0
+        sortino_ratio = metrics["sortino_ratio"] or 0
+        max_drawdown = (stats.get('Max Drawdown [%]', 0) or 0) / 100.0
+        calmar_ratio = stats.get('Calmar Ratio', 0) or 0
+        win_rate = (stats.get('Win Rate [%]', 0) or 0) / 100.0
 
         # VaR 和 CVaR 需要自己计算
         var_95, cvar_95 = self._calculate_var_cvar(returns_clean)
 
         # 计算交易次数（每日调仓次数）
-        trades_count = stats.get('Total Trades', len(selected_stocks))
+        trades_count = stats.get('Total Trades', len(selected_stocks)) or len(selected_stocks)
 
         # 提取交易记录
         trades_df = self._format_trades_df(pf)
@@ -1051,13 +1036,13 @@ class VectorBTBacktestService:
             "daily_selected_count": trades_count,
             # 手动计算的指标
             "total_return": float(total_return),
-            "annual_return": float(annual_return),
+            "annual_return": float(annual_return or 0),
             "sharpe_ratio": float(sharpe_ratio),
             "sortino_ratio": float(sortino_ratio),
             "max_drawdown": float(max_drawdown),
             "calmar_ratio": float(calmar_ratio),
             "win_rate": float(win_rate),
-            "volatility": float(volatility),
+            "volatility": float(volatility or 0),
             "var_95": float(var_95),
             "cvar_95": float(cvar_95),
             # 滑点信息

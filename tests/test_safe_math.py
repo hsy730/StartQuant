@@ -226,10 +226,12 @@ class TestSafeIR:
         result = safe_ir(0.05, 0.1)
         assert result == pytest.approx(0.5)
 
-    def test_safe_ir_zero_std_should_return_large_ir(self):
-        """零标准差但非零均值 → IC完全稳定，IR应趋向极大值"""
+    def test_safe_ir_zero_std_should_return_default(self):
+        """零标准差但非零均值 → IR不可计算，返回default"""
         result = safe_ir(0.05, 0.0)
-        assert result is not None and result > 0, "IC完全稳定时IR应为极大正值"
+        assert result is None, "零std时IR不可计算，应返回None"
+        result_with_default = safe_ir(0.05, 0.0, default=0.0)
+        assert result_with_default == 0.0, "零std时应返回default值"
 
     def test_safe_ir_nan_std_should_return_default(self):
         """NaN 标准差应返回默认值"""
@@ -256,10 +258,12 @@ class TestSafeIR:
         result = safe_ir(0.0, 0.0)
         assert result is None
 
-    def test_safe_ir_near_zero_std_should_return_large_ir(self):
-        """近零标准差但非零均值 → IC极其稳定，IR应趋向极大值"""
+    def test_safe_ir_near_zero_std_should_return_default(self):
+        """近零标准差但非零均值 → IR不可计算，返回default"""
         result = safe_ir(0.05, 1e-18)
-        assert result is not None and result > 0, "近零std但非零mean时IR应为极大正值"
+        assert result is None, "近零std时IR不可计算，应返回None"
+        result_with_default = safe_ir(0.05, 1e-18, default=0.0)
+        assert result_with_default == 0.0, "近零std时应返回default值"
 
     def test_safe_ir_large_values_should_calculate_correctly(self):
         """大数值 IR 应正确计算"""

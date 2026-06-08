@@ -65,12 +65,16 @@ def generate_chinext_test_data():
             stock_code = f"{stock_id:06d}.SZ"
             stock_id += 1
 
-            for date in dates:
+            # 预计算时间趋势和收盘价序列
+            sin_trend = np.sin(np.arange(n_dates) / 20 * (i + 1)) * 2
+            cumsum_close = 50 + np.cumsum(np.random.randn(n_dates))
+
+            for date_idx, date in enumerate(dates):
                 # 生成具有行业特征的因子值
                 factor_raw = (
                     config["factor_base"] +
                     np.random.randn() * config["factor_vol"] +
-                    np.sin(np.arange(n_dates) / 20 * (i + 1)) * 2  # 加入时间趋势
+                    sin_trend[date_idx]  # 加入时间趋势
                 )
 
                 # 生成市值（与因子有弱正相关，模拟现实情况）
@@ -87,7 +91,7 @@ def generate_chinext_test_data():
                     "factor_momentum": factor_raw,
                     "factor_value": factor_raw * 0.8 + np.random.randn() * 3,  # 第二个因子
                     "market_cap": market_cap,
-                    "close": 50 + np.cumsum(np.random.randn(n_dates))[:len(dates)][list(dates).index(date)] if date in dates else 50,
+                    "close": cumsum_close[date_idx],
                 })
 
     return pd.DataFrame(data)
