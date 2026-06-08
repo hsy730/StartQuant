@@ -270,12 +270,18 @@ async def preselect_factors(request: PreselectRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+class ValidateFactorRequest(BaseModel):
+    """验证因子公式请求"""
+    code: str
+    formula_type: str = "expression"
+
+
 @router.post("/validate")
-async def validate_factor(request: dict):
+async def validate_factor(request: ValidateFactorRequest):
     """验证因子公式"""
     try:
-        code = request.get("code", "")
-        formula_type = request.get("formula_type", "expression")
+        code = request.code
+        formula_type = request.formula_type
 
         if not code:
             return {
@@ -506,7 +512,9 @@ async def promote_generated_factor(generated_id: int, request: PromoteFactorRequ
         result = {processed_expr}
         return result
     except Exception as e:
-        return pd.Series(0, index=df.index)
+        import logging
+        logging.getLogger(__name__).warning(f"因子计算异常: {{e}}")
+        return pd.Series(float('nan'), index=df.index)
 """
 
         # 创建正式因子

@@ -5,6 +5,7 @@ from typing import Dict
 import pandas as pd
 import numpy as np
 from .base_strategy import BaseStrategy
+from backend.utils.safe_math import safe_divide
 
 
 class MeanReversionStrategy(BaseStrategy):
@@ -57,8 +58,8 @@ class MeanReversionStrategy(BaseStrategy):
         rolling_mean = df["close"].rolling(window=self.lookback_window).mean()
         rolling_std = df["close"].rolling(window=self.lookback_window).std()
 
-        # 计算Z-score
-        zscore = (df["close"] - rolling_mean) / rolling_std.replace(0, np.nan)
+        # 计算Z-score（使用safe_divide避免浮点噪声导致Z-score爆炸）
+        zscore = safe_divide(df["close"] - rolling_mean, rolling_std, default=np.nan)
 
         # 带持仓状态记忆的均值回归信号生成
         # entry_threshold: 进场阈值（超买/超卖）

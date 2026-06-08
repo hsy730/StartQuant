@@ -158,9 +158,9 @@ async def optimize_weights(request: OptimizeWeightsRequest):
             ic_std = ic_series.std()
             portfolio_ir = safe_ir(float(ic_mean), float(ic_std), default=0.0)
         else:
-            portfolio_ic = 0
-            portfolio_return = 0
-            portfolio_ir = 0
+            portfolio_ic = None
+            portfolio_return = None
+            portfolio_ir = None
 
         result = {
             "weights": weights,
@@ -406,18 +406,18 @@ async def compare_weight_methods(request: CompareMethodsRequest):
                         "ic_mean": float(ic_mean),
                         "ic_std": float(ic_std),
                         "ir": float(ir),
-                        "annual_return": float(ic_mean * 252),  # 年化IC作为收益代理
-                        "volatility": float(ic_std * np.sqrt(252)),  # 年化IC标准差作为波动代理
-                        "sharpe_ratio": float(ir)  # IR本身就像是夏普比率
+                        "ic_annualized": float(ic_mean * 252),  # 年化IC（非真实收益率）
+                        "ic_volatility_annualized": float(ic_std * np.sqrt(252)),  # 年化IC标准差（非真实波动率）
+                        "information_ratio": float(ir)  # IR（信息比率，非夏普比率）
                     }
                 else:
                     results[method] = {
-                        "ic_mean": 0.0,
-                        "ic_std": 0.0,
-                        "ir": 0.0,
-                        "annual_return": 0.0,
-                        "volatility": 0.0,
-                        "sharpe_ratio": 0.0
+                        "ic_mean": None,
+                        "ic_std": None,
+                        "ir": None,
+                        "ic_annualized": None,
+                        "ic_volatility_annualized": None,
+                        "information_ratio": None
                     }
 
             except Exception as e:
@@ -425,20 +425,20 @@ async def compare_weight_methods(request: CompareMethodsRequest):
                 import traceback
                 logger.debug(traceback.format_exc())
                 results[method] = {
-                    "ic_mean": 0.0,
-                    "ic_std": 0.0,
-                    "ir": 0.0,
-                    "annual_return": 0.0,
-                    "volatility": 0.0,
-                    "sharpe_ratio": 0.0
+                    "ic_mean": None,
+                    "ic_std": None,
+                    "ir": None,
+                    "ic_annualized": None,
+                    "ic_volatility_annualized": None,
+                    "information_ratio": None
                 }
 
-        return {
+        return sanitize_dict({
             "success": True,
             "data": {
                 "results": results
             }
-        }
+        })
     except Exception as e:
         import traceback
         logger.error(f"方法对比失败: {e}")

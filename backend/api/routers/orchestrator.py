@@ -151,6 +151,7 @@ class RankerPredictRequest(BaseModel):
     model_id: str
     top_n: int = 50
     feature_cols: Optional[List[str]] = None
+    features: List[Dict[str, Any]] = []  # 特征数据，每条记录为一个样本的特征字典
 
 
 @router.post("/stock-ranker/train")
@@ -221,8 +222,15 @@ async def stock_ranker_train(request: RankerTrainRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+class RankerTrainWithDataRequest(BaseModel):
+    """带数据的排序模型训练请求"""
+    feature_data: List[Dict[str, Any]] = []
+    label_col: str = "label"
+    training_config: Optional[Dict[str, Any]] = None
+
+
 @router.post("/stock-ranker/train-with-data")
-async def stock_ranker_train_with_data(request: Dict[str, Any]):
+async def stock_ranker_train_with_data(request: RankerTrainWithDataRequest):
     """
     带数据的排序模型训练（完整版）
 
@@ -243,13 +251,13 @@ async def stock_ranker_train_with_data(request: Dict[str, Any]):
             raise HTTPException(status_code=503, detail="XGBoost 未安装")
 
         # 从请求中提取数据
-        raw_data = request.get("feature_data", [])
+        raw_data = request.feature_data
         if not raw_data:
             raise HTTPException(status_code=400, detail="feature_data 不能为空")
 
         df = pd.DataFrame(raw_data)
-        label_col = request.get("label_col", "forward_return_5d")
-        tc = request.get("training_config", {})
+        label_col = request.label_col
+        tc = request.training_config or {}
 
         config = RankTrainingConfig(
             objective=tc.get("objective", "rank:ndcg"),
@@ -301,7 +309,7 @@ async def stock_ranker_predict(request: RankerPredictRequest):
         if not XGB_AVAILABLE or stock_ranker_service is None:
             raise HTTPException(status_code=503, detail="XGBoost 未安装")
 
-        raw_data = request.__dict__.get("features", [])
+        raw_data = request.features
         if isinstance(raw_data, list) and len(raw_data) > 0:
             features = pd.DataFrame(raw_data)
         else:

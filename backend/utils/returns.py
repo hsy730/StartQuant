@@ -58,15 +58,15 @@ def calculate_ic_stats(
 
     if n < 2:
         return {
-            "mean_ic": 0.0,
-            "std_ic": 0.0,
-            "ir": 0.0,
-            "t_statistic": 0.0,
-            "p_value": 1.0,
-            "ci_lower": 0.0,
-            "ci_upper": 0.0,
+            "mean_ic": None,
+            "std_ic": None,
+            "ir": None,
+            "t_statistic": None,
+            "p_value": None,
+            "ci_lower": None,
+            "ci_upper": None,
             "n_samples": n,
-            "positive_ratio": 0.0,
+            "positive_ratio": None,
         }
 
     mean_ic = float(ic_clean.mean())
@@ -120,14 +120,20 @@ def calculate_rolling_ir(
     """
     ic_clean = ic_series.dropna()
     if len(ic_clean) < min_periods:
-        return 0.0, 0.0, 0.0
+        return None, None, None
 
-    rolling_ic = ic_clean.rolling(window=window, min_periods=min_periods).mean()
-    ic_mean = float(rolling_ic.mean())
-
+    # 逐窗口计算IR后取均值，而非 mean(rolling_mean)/mean(rolling_std)
+    # 由Jensen不等式 E[X/Y] ≠ E[X]/E[Y]，后者会产生偏差
+    rolling_mean = ic_clean.rolling(window=window, min_periods=min_periods).mean()
     rolling_std = ic_clean.rolling(window=window, min_periods=min_periods).std()
-    ic_std = float(rolling_std.mean())
+    rolling_ir = safe_divide(rolling_mean, rolling_std, default=np.nan)
+    rolling_ir_clean = rolling_ir.dropna()
 
-    ir = safe_ir(float(ic_mean), float(ic_std), default=0.0)
+    if len(rolling_ir_clean) == 0:
+        return None, None, None
+
+    ic_mean = float(rolling_mean.dropna().mean())
+    ic_std = float(rolling_std.dropna().mean())
+    ir = float(rolling_ir_clean.mean())
 
     return ic_mean, ic_std, ir

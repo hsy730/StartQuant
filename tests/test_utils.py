@@ -224,18 +224,19 @@ class TestCalculateICStats:
     def test_empty_series(self):
         ic = pd.Series([], dtype=float)
         result = calculate_ic_stats(ic)
-        assert result["mean_ic"] == 0.0
+        assert result["mean_ic"] is None
         assert result["n_samples"] == 0
 
     def test_single_value(self):
         ic = pd.Series([0.05])
         result = calculate_ic_stats(ic)
         assert result["n_samples"] == 1
+        assert result["mean_ic"] is None
 
     def test_all_nan(self):
         ic = pd.Series([np.nan] * 50)
         result = calculate_ic_stats(ic)
-        assert result["mean_ic"] == 0.0
+        assert result["mean_ic"] is None
 
     def test_constant_ic_should_have_near_zero_std(self):
         """恒定IC的std应接近0（浮点精度限制）"""
@@ -261,18 +262,18 @@ class TestCalculateRollingIR:
         assert isinstance(ir, float)
 
     def test_short_series(self):
-        """短序列应返回0"""
+        """短序列应返回None（不可计算）"""
         ic = pd.Series([0.05, 0.03])
         ic_mean, ic_std, ir = calculate_rolling_ir(ic, window=20, min_periods=10)
-        assert ic_mean == 0.0
-        assert ic_std == 0.0
-        assert ir == 0.0
+        assert ic_mean is None
+        assert ic_std is None
+        assert ir is None
 
     def test_constant_ic(self):
-        """恒定IC的IR应为0"""
+        """恒定IC的IR不可计算（std=0），应返回None"""
         ic = pd.Series([0.05] * 100)
         ic_mean, ic_std, ir = calculate_rolling_ir(ic, window=20)
-        assert ir == 0.0
+        assert ir is None
 
 
 if __name__ == "__main__":

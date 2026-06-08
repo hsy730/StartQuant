@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional, List
 from backend.services.data_service import data_service
+from backend.utils.serialization import sanitize_dict
 
 router = APIRouter()
 
@@ -100,10 +101,10 @@ async def get_stock_data(
             "data": data.values.tolist()
         }
 
-        return {
+        return sanitize_dict({
             "success": True,
             "data": data_dict
-        }
+        })
     except HTTPException:
         raise
     except Exception as e:

@@ -489,19 +489,23 @@ async def run_strategy_comparison(request: ComparisonRequest):
 
                     # 使用复利计算年化收益率，与单策略回测保持一致
                     if n_days > 0:
-                        annual_return = float((1 + total_return) ** (252 / n_days) - 1)
+                        if total_return <= -1:
+                            annual_return = -1.0  # 完全亏损
+                        else:
+                            annual_return = float((1 + total_return) ** (252 / n_days) - 1)
                     else:
-                        annual_return = 0.0
+                        annual_return = None
 
                     results[strategy_name] = {
                         "returns": returns_series.tolist(),
                         "total_return": total_return,
                         "annual_return": annual_return,
-                        "volatility": calculate_volatility(returns_series) or 0.0,
+                        "volatility": calculate_volatility(returns_series) or None,
                     }
 
                     # 计算夏普比率（委托risk_metrics统一入口，符合规则2）
                     sharpe = calculate_sharpe(returns_series, risk_free_rate=0.03)
+                    results[strategy_name]["sharpe"] = sharpe if sharpe is not None else None
                     results[strategy_name]["sharpe_ratio"] = sharpe if sharpe is not None else 0.0
 
         results_clean = sanitize_dict(results)

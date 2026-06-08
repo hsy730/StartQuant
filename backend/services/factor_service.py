@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 import talib
 from typing import Dict, List, Optional, Any
+from backend.utils.safe_math import safe_divide
 from pathlib import Path
 import yaml
 import logging
@@ -432,10 +433,11 @@ class FactorCalculator:
                     "round": round, "pow": pow, "divmod": divmod,
                     "sorted": sorted, "reversed": reversed, "map": map, "filter": filter,
                     "isinstance": isinstance, "hasattr": hasattr, "getattr": getattr,
-                    "print": print, "str": str, "set": set,
+                    "str": str, "set": set,
                 },
                 "pd": pd,
                 "np": np,
+                "safe_divide": safe_divide,
                 **self.talib_funcs,
                 **self.mylanguage_funcs,
             }
@@ -493,7 +495,7 @@ class FactorCalculator:
                 "HIGH": df["high"],
                 "LOW": df["low"],
                 "VOL": df["volume"],
-                "VWAP": (df["amount"] / df["volume"]).replace([np.inf, -np.inf], np.nan) if "amount" in df.columns else (df["high"] + df["low"] + df["close"]) / 3,
+                "VWAP": safe_divide(df["amount"], df["volume"], default=np.nan) if "amount" in df.columns else (df["high"] + df["low"] + df["close"]) / 3,
                 # Python内置函数
                 "int": int,
                 "float": float,
@@ -860,12 +862,12 @@ class FactorService:
                 },
                 {
                     "name": "stochastic_k",
-                    "code": "(close - LLV(low, 14)) / (HHV(high, 14) - LLV(low, 14)) * 100",
+                    "code": "safe_divide(close - LLV(low, 14), HHV(high, 14) - LLV(low, 14), default=np.nan) * 100",
                     "description": "随机指标K值（衡量价格在近期区间的相对位置）",
                 },
                 {
                     "name": "stochastic_d",
-                    "code": "SMA((close - LLV(low, 14)) / (HHV(high, 14) - LLV(low, 14)) * 100, timeperiod=3)",
+                    "code": "SMA(safe_divide(close - LLV(low, 14), HHV(high, 14) - LLV(low, 14), default=np.nan) * 100, timeperiod=3)",
                     "description": "随机指标D值（K值的3日平滑）",
                 },
             ],
@@ -1020,27 +1022,27 @@ class FactorService:
             "价格位置": [
                 {
                     "name": "percentile_20",
-                    "code": "close.rolling(window=20).apply(lambda x: (x.iloc[-1] - x.min()) / (x.max() - x.min()))",
+                    "code": "close.rolling(window=20).apply(lambda x: safe_divide(x.iloc[-1] - x.min(), x.max() - x.min(), default=np.nan))",
                     "description": "20日价格分位数（当前价格在20日区间中的位置）",
                 },
                 {
                     "name": "percentile_60",
-                    "code": "close.rolling(window=60).apply(lambda x: (x.iloc[-1] - x.min()) / (x.max() - x.min()))",
+                    "code": "close.rolling(window=60).apply(lambda x: safe_divide(x.iloc[-1] - x.min(), x.max() - x.min(), default=np.nan))",
                     "description": "60日价格分位数（当前价格在60日区间中的位置）",
                 },
                 {
                     "name": "distance_to_high_20",
-                    "code": "(HHV(high, 20) - close) / HHV(high, 20)",
+                    "code": "safe_divide(HHV(high, 20) - close, HHV(high, 20), default=np.nan)",
                     "description": "距离20日高点的幅度",
                 },
                 {
                     "name": "distance_to_low_20",
-                    "code": "(close - LLV(low, 20)) / LLV(low, 20)",
+                    "code": "safe_divide(close - LLV(low, 20), LLV(low, 20), default=np.nan)",
                     "description": "距离20日低点的幅度",
                 },
                 {
                     "name": "price_range_ratio_20",
-                    "code": "(close - LLV(low, 20)) / (HHV(high, 20) - LLV(low, 20))",
+                    "code": "safe_divide(close - LLV(low, 20), HHV(high, 20) - LLV(low, 20), default=np.nan)",
                     "description": "价格在20日高低区间的相对位置",
                 },
             ],
@@ -1067,12 +1069,12 @@ class FactorService:
                 },
                 {
                     "name": "vwma_20",
-                    "code": "SUM(close * volume, 20) / SUM(volume, 20)",
+                    "code": "safe_divide(SUM(close * volume, 20), SUM(volume, 20), default=np.nan)",
                     "description": "20日成交量加权均线",
                 },
                 {
                     "name": "price_vwma_ratio",
-                    "code": "close / (SUM(close * volume, 20) / SUM(volume, 20))",
+                    "code": "safe_divide(close, safe_divide(SUM(close * volume, 20), SUM(volume, 20), default=np.nan), default=np.nan)",
                     "description": "价格相对VWMA的位置",
                 },
             ],

@@ -367,7 +367,6 @@ class FactorStabilityService:
                 f"股票数={len(stock_codes)}, "
                 f"时间范围={start_date} ~ {end_date}"
             )
-
             # 1. 参数校验
             if not factor_name or not isinstance(factor_name, str):
                 raise ValueError("因子名称不能为空")
@@ -483,6 +482,8 @@ class FactorStabilityService:
             )
 
             # 6. 截面IC序列（已经是按日期截面计算的Spearman IC）
+            if not all_ic_series:
+                raise ValueError("截面IC序列为空，无法进行稳定性分析")
             combined_ic = all_ic_series[0]
 
             # 横截面方式分析：在每个日期截面上对多只股票计算统计量

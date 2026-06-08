@@ -464,6 +464,9 @@ class DataService:
 
         # 统计信息
         total_days = len(df)
+        if total_days == 0:
+            logger.warning(f"股票 {stock_code} 数据为空，跳过Mask-First处理")
+            return df
         tradable_days = df["tradable_mask"].sum()
         limit_up_days = df["is_limit_up"].sum()
         limit_down_days = df["is_limit_down"].sum()

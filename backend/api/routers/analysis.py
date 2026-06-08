@@ -128,7 +128,8 @@ async def calculate_factor(request: CalculateRequest):
 
                 logger.info(f"因子计算完成，有效值数量: {factor_series.notna().sum()}/{len(factor_series)}")
 
-                # 将因子值添加到数据中
+                # 将因子值添加到数据中（先复制避免污染缓存）
+                data = data.copy()
                 data[request.factor_name] = factor_series
 
                 # 过滤掉因子值为 NaN 的行，确保 dates 和 factor_values 一一对应
@@ -294,10 +295,10 @@ async def multi_period_analysis(request: MultiPeriodRequest):
             end_date=request.end_date
         )
 
-        return {
+        return sanitize_dict({
             "success": True,
             "data": result
-        }
+        })
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -343,6 +344,8 @@ async def decay_analysis(request: ICAnalysisRequest):
                         request.end_date
                     )
                 if data is not None and len(data) > 0:
+                    # 复制数据避免污染缓存
+                    data = data.copy()
                     # 计算因子
                     factor_series = factor_service.calculator.calculate(data, factor.code)
                     if factor_series is not None:
@@ -366,10 +369,10 @@ async def decay_analysis(request: ICAnalysisRequest):
             "decay_analysis": decay_results
         }
 
-        return {
+        return sanitize_dict({
             "success": True,
             "data": result
-        }
+        })
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

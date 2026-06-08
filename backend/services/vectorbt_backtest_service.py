@@ -1023,7 +1023,7 @@ class VectorBTBacktestService:
         var_95, cvar_95 = self._calculate_var_cvar(returns_clean)
 
         # 计算交易次数（每日调仓次数）
-        trades_count = stats.get('Total Trades', len(selected_stocks)) or len(selected_stocks)
+        trades_count = stats.get('Total Trades', len(price_df.columns)) or len(price_df.columns)
 
         # 提取交易记录
         trades_df = self._format_trades_df(pf)

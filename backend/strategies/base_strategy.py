@@ -97,20 +97,37 @@ class BaseStrategy(ABC):
         # 4. 计算组合收益（权重 * 下一期收益率）
         portfolio_returns = weights * df["next_return"]
 
+        # MultiIndex (date, asset) 下需按日期聚合得到组合层面收益
+        is_multiindex = isinstance(df.index, pd.MultiIndex)
+        if is_multiindex:
+            portfolio_returns = portfolio_returns.groupby(level=0).sum()
+
         # 5. 扣除手续费（简化版：假设每次调仓产生手续费）
         # portfolio_returns 是比例收益率，手续费也必须保持比例
         # weight_change 是权重变化比例，commission_rate 是费率
         # 比例手续费 = 权重变化 * 费率
         # 首期视作从0建仓，diff首行NaN用初始权重填充
-        weight_change = weights.diff().abs().fillna(weights.abs())
-        commission = weight_change * self.commission_rate
+        if is_multiindex:
+            # MultiIndex 下按资产分组计算权重变化，再按日期聚合手续费
+            weight_change = weights.groupby(level=1).diff().abs().fillna(weights.abs())
+            commission = weight_change * self.commission_rate
+            commission = commission.groupby(level=0).sum()
+        else:
+            weight_change = weights.diff().abs().fillna(weights.abs())
+            commission = weight_change * self.commission_rate
         portfolio_returns = portfolio_returns - commission
 
         # 6. 计算净值曲线
         equity = (1 + portfolio_returns.fillna(0)).cumprod() * self.initial_capital
 
         # 7. 计算交易次数
-        trades_count = (weights.diff().fillna(0) != 0).sum()
+        if is_multiindex:
+            # MultiIndex 下按资产分组统计交易次数
+            trades_count = int(
+                weights.groupby(level=1).diff().fillna(0).ne(0).groupby(level=0).any().sum()
+            )
+        else:
+            trades_count = (weights.diff().fillna(0) != 0).sum()
 
         # 8. 计算持仓历史
         positions = weights.copy()
