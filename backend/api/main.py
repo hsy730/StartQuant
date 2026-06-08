@@ -74,7 +74,7 @@ def jsonable_encoder_with_numpy(obj, *args, **kwargs):
     """处理numpy类型的JSON编码器"""
     try:
         return jsonable_encoder(obj, *args, **kwargs, custom_serializer=lambda x: NumpyJSONEncoder().default(x))
-    except Exception:
+    except (TypeError, ValueError):
         return jsonable_encoder(obj, *args, **kwargs)
 
 

@@ -21,10 +21,8 @@ from enum import Enum
 import logging
 from scipy import stats as scipy_stats
 
-from empyrical import max_drawdown as empyrical_max_drawdown
-
 from backend.utils.safe_math import safe_divide
-from backend.services.risk_metrics import calculate_sharpe
+from backend.services.risk_metrics import calculate_sharpe, calculate_risk_metrics
 
 logger = logging.getLogger(__name__)
 
@@ -498,7 +496,7 @@ class FactorReturnAnalysisService:
         n_top = top_group["n_observations"]
         n_bottom = bottom_group["n_observations"]
         
-        t_stat = spread / (spread_std * np.sqrt(1/n_top + 1/n_bottom)) if spread_std > 0 else 0
+        t_stat = safe_divide(spread, spread_std * np.sqrt(safe_divide(1.0, n_top, default=0.0) + safe_divide(1.0, n_bottom, default=0.0)), default=0.0) if spread_std > 0 else 0
         
         p_value = 2 * (1 - scipy_stats.t.cdf(abs(t_stat), df=n_top + n_bottom - 2))
         
@@ -615,7 +613,7 @@ class FactorReturnAnalysisService:
         return result
 
     def _calculate_max_drawdown(self, returns: List[float]) -> float:
-        """计算最大回撤（优先使用empyrical库）"""
+        """计算最大回撤（通过risk_metrics统一入口）"""
         if not returns:
             return 0.0
 
@@ -624,13 +622,14 @@ class FactorReturnAnalysisService:
                                    for i in range(len(returns) - 1)])
 
         if len(daily_returns) >= 2:
-            dd = empyrical_max_drawdown(daily_returns)
-            return abs(float(dd)) if not np.isnan(dd) else 0.0
+            metrics = calculate_risk_metrics(daily_returns)
+            dd = metrics.get("max_drawdown")
+            return abs(float(dd)) if dd is not None else 0.0
 
         # 数据不足，手动计算
         wealth_index = pd.Series(returns).add(1).cumprod()
         peak = wealth_index.expanding().max()
-        drawdown = (wealth_index - peak) / peak
+        drawdown = safe_divide(wealth_index - peak, peak, default=0.0)
         return abs(float(drawdown.min())) if len(drawdown) > 0 else 0.0
 
     def _calculate_sharpe_ratio(self, returns: pd.Series, risk_free_rate: float = 0.03) -> float:

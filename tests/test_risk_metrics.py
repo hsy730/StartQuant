@@ -135,14 +135,10 @@ class TestEmptyMetrics:
     """_empty_metrics 测试"""
 
     def test_empty_metrics_all_zero_or_none(self):
-        """空指标中比率类应为None，其余为0"""
+        """空指标中所有值应为None（符合规范6：不可计算→None）"""
         result = _empty_metrics()
-        none_keys = {"sharpe_ratio", "sortino_ratio", "calmar_ratio"}
         for key, val in result.items():
-            if key in none_keys:
-                assert val is None, f"{key} 应为 None"
-            else:
-                assert val == 0.0, f"{key} 应为 0.0"
+            assert val is None, f"{key} 应为 None（不可计算）"
 
     def test_empty_metrics_has_all_keys(self):
         """空指标应包含所有键"""

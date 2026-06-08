@@ -9,6 +9,7 @@ from scipy.stats import pearsonr, ttest_1samp
 import akshare as ak
 
 from backend.services.risk_metrics import calculate_sharpe, calculate_volatility
+from backend.utils.safe_math import safe_divide
 
 logger = logging.getLogger(__name__)
 

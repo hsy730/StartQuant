@@ -9,7 +9,7 @@ import numpy as np
 from pypfopt import EfficientFrontier, risk_models, expected_returns
 from pypfopt import HRPOpt
 
-from backend.utils.safe_math import safe_divide
+from backend.utils.safe_math import safe_divide, safe_ir
 from backend.utils.weight_utils import normalize_weights
 from backend.services.risk_metrics import calculate_relative_metrics
 

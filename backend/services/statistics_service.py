@@ -11,6 +11,7 @@ import warnings
 import logging
 
 from backend.utils.returns import calculate_future_returns
+from backend.utils.safe_math import safe_divide, safe_ir
 from backend.services.risk_metrics import calculate_risk_metrics
 
 # 配置日志
@@ -61,7 +62,7 @@ class StatisticsService:
             # 计算置信区间
             alpha = 1 - confidence_level
             df = len(ic_clean) - 1
-            se = ic_clean.std() / np.sqrt(len(ic_clean))
+            se = safe_divide(ic_clean.std(), np.sqrt(len(ic_clean)), default=0.0)
             ci = stats.t.interval(confidence_level, df, loc=ic_clean.mean(), scale=se)
 
         return {
@@ -220,7 +221,7 @@ class StatisticsService:
             min_periods = max(1, window // 4)
             rolling_mean = ic_series.rolling(window=window, min_periods=min_periods).mean()
             rolling_std = ic_series.rolling(window=window, min_periods=min_periods).std()
-            rolling_ir = rolling_mean / rolling_std.replace(0, np.nan)
+            rolling_ir = safe_divide(rolling_mean, rolling_std, default=np.nan)
 
             results[f"window_{window}"] = {
                 "mean_ic": rolling_mean.iloc[-1] if len(rolling_mean) > 0 else np.nan,
@@ -351,7 +352,7 @@ class StatisticsService:
         rolling_std = factor_values.rolling(window=window, min_periods=1).std()
 
         # 拥挤度指标（标准化到0-1）
-        crowding = 1 / (1 + rolling_std)
+        crowding = safe_divide(1.0, 1 + rolling_std, default=0.0)
 
         return crowding
 

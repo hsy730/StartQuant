@@ -84,8 +84,8 @@ class FactorOrchestrator:
             start_date="2023-01-01",
             end_date="2024-01-01",
         )
-        print(result["status"])          # "PASSED" / "REJECTED" / "PARTIAL"
-        print(result["report_markdown"])  # 完整 Markdown 报告
+        logger.info(result["status"])          # "PASSED" / "REJECTED" / "PARTIAL"
+        logger.info(result["report_markdown"])  # 完整 Markdown 报告
     """
 
     def __init__(self, config: Optional[OrchestratorConfig] = None):

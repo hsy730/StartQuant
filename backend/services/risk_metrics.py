@@ -10,6 +10,8 @@ from typing import Dict, Optional
 
 import empyrical
 
+logger = logging.getLogger(__name__)
+
 
 def calculate_risk_metrics(
     returns: pd.Series,

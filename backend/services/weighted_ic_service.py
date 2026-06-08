@@ -104,6 +104,8 @@ class WeightedICService:
             }
         """
         # 防御性复制：避免修改传入数据
+        if factor_ic_dict is None:
+            return {"error": "没有提供因子IC数据"}
         factor_ic_dict = {k: v.copy() for k, v in factor_ic_dict.items()}
         try:
             if not factor_ic_dict or len(factor_ic_dict) == 0:
