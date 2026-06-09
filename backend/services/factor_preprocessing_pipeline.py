@@ -581,7 +581,7 @@ class FactorPreprocessingPipeline:
             if self.config.winsorize_method == WinsorizeMethod.MAD:
                 median = factor_vals.median()
                 sigma_hat = 1.4826 * (factor_vals - median).abs().median()
-                if sigma_hat == 0:
+                if sigma_hat == 0 or np.isnan(sigma_hat):
                     # 同_winsorize方法：MAD=0时用std作为σ_hat估计
                     sigma_hat = factor_vals.std()
                     if sigma_hat == 0 or np.isnan(sigma_hat):
@@ -607,7 +607,7 @@ class FactorPreprocessingPipeline:
             elif self.config.winsorize_method == WinsorizeMethod.STD:
                 mean = factor_vals.mean()
                 std = factor_vals.std()
-                if std > 0:
+                if std > 1e-10 and not np.isnan(std):
                     factor_vals = factor_vals.clip(
                         lower=mean - self.config.winsorize_n_sigma * std,
                         upper=mean + self.config.winsorize_n_sigma * std,
@@ -708,7 +708,8 @@ class FactorPreprocessingPipeline:
                     scaled = scaler.fit_transform(valid.values.reshape(-1, 1)).flatten()
                     factor_vals[valid.index] = scaled
             elif self.config.standardize_method == StandardizeMethod.RANK:
-                factor_vals = factor_vals.rank(pct=True)
+                clean = factor_vals.replace([np.inf, -np.inf], np.nan)
+                factor_vals = clean.rank(pct=True)
             elif self.config.standardize_method == StandardizeMethod.MEDIAN_MAD:
                 valid = factor_vals.replace([np.inf, -np.inf], np.nan).dropna()
                 if len(valid) > 1:
@@ -915,7 +916,8 @@ class FactorPreprocessingPipeline:
             return result
 
         elif method == StandardizeMethod.RANK:
-            return factor_values.rank(pct=True)
+            clean = factor_values.replace([np.inf, -np.inf], np.nan)
+            return clean.rank(pct=True)
 
         elif method == StandardizeMethod.MEDIAN_MAD:
             # 使用真正的Median-MAD标准化（非RobustScaler/IQR）

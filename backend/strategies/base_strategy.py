@@ -78,8 +78,11 @@ class BaseStrategy(ABC):
         """
         df = df.copy()
 
-        # 确保数据按日期排序
-        if "date" in df.columns:
+        # 确保数据按日期排序，同时保留 MultiIndex 结构
+        if isinstance(df.index, pd.MultiIndex):
+            # MultiIndex (date, asset) 保持不变，这是多股票回测的标准格式
+            pass
+        elif "date" in df.columns:
             df = df.sort_values("date")
         elif df.index.name != "date":
             df = df.reset_index()

@@ -8,6 +8,8 @@ import numpy as np
 import pandas as pd
 from typing import Dict, Optional
 
+from backend.utils.safe_math import safe_divide
+
 import empyrical
 
 logger = logging.getLogger(__name__)
@@ -65,8 +67,8 @@ def calculate_risk_metrics(
     }
 
     # empyrical 在某些边界条件下可能返回非有限值，统一转为 None（符合规则6）
-    for key in ["sharpe_ratio", "sortino_ratio", "calmar_ratio"]:
-        if not np.isfinite(result[key]):
+    for key, value in result.items():
+        if isinstance(value, float) and not np.isfinite(value):
             result[key] = None
 
     return result
@@ -134,7 +136,7 @@ def calculate_relative_metrics(
         logger.debug(f"信息比率计算失败: {e}")
         # Fallback: excess_return / tracking_error
         if tracking_error and tracking_error > 0 and result["excess_return"] is not None:
-            result["information_ratio"] = result["excess_return"] / tracking_error
+            result["information_ratio"] = safe_divide(result["excess_return"], tracking_error, default=None)
         else:
             result["information_ratio"] = None
 
@@ -152,7 +154,7 @@ def calculate_relative_metrics(
         # Fallback: covariance / variance
         cov = float(aligned["strategy"].cov(aligned["benchmark"]))
         var = float(aligned["benchmark"].var())
-        result["beta"] = cov / var if var > 0 else None
+        result["beta"] = safe_divide(cov, var, default=None)
         result["alpha"] = None
 
     # Correlation

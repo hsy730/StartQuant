@@ -316,7 +316,8 @@ class FactorStabilityService:
                 if regime not in regime_performance:
                     regime_performance[regime] = []
 
-                regime_performance[regime].append(ic if not np.isnan(ic) else 0)
+                if not np.isnan(ic):
+                    regime_performance[regime].append(ic)
 
         # 汇总
         results = {}

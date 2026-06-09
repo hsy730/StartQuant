@@ -318,14 +318,18 @@ class FactorOrchestrator:
                     try:
                         result = future.result()
                         results[factor_name] = result
+                        ic_stage = result.get("stages", {}).get("ic_analysis")
+                        ic_result = ic_stage.result if isinstance(ic_stage, PipelineStageResult) and ic_stage.result else {}
+                        bias_stage = result.get("stages", {}).get("lookahead_detection")
+                        bias_result = bias_stage.result if isinstance(bias_stage, PipelineStageResult) and bias_stage.result else {}
                         summary_rows.append({
                             "factor_name": factor_name,
                             "expression": expr[:50],
                             "status": result["status"],
                             "score": result.get("summary", {}).get("overall_score", 0),
-                            "ic_mean": result.get("stages", {}).get("ic_analysis", {}).get("result", {}).get("ic_mean", 0),
-                            "ir": result.get("stages", {}).get("ic_analysis", {}).get("result", {}).get("ir", 0),
-                            "risk_level": result.get("stages", {}).get("lookahead_detection", {}).get("result", {}).get("risk_level", "N/A"),
+                            "ic_mean": ic_result.get("ic_mean", 0),
+                            "ir": ic_result.get("ir", 0),
+                            "risk_level": bias_result.get("risk_level", "N/A"),
                         })
                     except Exception as e:
                         logger.warning(f"并行验证失败: {expr}, 错误: {e}")
@@ -352,14 +356,18 @@ class FactorOrchestrator:
                         factor_name=factor_name,
                     )
                     results[factor_name] = result
+                    ic_stage = result.get("stages", {}).get("ic_analysis")
+                    ic_result = ic_stage.result if isinstance(ic_stage, PipelineStageResult) and ic_stage.result else {}
+                    bias_stage = result.get("stages", {}).get("lookahead_detection")
+                    bias_result = bias_stage.result if isinstance(bias_stage, PipelineStageResult) and bias_stage.result else {}
                     summary_rows.append({
                         "factor_name": factor_name,
                         "expression": expr[:50],
                         "status": result["status"],
                         "score": result.get("summary", {}).get("overall_score", 0),
-                        "ic_mean": result.get("stages", {}).get("ic_analysis", {}).get("result", {}).get("ic_mean", 0),
-                        "ir": result.get("stages", {}).get("ic_analysis", {}).get("result", {}).get("ir", 0),
-                        "risk_level": result.get("stages", {}).get("lookahead_detection", {}).get("result", {}).get("risk_level", "N/A"),
+                        "ic_mean": ic_result.get("ic_mean", 0),
+                        "ir": ic_result.get("ir", 0),
+                        "risk_level": bias_result.get("risk_level", "N/A"),
                     })
                 except Exception as e:
                     results[factor_name] = {"status": "ERROR", "error": str(e)}

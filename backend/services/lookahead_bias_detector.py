@@ -353,7 +353,7 @@ class LookaheadBiasDetector:
             pos_threshold = self.thresholds["ic_positive_ratio_max"]
             checks.append(BiasCheckResult(
                 check_name="ic_positive_ratio",
-                passed=pos_ratio < pos_threshold or pos_ratio > (1 - pos_threshold),
+                passed=(1 - pos_threshold) <= pos_ratio <= pos_threshold,
                 value=float(pos_ratio),
                 threshold=pos_threshold,
                 severity="warning",

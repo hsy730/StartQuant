@@ -140,8 +140,11 @@ class FactorAttributionService:
                 valid = df_copy[[factor_name, "future_return"]].dropna()
                 valid = valid[~np.isinf(valid["future_return"])]
                 for date, group in valid.groupby(valid.index):
-                    factor_panel[date] = group[factor_name].tolist()
-                    return_panel[date] = group["future_return"].tolist()
+                    if date not in factor_panel:
+                        factor_panel[date] = []
+                        return_panel[date] = []
+                    factor_panel[date].extend(group[factor_name].tolist())
+                    return_panel[date].extend(group["future_return"].tolist())
 
         # 每日横截面Rank IC
         daily_ics = []

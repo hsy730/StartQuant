@@ -5,6 +5,7 @@ from typing import Dict
 import pandas as pd
 import numpy as np
 from .base_strategy import BaseStrategy
+from backend.utils.safe_math import safe_divide
 
 
 class MomentumStrategy(BaseStrategy):
@@ -54,7 +55,11 @@ class MomentumStrategy(BaseStrategy):
         signals = pd.Series(0, index=df.index)
 
         # 计算动量（过去N天的收益率）
-        momentum = df["close"].pct_change(self.momentum_window)
+        # MultiIndex 下必须按资产分组计算，否则跨资产比较价格
+        if isinstance(df.index, pd.MultiIndex):
+            momentum = df["close"].groupby(level=1).pct_change(self.momentum_window)
+        else:
+            momentum = df["close"].pct_change(self.momentum_window)
 
         # 生成信号
         signals[momentum > self.buy_threshold] = 1  # 买入
@@ -70,7 +75,7 @@ class MomentumStrategy(BaseStrategy):
         """
         计算权重
 
-        信号为1时满仓，信号为-1时空仓
+        信号为1时等权分配，信号为-1时空仓
 
         Args:
             df: 数据
@@ -81,10 +86,14 @@ class MomentumStrategy(BaseStrategy):
         """
         weights = pd.Series(0.0, index=df.index)
 
-        # 信号为1时满仓
-        weights[signals == 1] = 1.0
-
-        # 信号为-1时做空（可选，这里简化为空仓）
-        # weights[signals == -1] = -1.0
+        # 信号为1时等权分配（MultiIndex 下按日期分组）
+        buy_mask = signals == 1
+        if isinstance(df.index, pd.MultiIndex):
+            n_per_date = buy_mask.groupby(level=0).transform("sum")
+            weights[buy_mask] = safe_divide(1.0, n_per_date[buy_mask], default=0.0)
+        else:
+            n_stocks = buy_mask.sum()
+            if n_stocks > 0:
+                weights[buy_mask] = 1.0 / n_stocks
 
         return weights

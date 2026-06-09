@@ -313,19 +313,36 @@ class PortfolioAnalysisService:
             weights = pd.Series(1.0 / n_factors, index=factor_returns.columns)
             extra_info["note"] = "等权重分配"
 
-        # 2. IC加权（基于因子均值收益作为IC代理）
+        # 2. IC加权（基于因子值与收益率的Spearman相关系数）
         elif method == "ic_weight":
-            # 计算每个因子的IC（因子值与收益的横截面相关系数）
-            # 由于此处只有因子收益率序列，使用均值收益作为IC代理
+            from scipy.stats import spearmanr
+
+            # 获取因子值数据（kwargs中传入）
+            factor_values = kwargs.get("factor_values", None)
+
+            # 计算每个因子的IC（因子值与收益率的Spearman相关系数）
             ic_values = {}
             for factor in factor_returns.columns:
-                ic_series = factor_returns[factor].dropna()
-                if len(ic_series) > 1:
-                    # 使用均值收益作为IC代理，IC为负时权重为0
-                    ic_mean = ic_series.mean()
-                    ic_values[factor] = max(0, ic_mean)
+                if factor_values is not None and factor in factor_values.columns:
+                    valid = factor_returns[factor].dropna().index.intersection(
+                        factor_values[factor].dropna().index
+                    )
+                    if len(valid) >= 10:
+                        ic, _ = spearmanr(
+                            factor_values[factor].loc[valid],
+                            factor_returns[factor].loc[valid]
+                        )
+                        ic_values[factor] = abs(ic) if not np.isnan(ic) else 0.0
+                    else:
+                        ic_values[factor] = 0.0
                 else:
-                    ic_values[factor] = 0.0
+                    # 无因子值数据时，使用均值收益作为IC代理
+                    ic_series = factor_returns[factor].dropna()
+                    if len(ic_series) > 1:
+                        ic_mean = ic_series.mean()
+                        ic_values[factor] = max(0, ic_mean)
+                    else:
+                        ic_values[factor] = 0.0
 
             ic_series = pd.Series(ic_values)
             total_ic = ic_series.sum()

@@ -31,8 +31,24 @@ def calculate_future_returns(
         添加了 future_return_N 列的 DataFrame（副本）
     """
     result = df.copy()
-    for p in periods:
-        result[f"future_return_{p}"] = result[price_col].pct_change(p).shift(-p)
+    if isinstance(result.index, pd.MultiIndex):
+        # MultiIndex 下按资产分组计算，避免跨资产比较价格
+        # 必须先提取为纯 DatetimeIndex Series 再计算 pct_change/shift
+        asset_level = 1
+        for p in periods:
+            col_name = f"future_return_{p}"
+            new_col = pd.Series(np.nan, index=result.index, name=col_name)
+            for asset_code in result.index.get_level_values(asset_level).unique():
+                # 使用 xs 提取单资产数据（返回 DatetimeIndex DataFrame），再计算
+                asset_df = result.xs(asset_code, level=asset_level)
+                ret = asset_df[price_col].pct_change(p).shift(-p)
+                # 将结果按日期索引对齐赋值
+                for date in ret.index:
+                    new_col.loc[(date, asset_code)] = ret.loc[date] if not pd.isna(ret.loc[date]) else np.nan
+            result[col_name] = new_col
+    else:
+        for p in periods:
+            result[f"future_return_{p}"] = result[price_col].pct_change(p).shift(-p)
     return result
 
 
@@ -71,6 +87,22 @@ def calculate_ic_stats(
 
     mean_ic = float(ic_clean.mean())
     std_ic = float(ic_clean.std())
+
+    # 常数IC序列：std接近0时，IR/t统计量/p值/置信区间无意义，返回None
+    if std_ic < 1e-10:
+        positive_ratio = float((ic_clean > 0).mean())
+        return {
+            "mean_ic": mean_ic,
+            "std_ic": std_ic,
+            "ir": None,
+            "t_statistic": None,
+            "p_value": None,
+            "ci_lower": None,
+            "ci_upper": None,
+            "n_samples": n,
+            "positive_ratio": positive_ratio,
+        }
+
     ir = safe_ir(float(mean_ic), float(std_ic), default=0.0)
 
     # t检验

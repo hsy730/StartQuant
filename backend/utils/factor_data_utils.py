@@ -35,9 +35,10 @@ def find_longest_stock(
             longest_code = code
 
     if longest_code is None:
-        # Fallback: 取第一个
+        if factor_name:
+            raise ValueError(f"没有股票包含因子列 '{factor_name}'")
         longest_code = next(iter(factor_data))
-    return longest_code, factor_data[longest_code]
+    return longest_code, factor_data[longest_code].copy()
 
 
 def iter_valid_stocks(
@@ -69,4 +70,4 @@ def iter_valid_stocks(
         valid_count = df[factor_name].notna().sum()
         if valid_count < min_length:
             continue
-        yield code, df
+        yield code, df.copy()

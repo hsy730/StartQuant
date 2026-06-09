@@ -26,7 +26,7 @@ def normalize_weights(
     """
     if isinstance(weights, dict):
         total = sum(weights.values())
-        if total == 0 or not np.isfinite(total):
+        if abs(total) < 1e-8 or not np.isfinite(total):
             if default_equal:
                 n = len(weights)
                 return {k: 1.0 / n if n > 0 else 0.0 for k in weights}
@@ -36,7 +36,7 @@ def normalize_weights(
     else:
         # pd.Series
         total = weights.sum()
-        if total == 0 or not np.isfinite(total):
+        if abs(total) < 1e-8 or not np.isfinite(total):
             if default_equal:
                 n = len(weights)
                 return pd.Series(1.0 / n if n > 0 else 0.0, index=weights.index)

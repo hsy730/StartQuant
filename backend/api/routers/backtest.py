@@ -88,16 +88,14 @@ async def run_single_backtest(request: SingleBacktestRequest):
                 raise HTTPException(status_code=400, detail="请选择因子")
 
         # 从数据库获取所有因子定义
-        db = get_db_session()
-        repo = FactorRepository(db)
-        factor_defs = {}
-        for factor_name in factor_names_to_use:
-            factor_def = repo.get_by_name(factor_name)
-            if not factor_def:
-                db.close()
-                raise HTTPException(status_code=404, detail=f"因子 '{factor_name}' 不存在")
-            factor_defs[factor_name] = factor_def
-        db.close()
+        with get_db() as db:
+            repo = FactorRepository(db)
+            factor_defs = {}
+            for factor_name in factor_names_to_use:
+                factor_def = repo.get_by_name(factor_name)
+                if not factor_def:
+                    raise HTTPException(status_code=404, detail=f"因子 '{factor_name}' 不存在")
+                factor_defs[factor_name] = factor_def
 
         # 获取数据并计算所有因子
         all_factor_data = {}
@@ -449,7 +447,7 @@ async def run_strategy_comparison(request: ComparisonRequest):
         # 确保有return列
         if 'return' not in merged_data.columns and 'close' in merged_data.columns:
             merged_data = merged_data.sort_values(['stock_code', 'date'])
-            merged_data['return'] = merged_data.groupby('stock_code')['close'].pct_change().shift(-1)
+            merged_data['return'] = merged_data.groupby('stock_code')['close'].transform(lambda s: s.pct_change().shift(-1))
 
         merged_data = merged_data.sort_values(["date", "stock_code"])
 
@@ -491,7 +489,7 @@ async def run_strategy_comparison(request: ComparisonRequest):
                     # 计算下期收益
                     if "stock_code" in merged_data.columns:
                         next_returns = merged_data[
-                            (merged_data["date"] > date) &
+                            (merged_data["date"] == date) &
                             (merged_data["stock_code"].isin(top_stocks["stock_code"]))
                         ].groupby("stock_code")["return"].first()
 

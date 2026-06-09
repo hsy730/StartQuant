@@ -55,6 +55,8 @@ def sanitize_dict(d: Any) -> Any:
         return {k: sanitize_dict(v) for k, v in d.items()}
     elif isinstance(d, list):
         return [sanitize_dict(item) for item in d]
+    elif isinstance(d, (np.bool_,)):
+        return bool(d)
     elif isinstance(d, (np.integer,)):
         return int(d)
     elif isinstance(d, (np.floating,)):

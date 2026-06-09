@@ -43,7 +43,9 @@ def safe_divide(
             invalid = (np.abs(denominator) < min_threshold) | np.isnan(denominator)
 
         if isinstance(denominator, pd.Series):
-            result = numerator / denominator
+            safe_denominator = denominator.copy()
+            safe_denominator[invalid] = 1.0
+            result = numerator / safe_denominator
             result = result.mask(invalid, default)
         else:
             # numpy数组：先替换无效分母为1（避免RuntimeWarning），再除法，最后覆盖无效位置
@@ -54,7 +56,11 @@ def safe_divide(
         return result
     else:
         # 标量处理
-        if denominator is None or (isinstance(denominator, float) and np.isnan(denominator)):
+        # 注意：np.float64(np.nan) 在 numpy>=2.0 中不是 float 子类，
+        # 必须同时检查 np.floating 类型才能捕获 NaN
+        if denominator is None:
+            return default
+        if isinstance(denominator, (float, np.floating)) and np.isnan(denominator):
             return default
         if abs(denominator) < min_threshold:
             return default
@@ -78,10 +84,10 @@ def safe_ir(ic_mean: float, ic_std: float, default: Optional[float] = None) -> O
     Returns:
         IR值，或default（标准差无效时）
     """
-    # 处理NaN输入
-    if ic_mean is None or (isinstance(ic_mean, float) and np.isnan(ic_mean)):
+    # 处理NaN输入（np.float64(np.nan) 在 numpy>=2.0 中不是 float 子类）
+    if ic_mean is None or (isinstance(ic_mean, (float, np.floating)) and np.isnan(ic_mean)):
         return default
-    if ic_std is None or (isinstance(ic_std, float) and np.isnan(ic_std)):
+    if ic_std is None or (isinstance(ic_std, (float, np.floating)) and np.isnan(ic_std)):
         return default
 
     # 标准差为0或极小值时，IR不可计算

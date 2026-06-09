@@ -521,7 +521,7 @@ class AnalysisService:
             def _spearman_ic(group):
                 if len(group) < 2:
                     return np.nan
-                return group[factor_name].rank().corr(group["future_return_1"].rank())
+                return scipy_stats.spearmanr(group[factor_name], group["future_return_1"]).correlation
 
             daily_ic = merged.groupby("date").apply(_spearman_ic)
             daily_ic = daily_ic.dropna()
@@ -800,17 +800,8 @@ class AnalysisService:
             min_periods = max(1, window // 4)
             rolling_mean = ic_s.rolling(window=window, min_periods=min_periods).mean()
             rolling_std = ic_s.rolling(window=window, min_periods=min_periods).std()
-            # IC完全稳定(std=0)时，IR应趋向极大值而非0
-            # 向量化计算 IR，替代逐元素 Python 循环
-            valid_mask = rolling_std > 1e-10
-            ir = pd.Series(np.nan, index=rolling_mean.index)
-            ir[valid_mask] = rolling_mean[valid_mask] / rolling_std[valid_mask]
-            # std≈0 但 mean≠0 的情况，IR设为极大值
-            zero_std_nonzero_mean = (~valid_mask) & (rolling_mean.abs() > 1e-10)
-            ir[zero_std_nonzero_mean] = rolling_mean[zero_std_nonzero_mean].abs() * 1e6
-            # std≈0 且 mean≈0 的情况，IR设为0
-            zero_both = (~valid_mask) & (rolling_mean.abs() <= 1e-10)
-            ir[zero_both] = 0.0
+            # 使用 safe_divide 统一处理除零，避免 *1e6 hack
+            ir = safe_divide(rolling_mean, rolling_std, default=np.nan)
             rolling_ir[factor_name] = ir
         return rolling_ir
 

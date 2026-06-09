@@ -164,9 +164,9 @@ async def optimize_weights(request: OptimizeWeightsRequest):
             "factors": request.factors,
             "stock_code": request.stock_code,
             "metrics": {
-                "return": float(portfolio_return),
-                "ic": float(portfolio_ic),
-                "ir": float(portfolio_ir)
+                "return": safe_numeric_value(portfolio_return),
+                "ic": safe_numeric_value(portfolio_ic),
+                "ir": safe_numeric_value(portfolio_ir)
             }
         }
 

@@ -5,6 +5,7 @@ from typing import Dict
 import pandas as pd
 import numpy as np
 from .base_strategy import BaseStrategy
+from backend.utils.safe_math import safe_divide
 
 
 class MarketCapStrategy(BaseStrategy):
@@ -79,9 +80,14 @@ class MarketCapStrategy(BaseStrategy):
         if self.market_cap_column not in df.columns:
             # 没有市值数据，退化为等权重
             mask = signals == 1
-            n_stocks = mask.sum()
-            if n_stocks > 0:
-                weights[mask] = 1.0 / n_stocks
+            if isinstance(df.index, pd.MultiIndex):
+                # MultiIndex 下按日期分组计算等权
+                n_per_date = mask.groupby(level=0).transform("sum")
+                weights[mask] = safe_divide(1.0, n_per_date[mask], default=0.0)
+            else:
+                n_stocks = mask.sum()
+                if n_stocks > 0:
+                    weights[mask] = 1.0 / n_stocks
             return weights
 
         # 确定日期级别
@@ -97,7 +103,7 @@ class MarketCapStrategy(BaseStrategy):
         if date_level is not None:
             date_grouper = df.index.get_level_values(date_level) if df.index.nlevels > 1 else df.index
             total_mcap = df.loc[valid_mask, self.market_cap_column].groupby(
-                date_grouper[valid_mask]
+                date_grouper[valid_mask.values]
             ).transform("sum")
             weights[valid_mask] = safe_divide(
                 df.loc[valid_mask, self.market_cap_column].values,

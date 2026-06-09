@@ -33,9 +33,11 @@ def calculate_ic(
         return None
 
     if method == "spearman":
-        return float(factor[valid].rank().corr(returns[valid].rank()))
+        ic = float(factor[valid].rank().corr(returns[valid].rank()))
+        return ic if not np.isnan(ic) else None
     else:
-        return float(factor[valid].corr(returns[valid]))
+        ic = float(factor[valid].corr(returns[valid]))
+        return ic if not np.isnan(ic) else None
 
 
 def calculate_rank_ic(

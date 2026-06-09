@@ -55,32 +55,63 @@ class MeanReversionStrategy(BaseStrategy):
         signals = pd.Series(0, index=df.index)
 
         # 计算移动平均和标准差
-        rolling_mean = df["close"].rolling(window=self.lookback_window).mean()
-        rolling_std = df["close"].rolling(window=self.lookback_window).std()
+        # MultiIndex 下必须按资产分组计算，否则跨资产混合统计量
+        if isinstance(df.index, pd.MultiIndex):
+            rolling_mean = df["close"].groupby(level=1).transform(
+                lambda s: s.rolling(window=self.lookback_window).mean()
+            )
+            rolling_std = df["close"].groupby(level=1).transform(
+                lambda s: s.rolling(window=self.lookback_window).std()
+            )
+        else:
+            rolling_mean = df["close"].rolling(window=self.lookback_window).mean()
+            rolling_std = df["close"].rolling(window=self.lookback_window).std()
 
         # 计算Z-score（使用safe_divide避免浮点噪声导致Z-score爆炸）
         zscore = safe_divide(df["close"] - rolling_mean, rolling_std, default=np.nan)
 
         # 带持仓状态记忆的均值回归信号生成
-        # entry_threshold: 进场阈值（超买/超卖）
-        # exit_threshold: 出场阈值（回归到均值附近时平仓）
-        position = 0  # 0: 空仓, 1: 多头, -1: 空头
-        for i in range(len(zscore)):
-            z = zscore.iloc[i]
-            if pd.isna(z):
-                continue
-            if position == 0:
-                if z < -self.entry_threshold:
-                    position = 1   # 超卖 → 买入
-                elif z > self.entry_threshold:
-                    position = -1  # 超买 → 卖出
-            elif position == 1:
-                if abs(z) < self.exit_threshold:
-                    position = 0   # 回归均值 → 平仓
-            elif position == -1:
-                if abs(z) < self.exit_threshold:
-                    position = 0   # 回归均值 → 平仓
-            signals.iloc[i] = position
+        # MultiIndex 下必须按资产分组维护独立的持仓状态
+        if isinstance(df.index, pd.MultiIndex):
+            asset_level = 1
+            for asset_code in df.index.get_level_values(asset_level).unique():
+                asset_mask = df.index.get_level_values(asset_level) == asset_code
+                asset_zscore = zscore[asset_mask]
+                position = 0
+                for i in range(len(asset_zscore)):
+                    z = asset_zscore.iloc[i]
+                    if pd.isna(z):
+                        continue
+                    if position == 0:
+                        if z < -self.entry_threshold:
+                            position = 1
+                        elif z > self.entry_threshold:
+                            position = -1
+                    elif position == 1:
+                        if abs(z) < self.exit_threshold:
+                            position = 0
+                    elif position == -1:
+                        if abs(z) < self.exit_threshold:
+                            position = 0
+                    signals.iloc[df.index.get_loc(asset_zscore.index[i])] = position
+        else:
+            position = 0
+            for i in range(len(zscore)):
+                z = zscore.iloc[i]
+                if pd.isna(z):
+                    continue
+                if position == 0:
+                    if z < -self.entry_threshold:
+                        position = 1
+                    elif z > self.entry_threshold:
+                        position = -1
+                elif position == 1:
+                    if abs(z) < self.exit_threshold:
+                        position = 0
+                elif position == -1:
+                    if abs(z) < self.exit_threshold:
+                        position = 0
+                signals.iloc[i] = position
 
         return signals
 
@@ -101,10 +132,14 @@ class MeanReversionStrategy(BaseStrategy):
         """
         weights = pd.Series(0.0, index=df.index)
 
-        # 信号为1时满仓
-        weights[signals == 1] = 1.0
-
-        # 信号为-1时做空（可选）
-        # weights[signals == -1] = -1.0
+        # 信号为1时等权分配（MultiIndex 下按日期分组）
+        buy_mask = signals == 1
+        if isinstance(df.index, pd.MultiIndex):
+            n_per_date = buy_mask.groupby(level=0).transform("sum")
+            weights[buy_mask] = safe_divide(1.0, n_per_date[buy_mask], default=0.0)
+        else:
+            n_stocks = buy_mask.sum()
+            if n_stocks > 0:
+                weights[buy_mask] = 1.0 / n_stocks
 
         return weights

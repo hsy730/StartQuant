@@ -115,22 +115,19 @@ class FactorNeutralizationService:
 
         if len(unique_industries) < 2:
             logger.warning("行业分类不足2个，跳过行业中性化")
-            return df[factor_name]
+            return df[factor_name].copy()
 
         # 检查最小行业样本量，样本过小的行业会导致回归不稳定
         MIN_INDUSTRY_SIZE = 5
         industry_counts = industries.value_counts()
         small_industries = industry_counts[industry_counts < MIN_INDUSTRY_SIZE]
         if len(small_industries) > 0:
-            logger.warning(f"行业{small_industries.index.tolist()}样本量< {MIN_INDUSTRY_SIZE}，中性化可能不稳定")
-            # 过滤掉样本量过小的行业
-            valid_industries = industry_counts[industry_counts >= MIN_INDUSTRY_SIZE].index.tolist()
-            if len(valid_industries) < 2:
-                logger.warning("过滤后行业分类不足2个，跳过行业中性化")
-                return df[factor_name]
-            mask = industries.isin(valid_industries)
-            valid_data = valid_data[mask]
-            industries = industries[mask]
+            industries = industries.replace(small_industries.index.to_list(), "Other")
+            logger.info(f"将{len(small_industries)}个小行业（样本<5）合并为'Other'类别")
+            unique_industries = sorted(industries.unique())
+            if len(unique_industries) < 2:
+                logger.warning("合并小行业后行业分类仍不足2个，跳过行业中性化")
+                return df[factor_name].copy()
 
         industry_dummies = pd.get_dummies(industries, drop_first=True).astype(float)
         X = industry_dummies.values
@@ -168,7 +165,7 @@ class FactorNeutralizationService:
         has_industry = industry_column in df.columns
 
         if not has_mc and not has_industry:
-            return df[factor_name]
+            return df[factor_name].copy()
 
         self._validate_columns(df, factor_name)
 
@@ -191,7 +188,8 @@ class FactorNeutralizationService:
             if len(valid_data) < self.MIN_SAMPLES:
                 raise ValueError("有效数据不足（市值>0），无法进行联合中性化")
 
-        # 1b. 过滤小行业（必须在构建dummies之前完成）
+        # 1b. 合并小行业（必须在构建dummies之前完成）
+        merged_industries = None
         if has_industry:
             industries = valid_data[industry_column].astype(str)
             unique_industries = sorted(industries.unique())
@@ -203,21 +201,21 @@ class FactorNeutralizationService:
                 industry_counts = industries.value_counts()
                 small_industries = industry_counts[industry_counts < MIN_INDUSTRY_SIZE]
                 if len(small_industries) > 0:
-                    logger.warning(f"联合中性化：行业{small_industries.index.tolist()}样本量< {MIN_INDUSTRY_SIZE}，可能不稳定")
-                    valid_industries = industry_counts[industry_counts >= MIN_INDUSTRY_SIZE].index.tolist()
-                    if len(valid_industries) >= 2:
-                        valid_data = valid_data[industries.isin(valid_industries)]
-                    else:
-                        logger.warning("过滤后行业分类不足2个，跳过行业中性化部分")
+                    logger.info(f"联合中性化：将{len(small_industries)}个小行业（样本<5）合并为'Other'类别")
+                    industries = industries.replace(small_industries.index.to_list(), "Other")
+                    unique_industries = sorted(industries.unique())
+                    if len(unique_industries) < 2:
+                        logger.warning("联合中性化：合并小行业后行业分类仍不足2个，跳过行业中性化部分")
                         has_industry = False
+            if has_industry:
+                merged_industries = industries
 
         # Step 2: 统一构建特征矩阵（此时valid_data已完成所有过滤）
         y = valid_data[factor_name].values
         X_list = []
 
         if has_industry:
-            industries = valid_data[industry_column].astype(str)
-            industry_dummies = pd.get_dummies(industries, drop_first=True).astype(float)
+            industry_dummies = pd.get_dummies(merged_industries, drop_first=True).astype(float)
             X_list.append(industry_dummies.values)
 
         if has_mc:
@@ -225,12 +223,12 @@ class FactorNeutralizationService:
             X_list.append(log_mc.values.reshape(-1, 1))
 
         if not X_list:
-            return df[factor_name]
+            return df[factor_name].copy()
 
         X = np.hstack(X_list)
         if X.shape[1] == 0:
             logger.warning("联合中性化：有效特征维度为0，跳过中性化")
-            return df[factor_name]
+            return df[factor_name].copy()
 
         model = LinearRegression()
         model.fit(X, y)

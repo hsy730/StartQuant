@@ -298,7 +298,7 @@ class FactorCorrelationService:
     
     def _time_series_corr(self, df, factor_cols) -> Dict:
         """时间序列相关性（基于因子收益率）"""
-        returns = df[factor_cols].groupby(level='asset').pct_change(fill_method=None).dropna()
+        returns = df[factor_cols].groupby(level='asset').diff().dropna()
         
         if len(returns) < 30:
             return {'error': '样本不足'}
