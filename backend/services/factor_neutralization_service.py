@@ -122,11 +122,15 @@ class FactorNeutralizationService:
         industry_counts = industries.value_counts()
         small_industries = industry_counts[industry_counts < MIN_INDUSTRY_SIZE]
         if len(small_industries) > 0:
-            industries = industries.replace(small_industries.index.to_list(), "Other")
-            logger.info(f"将{len(small_industries)}个小行业（样本<5）合并为'Other'类别")
+            for ind_name in small_industries.index:
+                logger.warning(f"行业 '{ind_name}' 样本量仅 {industry_counts[ind_name]}，不足{MIN_INDUSTRY_SIZE}，已过滤")
+            # 过滤掉小行业（而非合并为Other），避免小行业噪声影响回归
+            valid_mask = ~industries.isin(small_industries.index)
+            valid_data = valid_data[valid_mask]
+            industries = industries[valid_mask]
             unique_industries = sorted(industries.unique())
             if len(unique_industries) < 2:
-                logger.warning("合并小行业后行业分类仍不足2个，跳过行业中性化")
+                logger.warning("过滤小行业后行业分类不足2个，跳过行业中性化")
                 return df[factor_name].copy()
 
         industry_dummies = pd.get_dummies(industries, drop_first=True).astype(float)
@@ -201,11 +205,15 @@ class FactorNeutralizationService:
                 industry_counts = industries.value_counts()
                 small_industries = industry_counts[industry_counts < MIN_INDUSTRY_SIZE]
                 if len(small_industries) > 0:
-                    logger.info(f"联合中性化：将{len(small_industries)}个小行业（样本<5）合并为'Other'类别")
-                    industries = industries.replace(small_industries.index.to_list(), "Other")
+                    for ind_name in small_industries.index:
+                        logger.warning(f"行业 '{ind_name}' 样本量仅 {industry_counts[ind_name]}，不足{MIN_INDUSTRY_SIZE}，已过滤")
+                    # 过滤掉小行业（而非合并为Other），避免小行业噪声影响回归
+                    valid_mask = ~industries.isin(small_industries.index)
+                    valid_data = valid_data[valid_mask]
+                    industries = industries[valid_mask]
                     unique_industries = sorted(industries.unique())
                     if len(unique_industries) < 2:
-                        logger.warning("联合中性化：合并小行业后行业分类仍不足2个，跳过行业中性化部分")
+                        logger.warning("联合中性化：过滤小行业后行业分类不足2个，跳过行业中性化部分")
                         has_industry = False
             if has_industry:
                 merged_industries = industries

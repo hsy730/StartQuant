@@ -715,7 +715,7 @@ class TestVectorbtBacktestWarmupFilter:
         import inspect
         from backend.services.vectorbt_backtest_service import VectorBTBacktestService
 
-        source = inspect.getsource(VectorBTBacktestService.chunked_backtest)
+        source = inspect.getsource(VectorBTBacktestService.chunked_single_factor_backtest)
         # 应包含对所有分块过滤warmup的逻辑
         assert "warmup_end_time" in source or "warmup" in source.lower()
 

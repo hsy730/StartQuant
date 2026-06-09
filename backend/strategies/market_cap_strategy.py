@@ -82,8 +82,12 @@ class MarketCapStrategy(BaseStrategy):
                 # MultiIndex 下按日期分组计算等权
                 n_per_date = mask.groupby(level=0).transform("sum")
                 weights[mask] = safe_divide(1.0, n_per_date[mask], default=0.0)
+            elif df.index.name == "date" or isinstance(df.index, pd.DatetimeIndex):
+                # 单级日期索引：按日期分组计算等权（同一日期可能有多只股票）
+                n_per_date = mask.groupby(df.index).transform("sum")
+                weights[mask] = safe_divide(1.0, n_per_date[mask], default=0.0)
             else:
-                # 单股票场景：满仓
+                # 无日期级别：单股票场景，满仓
                 weights[mask] = 1.0
             return weights
 

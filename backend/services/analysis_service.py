@@ -793,6 +793,10 @@ class AnalysisService:
             rolling_std = ic_s.rolling(window=window, min_periods=min_periods).std()
             # 使用 safe_divide 统一处理除零，避免 *1e6 hack
             ir = safe_divide(rolling_mean, rolling_std, default=np.nan)
+            # 当均值和标准差都接近0时（如IC恒为0），IR应为0而非NaN
+            # 语义：无信号无波动 → IR=0（无信息比率），而非NaN（不可计算）
+            both_near_zero = (rolling_mean.abs() < 1e-10) & (rolling_std.abs() < 1e-10)
+            ir = ir.mask(both_near_zero, 0.0)
             rolling_ir[factor_name] = ir
         return rolling_ir
 

@@ -128,7 +128,7 @@ class TestCacheSerializeDeserialize:
         mock_cached.result_data = serialized
 
         with patch("backend.services.analysis_service.AnalysisCacheRepository") as MockRepo, \
-             patch("backend.services.analysis_service.get_db_session") as mock_db:
+             patch("backend.services.analysis_service.get_db") as mock_db:
             mock_repo_instance = MagicMock()
             mock_repo_instance.get_by_key.return_value = mock_cached
             MockRepo.return_value = mock_repo_instance

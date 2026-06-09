@@ -82,7 +82,7 @@ class MomentumStrategy(BaseStrategy):
                     elif position == -1:
                         if m > self.buy_threshold:
                             position = 1
-                    signals.iloc[asset_mask.values.nonzero()[0][i]] = position
+                    signals.iloc[asset_mask.nonzero()[0][i]] = position
         else:
             # 单资产: 直接应用状态机
             position = 0

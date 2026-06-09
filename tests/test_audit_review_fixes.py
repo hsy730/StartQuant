@@ -326,7 +326,7 @@ class TestCrossSectionalBacktestVectorized:
             index=dates, columns=stocks
         )
         price_df = pd.DataFrame(
-            100 + np.cumsum(np.random.randn(len(dates), len(stocks)) * 0.5),
+            100 + np.cumsum(np.random.randn(len(dates), len(stocks)) * 0.5, axis=0),
             index=dates, columns=stocks
         )
 

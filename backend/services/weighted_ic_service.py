@@ -517,7 +517,7 @@ class WeightedICService:
         second_mean = second_half.mean()
         overall_std = ic_series.std()
         
-        if abs(overall_std) < 1e-10:
+        if abs(overall_std) < 1e-6:
             return 1.0
         
         change_score = 1.0 - min(safe_divide(abs(second_mean - first_mean), overall_std, default=0.0), 1.0)

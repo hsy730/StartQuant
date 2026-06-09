@@ -108,26 +108,38 @@ def create_alphalens_ic_results(mean_ic=0.05, std_ic=0.1, periods=['1D']):
 def create_pysr_service_with_mocks():
     """
     创建一个配置好 mock 状态的 PySR 服务实例
-    
+
     使用正确的构造函数签名：
     PySRFactorMiningService(base_factors, data, ...)
+
+    注意：data_service 在 base_mining_service.py 中导入，
+    factor_service 在 _precompute_base_factors 中延迟导入。
+    通过提供 factor_calculator mock 避免延迟导入，
+    通过 patch base_mining_service.data_service 避免数据库调用。
     """
     # 创建基础数据
     df = create_mock_stock_data(n_days=120)
     base_factors = ['close', 'open', 'high', 'low', 'volume']
-    
-    with patch('backend.services.pysr_factor_mining_service.data_service'):
+
+    # 创建 mock factor_calculator，避免 _precompute_base_factors 延迟导入 factor_service
+    mock_calculator = MagicMock()
+    # 让 calculate 返回合理的因子值序列
+    for factor_name in base_factors:
+        mock_calculator.calculate.side_effect = lambda data, code, _fn=factor_name: data.get(_fn, data.get('close', pd.Series(np.random.randn(len(data)))))
+
+    with patch('backend.services.base_mining_service.data_service'):
         service = PySRFactorMiningService(
             base_factors=base_factors,
             data=df,
+            factor_calculator=mock_calculator,
         )
-        
+
         # 手动设置内部状态（绕过 set_stock_pool 的数据库依赖）
         service.base_factor_values = create_base_factor_values(df)
         service.stock_pool_data = {}
         service.stock_pool_return_values = {}
         service.use_cross_sectional = True
-        
+
         return service
 
 
@@ -411,11 +423,16 @@ class TestRouteFitness:
     def setup_method(self):
         df = create_mock_stock_data(n_days=120)
         base_factors = ['close', 'open', 'high', 'low', 'volume']
-        
-        with patch('backend.services.pysr_factor_mining_service.data_service'):
+
+        mock_calculator = MagicMock()
+        for factor_name in base_factors:
+            mock_calculator.calculate.side_effect = lambda data, code, _fn=factor_name: data.get(_fn, data.get('close', pd.Series(np.random.randn(len(data)))))
+
+        with patch('backend.services.base_mining_service.data_service'):
             self.service = PySRFactorMiningService(
                 base_factors=base_factors,
                 data=df,
+                factor_calculator=mock_calculator,
             )
 
     def test_route_fitness_with_pearson_ic(self):
@@ -519,11 +536,16 @@ class TestEdgeCasesAndExceptions:
         """测试单股票评估方法 _evaluate_pysr_factor_single"""
         df = create_mock_stock_data(120)
         base_factors = ['close', 'open', 'high', 'low', 'volume']
-        
-        with patch('backend.services.pysr_factor_mining_service.data_service'):
+
+        mock_calculator = MagicMock()
+        for factor_name in base_factors:
+            mock_calculator.calculate.side_effect = lambda data, code, _fn=factor_name: data.get(_fn, data.get('close', pd.Series(np.random.randn(len(data)))))
+
+        with patch('backend.services.base_mining_service.data_service'):
             service = PySRFactorMiningService(
                 base_factors=base_factors,
                 data=df,
+                factor_calculator=mock_calculator,
             )
             
             service.base_factor_values = create_base_factor_values(df)

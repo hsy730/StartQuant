@@ -30,7 +30,10 @@ def _validate_expression_safety(expression: str) -> bool:
                 if isinstance(node, ast.Name) and node.id in ('abs', 'max', 'min', 'sum', 'len', 'log', 'exp', 'sqrt', 'sign'):
                     continue
                 if isinstance(node, ast.Attribute):
-                    continue  # 允许属性访问如 df['close']
+                    # 禁止访问下划线开头的特殊属性/方法（如__import__、__getattr__）
+                    if node.attr.startswith('_'):
+                        return False
+                    continue
                 return False
         return True
     except SyntaxError:

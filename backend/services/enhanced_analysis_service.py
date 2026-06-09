@@ -155,25 +155,32 @@ class EnhancedAnalysisService:
                 "ic_significance": ic_significance,
             }
 
-            # 中性化处理
+            # 中性化处理（横截面操作，需合并所有股票数据）
             if enable_neutralization:
                 try:
-                    # 使用第一只有效股票的数据进行中性化
-                    first_stock_df = None
+                    # 收集所有有效股票数据，合并后进行横截面中性化
+                    all_stock_dfs = []
                     for stock_code, df in factor_data.items():
-                        if factor_name in df.columns:
-                            first_stock_df = df.copy()
-                            break
+                        df = df.copy()
+                        if factor_name not in df.columns:
+                            continue
+                        if "future_return" not in df.columns and "close" in df.columns:
+                            df["future_return"] = df["close"].pct_change().shift(-1)
+                        if "future_return" in df.columns:
+                            df["_stock_code"] = stock_code
+                            all_stock_dfs.append(df)
 
-                    if first_stock_df is not None:
+                    if all_stock_dfs:
+                        combined_df = pd.concat(all_stock_dfs, ignore_index=True)
+
                         # 市值中性化
-                        if "market_cap" in first_stock_df.columns:
+                        if "market_cap" in combined_df.columns:
                             mc_neutralized = factor_neutralization_service.neutralize_market_cap(
-                                first_stock_df, factor_name, "market_cap"
+                                combined_df, factor_name, "market_cap"
                             )
 
-                            if "future_return" in first_stock_df.columns:
-                                ic_after_mc = mc_neutralized.corr(first_stock_df["future_return"])
+                            if "future_return" in combined_df.columns:
+                                ic_after_mc = mc_neutralized.corr(combined_df["future_return"])
                                 results["neutralization"][f"{factor_name}_mc"] = {
                                     "method": "市值中性化",
                                     "ic_before": results["factors"][factor_name]["ic_significance"]["ic"],
@@ -182,13 +189,13 @@ class EnhancedAnalysisService:
                                 }
 
                         # 行业中性化
-                        if "industry" in first_stock_df.columns:
+                        if "industry" in combined_df.columns:
                             industry_neutralized = factor_neutralization_service.neutralize_industry(
-                                first_stock_df, factor_name, "industry"
+                                combined_df, factor_name, "industry"
                             )
 
-                            if "future_return" in first_stock_df.columns:
-                                ic_after_ind = industry_neutralized.corr(first_stock_df["future_return"])
+                            if "future_return" in combined_df.columns:
+                                ic_after_ind = industry_neutralized.corr(combined_df["future_return"])
                                 results["neutralization"][f"{factor_name}_ind"] = {
                                     "method": "行业中性化",
                                     "ic_before": results["factors"][factor_name]["ic_significance"]["ic"],
