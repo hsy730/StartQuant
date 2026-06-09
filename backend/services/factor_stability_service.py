@@ -214,7 +214,16 @@ class FactorStabilityService:
         windows: List[int] = [20, 60, 120, 252]
     ) -> Dict:
         """
-        滚动窗口稳定性分析 - 在不同窗口下计算IC
+        滚动窗口稳定性分析 — 基于时间序列相关性（非横截面IC）
+
+        ⚠️ 重要区分：本方法计算的是**时间序列相关性**（rolling correlation），
+        即同一资产因子值与收益率在时间维度上的滚动相关。
+        这与**横截面IC**（cross-sectional IC）有本质区别：
+        - 时间序列相关性：衡量"因子能否预测同一只股票的未来收益"（择时维度）
+        - 横截面IC：衡量"因子能否区分不同股票的收益差异"（选股维度），需在日期截面上对多只股票计算
+
+        当 factor_data 仅包含单只股票数据时，结果为时间序列相关；
+        当 factor_data 为多只股票的横截面均值时，结果近似横截面IC趋势。
 
         Args:
             factor_data: 包含因子和收益率的数据框
@@ -223,7 +232,7 @@ class FactorStabilityService:
             windows: 窗口大小列表
 
         Returns:
-            各窗口的稳定性统计
+            各窗口的稳定性统计（基于时间序列相关性）
         """
         results = {}
 
@@ -231,12 +240,12 @@ class FactorStabilityService:
             if len(factor_data) < window * 2:
                 continue
 
-            # 计算滚动IC（向量化操作）
+            # 计算滚动时间序列相关性（非横截面IC，见方法文档说明）
             if factor_name in factor_data.columns and return_col in factor_data.columns:
-                rolling_ic_series = factor_data[factor_name].rolling(
+                rolling_corr_series = factor_data[factor_name].rolling(
                     window=window, min_periods=window
                 ).corr(factor_data[return_col]).dropna()
-                rolling_ic = rolling_ic_series.tolist()
+                rolling_ic = rolling_corr_series.tolist()
             else:
                 rolling_ic = []
 
@@ -583,6 +592,8 @@ class FactorStabilityService:
                     return_col='future_return',
                     windows=[20, 60, 120]
                 )
+                # 注意：calculate_rolling_stability 计算的是时间序列相关性，
+                # 此处输入为横截面均值序列，结果反映横截面IC的时序稳定性趋势
                 results["rolling_window_analysis"] = rolling_result
                 
                 # 滚动稳定性得分：基于IR的均值

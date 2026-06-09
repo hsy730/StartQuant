@@ -583,13 +583,13 @@ class FactorReturnAnalysisService:
         
         通过重抽样评估分组收益的稳健性
         """
-        np.random.seed(42)
+        rng = np.random.default_rng(42)
         
         bootstrapped_spreads = []
         bootstrapped_returns = {f"Q{i+1}": [] for i in range(self.config.n_quantiles)}
         
         for _ in range(self.config.bootstrap_n):
-            sample_df = df.sample(n=len(df), replace=True)
+            sample_df = df.sample(n=len(df), replace=True, random_state=rng)
             
             try:
                 sample_df["quantile"] = pd.qcut(

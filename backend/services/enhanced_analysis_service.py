@@ -141,15 +141,58 @@ class EnhancedAnalysisService:
             if not all_factor_vals:
                 continue
 
-            # 合并所有股票数据进行IC分析
-            combined_factor = pd.concat(all_factor_vals)
-            combined_return = pd.concat(all_return_vals)
+            # 横截面IC分析：按日期截面计算Spearman相关，再取时间均值
+            # （池化相关会产生伪相关，必须按截面计算）
+            panel_data = []
+            for stock_code, df in factor_data.items():
+                df = df.copy()
+                if factor_name not in df.columns:
+                    continue
+                if "close" not in df.columns:
+                    continue
+                if "future_return" not in df.columns:
+                    df["future_return"] = df["close"].pct_change().shift(-1)
+                valid = df[[factor_name, "future_return"]].dropna()
+                if len(valid) > 0:
+                    valid = valid.copy()
+                    valid["_stock_code"] = stock_code
+                    panel_data.append(valid)
 
-            # 基础IC分析
-            ic_significance = self.calculate_ic_significance(
-                combined_factor,
-                combined_return
-            )
+            if panel_data:
+                panel_df = pd.concat(panel_data)
+                # 按日期分组计算横截面IC
+                daily_ics = []
+                for date, group in panel_df.groupby(panel_df.index):
+                    if len(group) < 3:  # 截面至少3只股票才有意义
+                        continue
+                    ic_val = group[factor_name].corr(group["future_return"], method="spearman")
+                    if not np.isnan(ic_val):
+                        daily_ics.append(ic_val)
+
+                if daily_ics:
+                    mean_ic = float(np.mean(daily_ics))
+                    ic_std = float(np.std(daily_ics, ddof=1)) if len(daily_ics) > 1 else 0.0
+                    n_days = len(daily_ics)
+                    # t检验：IC均值是否显著不为0
+                    if ic_std > 1e-10:
+                        t_stat = mean_ic / (ic_std / np.sqrt(n_days))
+                        p_value = 2 * (1 - stats.t.cdf(abs(t_stat), df=n_days - 1))
+                    else:
+                        t_stat = 0.0
+                        p_value = 1.0
+                    ic_significance = {
+                        "ic": mean_ic,
+                        "ic_std": ic_std,
+                        "ir": mean_ic / ic_std if ic_std > 1e-10 else 0.0,
+                        "t_statistic": float(t_stat),
+                        "p_value": float(p_value),
+                        "is_significant": p_value < 0.05,
+                        "n_samples": n_days,
+                    }
+                else:
+                    ic_significance = {"error": "有效截面数据不足", "n_samples": 0}
+            else:
+                ic_significance = {"error": "有效数据不足", "n_samples": 0}
 
             results["factors"][factor_name] = {
                 "ic_significance": ic_significance,
@@ -180,7 +223,7 @@ class EnhancedAnalysisService:
                             )
 
                             if "future_return" in combined_df.columns:
-                                ic_after_mc = mc_neutralized.corr(combined_df["future_return"])
+                                ic_after_mc = mc_neutralized.corr(combined_df["future_return"], method="spearman")
                                 results["neutralization"][f"{factor_name}_mc"] = {
                                     "method": "市值中性化",
                                     "ic_before": results["factors"][factor_name]["ic_significance"]["ic"],
@@ -195,7 +238,7 @@ class EnhancedAnalysisService:
                             )
 
                             if "future_return" in combined_df.columns:
-                                ic_after_ind = industry_neutralized.corr(combined_df["future_return"])
+                                ic_after_ind = industry_neutralized.corr(combined_df["future_return"], method="spearman")
                                 results["neutralization"][f"{factor_name}_ind"] = {
                                     "method": "行业中性化",
                                     "ic_before": results["factors"][factor_name]["ic_significance"]["ic"],

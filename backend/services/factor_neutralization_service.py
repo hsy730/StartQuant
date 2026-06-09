@@ -125,10 +125,10 @@ class FactorNeutralizationService:
             for ind_name in small_industries.index:
                 logger.warning(f"行业 '{ind_name}' 样本量仅 {industry_counts[ind_name]}，不足{MIN_INDUSTRY_SIZE}，已过滤")
             # 过滤掉小行业（而非合并为Other），避免小行业噪声影响回归
+            # 注意：只过滤valid_data和industries，不修改原始df，保证_build_result_series索引完整
             valid_mask = ~industries.isin(small_industries.index)
             valid_data = valid_data[valid_mask]
             industries = industries[valid_mask]
-            df = df[valid_mask]
             unique_industries = sorted(industries.unique())
             if len(unique_industries) < 2:
                 logger.warning("过滤小行业后行业分类不足2个，跳过行业中性化")
@@ -209,10 +209,10 @@ class FactorNeutralizationService:
                     for ind_name in small_industries.index:
                         logger.warning(f"行业 '{ind_name}' 样本量仅 {industry_counts[ind_name]}，不足{MIN_INDUSTRY_SIZE}，已过滤")
                     # 过滤掉小行业（而非合并为Other），避免小行业噪声影响回归
+                    # 注意：只过滤valid_data和industries，不修改原始df，保证_build_result_series索引完整
                     valid_mask = ~industries.isin(small_industries.index)
                     valid_data = valid_data[valid_mask]
                     industries = industries[valid_mask]
-                    df = df[valid_mask]
                     unique_industries = sorted(industries.unique())
                     if len(unique_industries) < 2:
                         logger.warning("联合中性化：过滤小行业后行业分类不足2个，跳过行业中性化部分")

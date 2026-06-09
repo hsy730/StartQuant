@@ -6,7 +6,7 @@ from typing import Dict, List, Optional
 import pandas as pd
 import numpy as np
 
-from pypfopt import EfficientFrontier, risk_models, expected_returns
+from pypfopt import EfficientFrontier, HRPOpt, risk_models, expected_returns
 
 from backend.utils.safe_math import safe_divide
 from backend.utils.weight_utils import normalize_weights
@@ -336,13 +336,9 @@ class PortfolioAnalysisService:
                     else:
                         ic_values[factor] = 0.0
                 else:
-                    # 无因子值数据时，使用均值收益作为IC代理
-                    ic_series = factor_returns[factor].dropna()
-                    if len(ic_series) > 1:
-                        ic_mean = ic_series.mean()
-                        ic_values[factor] = max(0, ic_mean)
-                    else:
-                        ic_values[factor] = 0.0
+                    # 无因子值数据时，无法计算真实IC，设为0（归一化后等权）
+                    logger.warning(f"因子 '{factor}' 缺少因子值数据，无法计算IC，将使用等权分配")
+                    ic_values[factor] = 0.0
 
             ic_series = pd.Series(ic_values)
             total_ic = ic_series.sum()
@@ -353,23 +349,29 @@ class PortfolioAnalysisService:
 
             extra_info["ic_values"] = ic_values
 
-        # 3. 风险平价
+        # 3. 风险平价 — 使用HRPOpt（层次风险平价，考虑因子间相关性）
         elif method == "risk_parity":
-            # 计算每个因子的波动率，处理std=0的边界情况
-            volatilities = factor_returns.std().replace(0, np.nan)
-            if volatilities.isna().all():
-                weights = pd.Series(1.0 / n_factors, index=factor_returns.columns)
+            if n_factors >= 2:
+                try:
+                    hrp = HRPOpt(factor_returns)
+                    _raw_weights = hrp.optimize()
+                    clean_weights = hrp.clean_weights()
+                    weights = pd.Series(clean_weights, index=factor_returns.columns)
+                    extra_info["optimization_status"] = "success"
+                except Exception as e:
+                    logger.warning(f"PyPortfolioOpt risk_parity失败: {e}，回退到等权重")
+                    weights = pd.Series(1.0 / n_factors, index=factor_returns.columns)
+                    extra_info["optimization_status"] = f"fallback: {str(e)}"
             else:
-                volatilities = volatilities.fillna(volatilities.min())
-                inv_vol = 1.0 / volatilities
-                weights = inv_vol / inv_vol.sum()
+                weights = pd.Series(1.0, index=factor_returns.columns)
+                extra_info["optimization_status"] = "skipped: only one factor"
 
         # 4. 最大夏普比率（使用PyPortfolioOpt实现均值-方差优化）
         elif method == "max_sharpe":
             if n_factors >= 2:
                 try:
-                    mu = expected_returns.mean_historical_return(factor_returns, frequency=252)
-                    S = risk_models.sample_cov(factor_returns, frequency=252)
+                    mu = expected_returns.mean_historical_return(factor_returns, returns_data=True, frequency=252)
+                    S = risk_models.sample_cov(factor_returns, returns_data=True, frequency=252)
                     ef = EfficientFrontier(mu, S)
                     ef.max_sharpe(risk_free_rate=risk_free_rate)
                     weights = pd.Series(ef.clean_weights(), index=factor_returns.columns)
@@ -386,8 +388,8 @@ class PortfolioAnalysisService:
         elif method == "min_variance":
             if n_factors >= 2:
                 try:
-                    mu = expected_returns.mean_historical_return(factor_returns, frequency=252)
-                    S = risk_models.sample_cov(factor_returns, frequency=252)
+                    mu = expected_returns.mean_historical_return(factor_returns, returns_data=True, frequency=252)
+                    S = risk_models.sample_cov(factor_returns, returns_data=True, frequency=252)
                     ef = EfficientFrontier(mu, S)
                     ef.min_volatility()
                     weights = pd.Series(ef.clean_weights(), index=factor_returns.columns)
@@ -495,9 +497,10 @@ class PortfolioAnalysisService:
             if factor_name in normalized_factors:
                 combined_score += weight * normalized_factors[factor_name]
 
-        # 处理特殊值（NaN, Inf），以避免 JSON 序列化错误
+        # 处理特殊值（Inf），以避免 JSON 序列化错误
+        # 注意：NaN 保留不填充为0.0，因为在Z-score空间中0.0意味着"平均水平"，
+        # 误导性很强。下游应自行处理NaN（如显示N/A）。
         combined_score = combined_score.replace([np.inf, -np.inf], np.nan)
-        combined_score = combined_score.fillna(0.0)
 
         return combined_score
 

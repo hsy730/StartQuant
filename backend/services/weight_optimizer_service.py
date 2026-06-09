@@ -7,6 +7,7 @@ import logging
 import numpy as np
 import pandas as pd
 from typing import Dict, Optional
+from scipy.stats import spearmanr
 
 from backend.utils.safe_math import safe_divide
 
@@ -83,7 +84,7 @@ class WeightOptimizer:
                 }).dropna()
 
                 if len(aligned_data) > 10:
-                    ic = aligned_data['factor'].corr(aligned_data['returns'])
+                    ic, _ = spearmanr(aligned_data['factor'], aligned_data['returns'])
                     ic_values[factor_name] = abs(ic) if not np.isnan(ic) else 0.0
                 else:
                     ic_values[factor_name] = 0.0
@@ -171,8 +172,8 @@ class WeightOptimizer:
             if len(factor_returns) < 20:
                 return self._equal_weight(factor_names)
 
-            mu = expected_returns.mean_historical_return(factor_returns)
-            S = risk_models.sample_cov(factor_returns)
+            mu = expected_returns.mean_historical_return(factor_returns, returns_data=True)
+            S = risk_models.sample_cov(factor_returns, returns_data=True)
             ef = EfficientFrontier(mu, S)
             _raw_weights = ef.max_sharpe()
             clean_weights = ef.clean_weights()
@@ -196,7 +197,7 @@ class WeightOptimizer:
             if len(factor_returns) < 20:
                 return self._equal_weight(factor_names)
 
-            S = risk_models.sample_cov(factor_returns)
+            S = risk_models.sample_cov(factor_returns, returns_data=True)
             ef = EfficientFrontier(None, S)
             _raw_weights = ef.min_volatility()
             clean_weights = ef.clean_weights()

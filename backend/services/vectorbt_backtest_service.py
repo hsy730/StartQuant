@@ -382,40 +382,51 @@ class VectorBTBacktestService:
         拼接各分块的净值曲线
 
         每个 chunk 的前 overlap_size 个 bar 是 warmup 区（rolling 不可靠），丢弃。
-        首个 chunk 从 overlap 后开始；后续 chunk 的净值按前一个 chunk 最终净值缩放。
+
+        修复：拼接收益率序列而非净值曲线，避免在 chunk 边界丢失一天的收益。
+        原方法对净值曲线做归一化（equity / equity.iloc[0]）会丢弃 chunk 首日
+        相对于上一 chunk 末日的收益率。改为：在每个 chunk 内计算 pct_change，
+        丢弃 warmup 区的收益率，拼接所有收益率后从收益率重建净值曲线。
         """
-        stitched_parts = []
-        prev_final_value = 1.0
+        returns_parts = []
 
         for i, cr in enumerate(chunk_results):
             equity = cr["equity_curve"].copy()
-            # 丢弃 warmup 区（第一个 chunk 也丢弃 warmup，保证 rolling 稳定）
-            if len(equity) > overlap_size:
-                equity = equity.iloc[overlap_size:]
+            if len(equity) == 0:
+                continue
+
+            # 计算收益率序列
+            returns = equity.pct_change()
+
+            # 丢弃 warmup 区的收益率（与原逻辑一致：warmup 区 rolling 不可靠）
+            if len(returns) > overlap_size:
+                returns = returns.iloc[overlap_size:]
             elif i == 0:
-                # 数据太少，不丢弃
+                # 第一个 chunk 数据太少，保留所有收益率
                 pass
             else:
                 # 重叠区比数据还长，跳过
                 continue
 
-            if len(equity) == 0:
+            if len(returns) == 0:
                 continue
 
-            # 归一化到当前 chunk 的初始净值
-            equity_normalized = equity / equity.iloc[0]
-            # 按前一个 chunk 的最终净值缩放
-            equity_scaled = equity_normalized * prev_final_value
-            stitched_parts.append(equity_scaled)
-            prev_final_value = equity_scaled.iloc[-1] if len(equity_scaled) > 0 else prev_final_value
+            returns_parts.append(returns)
 
-        if not stitched_parts:
+        if not returns_parts:
             return pd.Series(dtype=float)
 
-        result = pd.concat(stitched_parts)
+        # 拼接所有收益率
+        all_returns = pd.concat(returns_parts)
         # 去重：同名时间戳只保留第一个
-        result = result[~result.index.duplicated(keep="first")]
-        return result
+        all_returns = all_returns[~all_returns.index.duplicated(keep="first")]
+
+        # 从收益率重建净值曲线
+        # 第一条收益率（NaN，来自 pct_change 的首行）替换为 0，确保起始净值为 1.0
+        all_returns.iloc[0] = 0.0
+        equity_curve = (1 + all_returns).cumprod()
+
+        return equity_curve
 
     def chunked_single_factor_backtest(
         self,
@@ -920,6 +931,7 @@ class VectorBTBacktestService:
         top_percentile: float = 0.2,
         direction: str = "long",
         freq: str = "D",
+        use_tradable_mask: bool = True,
     ) -> Dict:
         """
         股票池横截面回测（使用vectorbt）
@@ -930,6 +942,7 @@ class VectorBTBacktestService:
             top_percentile: 选择股票的百分比（0.2表示前20%）
             direction: "long"做多或"short"做空
             freq: 数据频率，支持 "D"/"5min"/"15min"/"30min"/"60min"
+            use_tradable_mask: 是否使用Mask-First可交易性掩码（默认True）
 
         Returns:
             Dict: 回测结果
@@ -944,6 +957,14 @@ class VectorBTBacktestService:
         if "date" not in df.columns:
             df = df.reset_index()
 
+        # Mask-First: 提取可交易性掩码
+        tradable_mask_df = None
+        if use_tradable_mask and "tradable_mask" in df.columns:
+            tradable_mask_df = df.pivot(index="date", columns="stock_code", values="tradable_mask")
+            logger.info(f"✅ 横截面回测: 使用Mask-First设计，可交易比例 {tradable_mask_df.mean().mean():.1%}")
+        elif use_tradable_mask and "tradable_mask" not in df.columns:
+            logger.warning("⚠️ 横截面回测: 未找到tradable_mask列！")
+
         # 透视数据：将股票代码转为列
         price_df = df.pivot(index="date", columns="stock_code", values="close")
         factor_df = df.pivot(index="date", columns="stock_code", values=factor_name)
@@ -955,13 +976,23 @@ class VectorBTBacktestService:
         _returns_df = price_df.pct_change()
 
         # 2. 向量化选择股票（替代逐日循环，性能提升数十倍）
-        ranks = factor_df.rank(pct=True, axis=1)
+        # Mask-First: 因子排名前先应用tradable_mask
+        if tradable_mask_df is not None:
+            factor_clean = factor_df.where(tradable_mask_df.astype(bool))
+            ranks = factor_clean.rank(pct=True, axis=1)
+        else:
+            ranks = factor_df.rank(pct=True, axis=1)
+
         if direction == "long":
             selected_mask = ranks >= (1 - top_percentile)
         else:
             selected_mask = ranks <= top_percentile
         # NaN位置标记为未选中
         selected_mask = selected_mask & factor_df.notna()
+
+        # Mask-First: 不可交易的股票不允许入场
+        if tradable_mask_df is not None:
+            selected_mask = selected_mask & tradable_mask_df.astype(bool)
 
         # 3. 变化驱动信号矩阵（向量化计算入场/出场）
         entries = pd.DataFrame(False, index=price_df.index, columns=price_df.columns, dtype=bool)

@@ -284,12 +284,13 @@ class FactorCorrelationService:
             'method': 'cross_sectional',
             'avg_pearson': avg_p.to_dict(),
             'avg_spearman': avg_s.to_dict(),
+            'daily_pearson': daily_pearson,
             'n_days': len(daily_pearson),
             'avg_n_stocks': float(np.mean(n_stocks_list)),
             'method_consistency': {
                 'mean_diff': float(np.mean(method_diffs)),
                 'recommendation': (
-                    '存在非线性关系，优先参考Spearman' if np.mean(method_diffs) > 0.15 
+                    '存在非线性关系，优先参考Spearman' if np.mean(method_diffs) > 0.15
                     else '线性假设成立'
                 )
             }
@@ -362,6 +363,7 @@ class FactorCorrelationService:
         
         if 'avg_pearson' in cs and 'n_days' in cs:
             n_days = cs['n_days']
+            daily_pearson = cs.get('daily_pearson', [])
             sig_pairs = []
             
             for f1, f2_dict in cs['avg_pearson'].items():
@@ -371,8 +373,24 @@ class FactorCorrelationService:
                             # Fisher z变换：对每日相关系数分别做z变换，再计算标准误
                             # arctanh(mean(r)) ≠ mean(arctanh(r))，应先变换再取均值
                             z_val = np.arctanh(val)
-                            # 使用每日相关系数的z值标准误
-                            z_se = 1 / np.sqrt(n_days - 3)
+                            # 正确做法：收集每日相关系数的z值，用std(z)/sqrt(n)作为均值的标准误
+                            if daily_pearson:
+                                daily_z = []
+                                for daily_corr_df in daily_pearson:
+                                    try:
+                                        r = daily_corr_df.loc[f1, f2]
+                                        if isinstance(r, (int, float)) and abs(r) < 1:
+                                            daily_z.append(np.arctanh(r))
+                                    except (KeyError, ValueError):
+                                        continue
+                                if len(daily_z) >= 3:
+                                    z_se = np.std(daily_z, ddof=1) / np.sqrt(len(daily_z))
+                                else:
+                                    # 不足3天有效数据，回退到经典公式
+                                    z_se = 1 / np.sqrt(n_days - 3)
+                            else:
+                                # 无每日数据，回退到经典公式
+                                z_se = 1 / np.sqrt(n_days - 3)
                             p_value = 2 * (1 - scipy_stats.norm.cdf(abs(z_val) / z_se))
                             
                             if p_value < 0.05:

@@ -127,6 +127,7 @@ class BacktestService:
         if len(returns) == 0:
             return pd.DataFrame()
         if not isinstance(returns.index, pd.DatetimeIndex):
+            returns = returns.copy()
             returns.index = pd.to_datetime(returns.index)
         monthly_returns = (1 + returns).resample("M").prod() - 1
         monthly_df = monthly_returns.to_frame(name="return")

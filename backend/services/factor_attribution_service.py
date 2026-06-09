@@ -294,8 +294,19 @@ class FactorAttributionService:
         y = aligned_data['portfolio'].values
 
         # 计算Beta (协方差 / 基准方差)
+        # 当基准方差为0时（基准不波动），beta无意义，返回None
         cov_matrix = np.cov(y, X.flatten())
-        beta = safe_divide(float(cov_matrix[0, 1]), float(cov_matrix[1, 1]), default=1.0)
+        beta = safe_divide(float(cov_matrix[0, 1]), float(cov_matrix[1, 1]), default=None)
+
+        if beta is None:
+            return {
+                "has_benchmark": True,
+                "alpha": None,
+                "beta": None,
+                "r_squared": None,
+                "daily_alpha": None,
+                "interpretation": "基准方差为0，无法计算Beta和Alpha"
+            }
 
         # 计算Alpha (组合收益 - Beta * 基准收益)
         alpha = y.mean() - beta * X.mean()
@@ -342,7 +353,6 @@ class FactorAttributionService:
             }
         """
         returns_by_stock = {}
-        all_returns = []
 
         for stock_code, df in factor_data.items():
             if "close" in df.columns and len(df) > 1:
@@ -364,14 +374,28 @@ class FactorAttributionService:
                         "count": len(returns)
                     }
 
-                    all_returns.extend(returns.tolist())
-
-        if not all_returns:
+        if not returns_by_stock:
             return {"error": "没有可用的收益数据"}
 
-        all_returns_series = pd.Series(all_returns)
-        overall_avg = float(all_returns_series.mean())
-        overall_vol_annual = calculate_volatility(all_returns_series) or 0.0
+        # 先计算每只股票的指标，再取截面均值（避免跨股票混合收益率导致统计无意义）
+        per_stock_vols = []
+        per_stock_sharpes = []
+        per_stock_daily_vols = []
+        per_stock_win_rates = []
+        per_stock_avg_returns = []
+
+        for stock_code, stats in returns_by_stock.items():
+            per_stock_vols.append(stats["volatility"])
+            per_stock_sharpes.append(stats["sharpe"])
+            per_stock_daily_vols.append(stats["daily_volatility"])
+            per_stock_win_rates.append(stats["win_rate"])
+            per_stock_avg_returns.append(stats["avg_daily_return"])
+
+        overall_avg = float(np.mean(per_stock_avg_returns)) if per_stock_avg_returns else 0.0
+        overall_vol_annual = float(np.mean(per_stock_vols)) if per_stock_vols else 0.0
+        overall_daily_vol = float(np.mean(per_stock_daily_vols)) if per_stock_daily_vols else 0.0
+        overall_sharpe = float(np.mean(per_stock_sharpes)) if per_stock_sharpes else 0.0
+        overall_win_rate = float(np.mean(per_stock_win_rates)) if per_stock_win_rates else 0.0
         # 先计算每只股票的累计收益再取均值，而非跨股票连乘
         stock_cum_returns = [v["cumulative_return"] for v in returns_by_stock.values()]
         overall_cum = float(np.mean(stock_cum_returns)) if stock_cum_returns else 0.0
@@ -382,13 +406,13 @@ class FactorAttributionService:
                 "annual_return": float((1 + overall_avg) ** 252 - 1),
                 "cumulative_return": overall_cum,
                 "volatility_annual": overall_vol_annual,
-                "daily_volatility": float(all_returns_series.std()),
-                "sharpe_ratio": calculate_sharpe(all_returns_series, risk_free_rate=0.03) or 0.0,
-                "win_rate": float((all_returns_series > 0).mean())
+                "daily_volatility": overall_daily_vol,
+                "sharpe_ratio": overall_sharpe,
+                "win_rate": overall_win_rate
             },
             "return_by_stock": returns_by_stock,
             "stock_count": len(returns_by_stock),
-            "total_observations": len(all_returns)
+            "total_observations": sum(v["count"] for v in returns_by_stock.values())
         }
 
 

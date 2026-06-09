@@ -37,8 +37,8 @@ def calculate_risk_metrics(
 
     returns_arr = returns_clean.values
 
-    # 标准差为零时直接返回空指标，避免 empyrical 产生极大值
-    if np.std(returns_arr) == 0:
+    # 标准差为零或近零时直接返回空指标，避免 empyrical 产生极大值
+    if np.std(returns_arr) < 1e-10:
         return _empty_metrics()
 
     result = {

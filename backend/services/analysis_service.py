@@ -9,6 +9,7 @@ import xgboost as xgb
 from typing import Dict, List, Optional, Any
 from pathlib import Path
 from datetime import datetime
+from scipy.stats import spearmanr
 
 # 配置日志
 logger = logging.getLogger(__name__)
@@ -592,7 +593,11 @@ class AnalysisService:
                 return_masked = return_values.where(combined_mask)
                 min_periods = max(2, int(60 * 0.6))
                 rolling_ic = factor_masked.rolling(window=60, min_periods=min_periods).corr(return_masked)
-                rolling_rank_ic = factor_masked.rank().rolling(window=60, min_periods=min_periods).corr(return_masked.rank())
+                # Rank IC: 使用per-window Spearman（全局rank+rolling Pearson是近似，不精确）
+                rolling_rank_ic = factor_masked.rolling(window=60, min_periods=min_periods).apply(
+                    lambda x: spearmanr(x, return_masked.loc[x.index])[0] if len(x.dropna()) >= min_periods else np.nan,
+                    raw=False
+                )
             else:
                 valid_mask = (
                     factor_values.notna() & return_values.notna()
@@ -603,7 +608,11 @@ class AnalysisService:
                 if len(factor_clean) < 60:
                     continue
                 rolling_ic = factor_clean.rolling(window=60).corr(return_clean)
-                rolling_rank_ic = factor_clean.rank().rolling(window=60).corr(return_clean.rank())
+                # Rank IC: 使用per-window Spearman（全局rank+rolling Pearson是近似，不精确）
+                rolling_rank_ic = factor_clean.rolling(window=60).apply(
+                    lambda x: spearmanr(x, return_clean.loc[x.index])[0] if len(x.dropna()) >= 2 else np.nan,
+                    raw=False
+                )
 
             rolling_ic = rolling_ic.replace([np.inf, -np.inf], np.nan).dropna()
             rolling_rank_ic = rolling_rank_ic.replace([np.inf, -np.inf], np.nan).dropna()

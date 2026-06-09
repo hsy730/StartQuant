@@ -244,16 +244,13 @@ class FactorEffectivenessService:
         for date, group in grouped:
             if len(group) < 2:
                 continue
-            factor_vals = group[factor_name].dropna()
-            return_vals = group["future_return"].dropna()
-            common_index = factor_vals.index.intersection(return_vals.index)
-            if len(common_index) < 2:
+            # 直接在group内dropna，避免重复索引下loc返回错误行数
+            valid = group[[factor_name, "future_return"]].dropna()
+            if len(valid) < 2:
                 continue
             try:
-                ic, _ = pearsonr(
-                    factor_vals.loc[common_index],
-                    return_vals.loc[common_index]
-                )
+                # 使用Spearman秩相关（业界标准），与Alphalens一致
+                ic, _ = spearmanr(valid[factor_name], valid["future_return"])
                 if not np.isnan(ic) and not np.isinf(ic):
                     ic_values.append(float(ic))
                     dates.append(str(date))

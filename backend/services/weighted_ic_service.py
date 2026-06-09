@@ -151,17 +151,16 @@ class WeightedICService:
                     ic_contribution = aligned_ics[name].fillna(0) * weight
                     weighted_ic_series += ic_contribution
                     
+                    contribution_ratio = safe_divide(
+                        abs(ic_contribution.mean()),
+                        abs(weighted_ic_series.mean()),
+                        default=None,
+                    )
                     contribution_dict[name] = {
                         "weight": float(weight),
                         "mean_contribution": float(ic_contribution.mean()),
                         "std_contribution": float(ic_contribution.std()),
-                        "contribution_ratio": float(
-                            safe_divide(
-                                abs(ic_contribution.mean()),
-                                abs(weighted_ic_series.mean()),
-                                default=1.0,
-                            )
-                        ),
+                        "contribution_ratio": float(contribution_ratio) if contribution_ratio is not None else None,
                     }
             
             valid_weighted_ic = weighted_ic_series.dropna()
@@ -335,6 +334,14 @@ class WeightedICService:
                     stats = ic_stats[name]
                     ir = stats["ir"]
                     raw_weights[name] = max(ir, 0)
+
+            # 当所有因子IR均为负时，raw_weights全为0，静默退化为空权重
+            if all(v == 0 for v in raw_weights.values()):
+                logger.warning(
+                    "所有因子IR均为负值，IR加权无法分配权重，回退到等权重"
+                )
+                n_valid = len(raw_weights)
+                return {name: 1.0 / n_valid for name in raw_weights} if n_valid > 0 else {}
 
             return normalize_weights(raw_weights)
         

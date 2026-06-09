@@ -577,17 +577,28 @@ class TestOptimizeWeights:
 
     def test_ic_weight_should_assign_higher_weight_to_better_factors(self):
         """IC加权应给表现更好的因子更高权重"""
-        # 构造一个因子明显优于其他因子的数据
+        # 构造因子值和收益率数据，使good_factor与收益有更高相关性
         np.random.seed(42)
         dates = pd.date_range("2024-01-01", periods=120, freq="B")
+        # good_factor: 与收益率高度相关
+        returns_data = np.random.randn(120) * 0.01
+        good_factor_vals = returns_data * 5 + np.random.randn(120) * 0.01  # 高相关
+        bad_factor_vals = np.random.randn(120) * 0.01  # 无相关
+
         factor_returns = pd.DataFrame({
-            "good_factor": np.random.randn(120) * 0.01 + 0.005,   # 正偏收益
-            "bad_factor": np.random.randn(120) * 0.01 - 0.005,    # 负偏收益
+            "good_factor": returns_data,
+            "bad_factor": returns_data,
+        }, index=dates)
+        factor_values = pd.DataFrame({
+            "good_factor": good_factor_vals,
+            "bad_factor": bad_factor_vals,
         }, index=dates)
 
-        result = self.service.optimize_weights(factor_returns, method="ic_weight")
+        result = self.service.optimize_weights(
+            factor_returns, method="ic_weight", factor_values=factor_values
+        )
         weights = result["weights"]
-        # good_factor 的 IR 应更高，权重应更大
+        # good_factor 的 IC 应更高，权重应更大
         assert weights["good_factor"] > weights["bad_factor"]
 
     def test_ic_weight_all_negative_ir_should_fallback_to_equal(self):
@@ -790,8 +801,8 @@ class TestCalculateCombinedFactorScore:
         result = self.service.calculate_combined_factor_score({}, {"f1": 1.0})
         assert len(result) == 0
 
-    def test_nan_in_result_should_be_filled_with_zero(self):
-        """结果中的 NaN/Inf 应被替换为 0"""
+    def test_nan_in_result_should_be_preserved(self):
+        """结果中的 NaN 应被保留（Z-score空间中0.0有语义，不应填充）"""
         index = ["A", "B", "C"]
         factor_data = {
             "f1": pd.Series([1.0, np.nan, 3.0], index=index),
@@ -799,8 +810,8 @@ class TestCalculateCombinedFactorScore:
         weights = {"f1": 1.0}
 
         result = self.service.calculate_combined_factor_score(factor_data, weights, normalize=False)
-        # NaN 在 reindex 后保留，最终 fillna(0.0)
-        assert not result.isna().any()
+        # NaN 应被保留，Inf 应被替换为 NaN
+        assert result.isna().sum() >= 1  # B位置应有NaN
 
     def test_inf_in_result_should_be_replaced(self):
         """结果中的 Inf 应被替换为 0"""
