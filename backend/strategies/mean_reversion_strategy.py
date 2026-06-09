@@ -131,14 +131,17 @@ class MeanReversionStrategy(BaseStrategy):
         """
         weights = pd.Series(0.0, index=df.index)
 
-        # 信号为1时等权分配（MultiIndex 下按日期分组）
+        # 多空信号等权分配（MultiIndex 下按日期分组）
         buy_mask = signals == 1
+        sell_mask = signals == -1
         if isinstance(df.index, pd.MultiIndex):
-            n_per_date = buy_mask.groupby(level=0).transform("sum")
-            weights[buy_mask] = safe_divide(1.0, n_per_date[buy_mask], default=0.0)
+            n_per_date_buy = buy_mask.groupby(level=0).transform("sum")
+            n_per_date_sell = sell_mask.groupby(level=0).transform("sum")
+            weights[buy_mask] = safe_divide(1.0, n_per_date_buy[buy_mask], default=0.0)
+            weights[sell_mask] = -safe_divide(1.0, n_per_date_sell[sell_mask], default=0.0)
         else:
-            n_stocks = buy_mask.sum()
-            if n_stocks > 0:
-                weights[buy_mask] = 1.0 / n_stocks
+            # 单股票场景：满仓做多/做空
+            weights[buy_mask] = 1.0
+            weights[sell_mask] = -1.0
 
         return weights

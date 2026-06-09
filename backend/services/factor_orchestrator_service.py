@@ -466,31 +466,39 @@ class FactorOrchestrator:
             factor_name = shared_data["factor_name"]
 
             # 收集多股票的因子值和收益
-            all_factor_vals = []
-            all_return_vals = []
-            for stock_code, df in factor_data.items():
-                if factor_name in df.columns and "close" in df.columns:
-                    fv = df[factor_name].dropna()
-                    ret = df["close"].pct_change(1).shift(-1).dropna()
-                    common = fv.index.intersection(ret.index)
-                    if len(common) >= 20:
-                        all_factor_vals.extend(fv.loc[common].tolist())
-                        all_return_vals.extend(ret.loc[common].tolist())
-
-            if len(all_factor_vals) < 30:
-                return PipelineStageResult(
-                    stage_name="lookahead_detection",
-                    status=PipelineStatus.WARNING,
-                    duration_seconds=time.time() - t0,
-                    result={"has_bias": False, "risk_level": "unknown", "reason": "样本不足"},
-                    warnings=["样本数不足30，无法可靠检测未来函数"],
+            if len(factor_data) >= 2:
+                # 多股票：使用横截面检测，保留横截面结构
+                detection_result = lookahead_bias_detector.detect_cross_sectional(
+                    factor_data=factor_data,
+                    factor_name=factor_name,
                 )
+            else:
+                # 单股票：使用时序检测
+                all_factor_vals = []
+                all_return_vals = []
+                for stock_code, df in factor_data.items():
+                    if factor_name in df.columns and "close" in df.columns:
+                        fv = df[factor_name].dropna()
+                        ret = df["close"].pct_change(1).shift(-1).dropna()
+                        common = fv.index.intersection(ret.index)
+                        if len(common) >= 20:
+                            all_factor_vals.extend(fv.loc[common].tolist())
+                            all_return_vals.extend(ret.loc[common].tolist())
 
-            detection_result = lookahead_bias_detector.detect(
-                factor_values=pd.Series(all_factor_vals),
-                return_values=pd.Series(all_return_vals),
-                factor_name=factor_name,
-            )
+                if len(all_factor_vals) < 30:
+                    return PipelineStageResult(
+                        stage_name="lookahead_detection",
+                        status=PipelineStatus.WARNING,
+                        duration_seconds=time.time() - t0,
+                        result={"has_bias": False, "risk_level": "unknown", "reason": "样本不足"},
+                        warnings=["样本数不足30，无法可靠检测未来函数"],
+                    )
+
+                detection_result = lookahead_bias_detector.detect(
+                    factor_values=pd.Series(all_factor_vals),
+                    return_values=pd.Series(all_return_vals),
+                    factor_name=factor_name,
+                )
 
             status = (
                 PipelineStatus.REJECTED
@@ -543,7 +551,17 @@ class FactorOrchestrator:
                 factor_data, [factor_name], stock_codes
             )
 
-            factor_ic = ic_ir_result.get(factor_name, {})
+            # calculate_ic_ir 返回 {"ic_stats": {factor_key: {...}}, "monthly_ic": ..., "rolling_ir": ...}
+            # 多股票模式下 key 格式为 {factor_name}_{ic_type}_{period}，单股票模式为 factor_name
+            ic_stats = ic_ir_result.get("ic_stats", {})
+            factor_ic = ic_stats.get(factor_name, {})
+            # 多股票模式：取第一个包含该因子名的key
+            if not factor_ic:
+                for key, stats in ic_stats.items():
+                    if factor_name in key or key == factor_name:
+                        factor_ic = stats
+                        break
+
             ic_mean = float(factor_ic.get("IC均值", 0))
             ir = float(factor_ic.get("IR", 0))
 

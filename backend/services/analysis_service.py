@@ -586,11 +586,13 @@ class AnalysisService:
                     & ~np.isinf(factor_values) & ~np.isinf(return_values)
                 )
                 combined_mask = valid_mask & tradable_mask
-                factor_clean = factor_values[combined_mask]
-                return_clean = return_values[combined_mask]
+                # 在原始连续索引上计算rolling，将mask外的数据设为NaN
+                # 这样rolling窗口基于自然日而非有效行数，语义正确
+                factor_masked = factor_values.where(combined_mask)
+                return_masked = return_values.where(combined_mask)
                 min_periods = max(2, int(60 * 0.6))
-                rolling_ic = factor_clean.rolling(window=60, min_periods=min_periods).corr(return_clean)
-                rolling_rank_ic = factor_clean.rank().rolling(window=60, min_periods=min_periods).corr(return_clean.rank())
+                rolling_ic = factor_masked.rolling(window=60, min_periods=min_periods).corr(return_masked)
+                rolling_rank_ic = factor_masked.rank().rolling(window=60, min_periods=min_periods).corr(return_masked.rank())
             else:
                 valid_mask = (
                     factor_values.notna() & return_values.notna()
@@ -613,22 +615,22 @@ class AnalysisService:
 
         ic_stats = {}
         for factor_name, ic_s in ic_series.items():
-            ic_mean = ic_s.mean()
-            ic_std = ic_s.std()
+            # 优先使用Rank IC（Spearman）作为主统计量，与业界标准一致
+            primary_ic = rank_ic_series.get(factor_name, ic_s)
+            ic_mean = primary_ic.mean()
+            ic_std = primary_ic.std()
             ir = safe_ir(ic_mean, ic_std, default=0.0)
             stats = {
                 "IC均值": ic_mean, "IC标准差": ic_std, "IR": ir,
-                "IC>0占比": (ic_s > 0).mean(), "IC绝对值均值": abs(ic_s).mean(),
-                "IC序列": ic_s.to_dict(), "IC类型": "时序IC（单股票）",
+                "IC>0占比": (primary_ic > 0).mean(), "IC绝对值均值": abs(primary_ic).mean(),
+                "IC序列": primary_ic.to_dict(), "IC类型": "时序Rank IC（单股票，Spearman）",
                 "Mask-First": tradable_mask is not None,
             }
-            if factor_name in rank_ic_series:
-                rank_ic_s = rank_ic_series[factor_name]
-                rank_ic_mean = rank_ic_s.mean()
-                rank_ic_std = rank_ic_s.std()
-                stats["Rank_IC均值"] = rank_ic_mean
-                stats["Rank_IC标准差"] = rank_ic_std
-                stats["Rank_IR"] = safe_ir(rank_ic_mean, rank_ic_std, default=0.0)
+            # Pearson IC作为辅助参考
+            pearson_ic_s = ic_s
+            stats["Pearson_IC均值"] = pearson_ic_s.mean()
+            stats["Pearson_IC标准差"] = pearson_ic_s.std()
+            stats["Pearson_IR"] = safe_ir(pearson_ic_s.mean(), pearson_ic_s.std(), default=0.0)
             ic_stats[factor_name] = stats
 
         result = {

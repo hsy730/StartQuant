@@ -83,14 +83,17 @@ class MarketCapStrategy(BaseStrategy):
                 n_per_date = mask.groupby(level=0).transform("sum")
                 weights[mask] = safe_divide(1.0, n_per_date[mask], default=0.0)
             else:
-                n_stocks = mask.sum()
-                if n_stocks > 0:
-                    weights[mask] = 1.0 / n_stocks
+                # 单股票场景：满仓
+                weights[mask] = 1.0
             return weights
 
         # 确定日期级别
         if df.index.nlevels == 1:
-            date_level = 0 if df.index.name == "date" else None
+            # 识别DatetimeIndex作为日期级别
+            if df.index.name == "date" or isinstance(df.index, pd.DatetimeIndex):
+                date_level = 0
+            else:
+                date_level = None
         else:
             level_names = list(df.index.names)
             date_level = level_names.index("date") if "date" in level_names else 0

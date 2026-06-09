@@ -133,6 +133,26 @@ class WeightOptimizer:
         weights = {k: safe_divide(v, total_ir, default=1.0/len(factor_names)) for k, v in ir_values.items()}
         return {"weights": weights, "method": "ir_weight"}
 
+    def _align_factor_indices(self, factor_values):
+        """对齐所有因子Series的索引，避免不同起止日期导致NaN填充"""
+        aligned_values = {}
+        common_index = None
+        for name, series in factor_values.items():
+            if isinstance(series, pd.Series):
+                if common_index is None:
+                    common_index = series.index
+                else:
+                    common_index = common_index.intersection(series.index)
+        if common_index is not None and len(common_index) > 0:
+            for name, series in factor_values.items():
+                if isinstance(series, pd.Series):
+                    aligned_values[name] = series.reindex(common_index)
+                else:
+                    aligned_values[name] = series
+        else:
+            aligned_values = factor_values
+        return aligned_values
+
     def _max_sharpe(self, factor_values, factor_names, returns) -> Dict:
         """最大夏普比率 — 使用pyportfolioopt（规则0）
 
@@ -145,7 +165,8 @@ class WeightOptimizer:
             # 构建因子收益矩阵
             # 因子值不是价格，不能对因子值求pct_change（如Z-score从-1到1，pct_change=-200%无意义）
             # 使用diff()（一阶差分）作为因子收益的代理指标
-            factor_df = pd.DataFrame(factor_values)
+            aligned_values = self._align_factor_indices(factor_values)
+            factor_df = pd.DataFrame(aligned_values)
             factor_returns = factor_df[factor_names].diff().dropna()
             if len(factor_returns) < 20:
                 return self._equal_weight(factor_names)
@@ -169,23 +190,7 @@ class WeightOptimizer:
         """
         try:
             from pypfopt import EfficientFrontier, risk_models
-            # Align all series to common index before creating DataFrame
-            aligned_values = {}
-            common_index = None
-            for name, series in factor_values.items():
-                if isinstance(series, pd.Series):
-                    if common_index is None:
-                        common_index = series.index
-                    else:
-                        common_index = common_index.intersection(series.index)
-            if common_index is not None and len(common_index) > 0:
-                for name, series in factor_values.items():
-                    if isinstance(series, pd.Series):
-                        aligned_values[name] = series.reindex(common_index)
-                    else:
-                        aligned_values[name] = series
-            else:
-                aligned_values = factor_values
+            aligned_values = self._align_factor_indices(factor_values)
             factor_df = pd.DataFrame(aligned_values)
             factor_returns = factor_df[factor_names].diff().dropna()
             if len(factor_returns) < 20:
@@ -209,7 +214,8 @@ class WeightOptimizer:
         """
         try:
             from pypfopt import HRPOpt
-            factor_df = pd.DataFrame(factor_values)
+            aligned_values = self._align_factor_indices(factor_values)
+            factor_df = pd.DataFrame(aligned_values)
             factor_returns = factor_df[factor_names].diff().dropna()
             if len(factor_returns) < 20:
                 return self._equal_weight(factor_names)

@@ -935,7 +935,7 @@ class FactorService:
             "风险指标": [
                 {
                     "name": "downside_risk",
-                    "code": "np.log(close / close.shift(1).replace(0, np.nan)).pipe(lambda x: x[x < 0]).rolling(window=20).std()",
+                    "code": "np.log(close / close.shift(1).replace(0, np.nan)).where(lambda x: x < 0).rolling(window=20).std()",
                     "description": "下行风险（仅计算负收益的标准差，半离差）",
                 },
                 {

@@ -580,10 +580,10 @@ class FactorPreprocessingPipeline:
             if self.config.winsorize_method == WinsorizeMethod.MAD:
                 median = factor_vals.median()
                 sigma_hat = 1.4826 * (factor_vals - median).abs().median()
-                if sigma_hat == 0 or np.isnan(sigma_hat):
-                    # 同_winsorize方法：MAD=0时用std作为σ_hat估计
+                if sigma_hat == 0 or np.isnan(sigma_hat) or sigma_hat < 1e-10:
+                    # 同_winsorize方法：MAD=0或极小时用std作为σ_hat估计
                     sigma_hat = factor_vals.std()
-                    if sigma_hat == 0 or np.isnan(sigma_hat):
+                    if sigma_hat == 0 or np.isnan(sigma_hat) or sigma_hat < 1e-10:
                         # 数据完全一致，无需去极值
                         pass
                     else:
@@ -637,6 +637,11 @@ class FactorPreprocessingPipeline:
                         log_mc = log_mc.fillna(log_mc.mean())
                         
                         industries = group.loc[valid_mask, industry_column].astype(str)
+                        # 合并小行业（样本量<5），与_neutralize_industry方法一致
+                        industry_counts = industries.value_counts()
+                        small_industries = industry_counts[industry_counts < 5].index
+                        if len(small_industries) > 0:
+                            industries = industries.replace(small_industries.to_list(), "Other")
                         unique_inds = sorted(industries.unique())
                         
                         if len(unique_inds) >= 2:

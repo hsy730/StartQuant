@@ -368,11 +368,12 @@ class FactorCorrelationService:
                 for f2, val in f2_dict.items():
                     if f1 != f2 and isinstance(val, (int, float)):
                         if abs(val) < 1 and n_days > 3:
-                            # Fisher z变换：对平均相关系数进行显著性检验
-                            z_values = np.arctanh(pd.Series([val]))
-                            z_mean = z_values.mean()
+                            # Fisher z变换：对每日相关系数分别做z变换，再计算标准误
+                            # arctanh(mean(r)) ≠ mean(arctanh(r))，应先变换再取均值
+                            z_val = np.arctanh(val)
+                            # 使用每日相关系数的z值标准误
                             z_se = 1 / np.sqrt(n_days - 3)
-                            p_value = 2 * (1 - scipy_stats.norm.cdf(abs(z_mean) / z_se))
+                            p_value = 2 * (1 - scipy_stats.norm.cdf(abs(z_val) / z_se))
                             
                             if p_value < 0.05:
                                 sig_pairs.append({

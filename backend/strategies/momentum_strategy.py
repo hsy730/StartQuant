@@ -59,9 +59,49 @@ class MomentumStrategy(BaseStrategy):
         else:
             momentum = df["close"].pct_change(self.momentum_window)
 
-        # 生成信号
-        signals[momentum > self.buy_threshold] = 1  # 买入
-        signals[momentum < self.sell_threshold] = -1  # 卖出
+        # 使用持仓状态机生成信号，避免中性区间错误清仓
+        # 信号0表示持有当前头寸（而非空仓）
+        if isinstance(df.index, pd.MultiIndex):
+            # MultiIndex: 按资产分组应用状态机
+            for asset_idx in df.index.get_level_values(1).unique():
+                asset_mask = df.index.get_level_values(1) == asset_idx
+                asset_momentum = momentum[asset_mask]
+                position = 0
+                for i in range(len(asset_momentum)):
+                    m = asset_momentum.iloc[i]
+                    if pd.isna(m):
+                        continue
+                    if position == 0:
+                        if m > self.buy_threshold:
+                            position = 1
+                        elif m < self.sell_threshold:
+                            position = -1
+                    elif position == 1:
+                        if m < self.sell_threshold:
+                            position = -1
+                    elif position == -1:
+                        if m > self.buy_threshold:
+                            position = 1
+                    signals.iloc[asset_mask.values.nonzero()[0][i]] = position
+        else:
+            # 单资产: 直接应用状态机
+            position = 0
+            for i in range(len(momentum)):
+                m = momentum.iloc[i]
+                if pd.isna(m):
+                    continue
+                if position == 0:
+                    if m > self.buy_threshold:
+                        position = 1
+                    elif m < self.sell_threshold:
+                        position = -1
+                elif position == 1:
+                    if m < self.sell_threshold:
+                        position = -1
+                elif position == -1:
+                    if m > self.buy_threshold:
+                        position = 1
+                signals.iloc[i] = position
 
         return signals
 
@@ -90,8 +130,7 @@ class MomentumStrategy(BaseStrategy):
             n_per_date = buy_mask.groupby(level=0).transform("sum")
             weights[buy_mask] = safe_divide(1.0, n_per_date[buy_mask], default=0.0)
         else:
-            n_stocks = buy_mask.sum()
-            if n_stocks > 0:
-                weights[buy_mask] = 1.0 / n_stocks
+            # 单股票场景：满仓
+            weights[buy_mask] = 1.0
 
         return weights

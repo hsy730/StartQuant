@@ -46,8 +46,8 @@ class EnhancedAnalysisService:
                 "n_samples": len(valid_data)
             }
 
-        # 计算IC
-        ic = valid_data["factor"].corr(valid_data["return"])
+        # 计算IC（使用Spearman Rank IC，与Alphalens和业界标准一致）
+        ic = valid_data["factor"].corr(valid_data["return"], method="spearman")
 
         # t检验：检验IC是否显著不为0
         n = len(valid_data)
@@ -116,55 +116,85 @@ class EnhancedAnalysisService:
             "summary": {},
         }
 
+        # factor_data 结构为 {stock_code: DataFrame}，每只股票的DataFrame包含所有因子列
         for factor_name in factor_names:
-            if factor_name not in factor_data:
+            # 收集所有股票的因子值和收益率
+            all_factor_vals = []
+            all_return_vals = []
+
+            for stock_code, df in factor_data.items():
+                df = df.copy()
+                if factor_name not in df.columns:
+                    continue
+                if "close" not in df.columns:
+                    continue
+
+                # 计算未来收益率（如果不存在）
+                if "future_return" not in df.columns:
+                    df["future_return"] = df["close"].pct_change().shift(-1)
+
+                valid = df[[factor_name, "future_return"]].dropna()
+                if len(valid) > 0:
+                    all_factor_vals.append(valid[factor_name])
+                    all_return_vals.append(valid["future_return"])
+
+            if not all_factor_vals:
                 continue
 
-            df = factor_data[factor_name]
+            # 合并所有股票数据进行IC分析
+            combined_factor = pd.concat(all_factor_vals)
+            combined_return = pd.concat(all_return_vals)
 
             # 基础IC分析
-            if "close" in df.columns and "future_return" in df.columns:
-                # 计算未来收益率（假设已存在）
-                ic_significance = self.calculate_ic_significance(
-                    df[factor_name],
-                    df["future_return"]
-                )
+            ic_significance = self.calculate_ic_significance(
+                combined_factor,
+                combined_return
+            )
 
-                results["factors"][factor_name] = {
-                    "ic_significance": ic_significance,
-                }
+            results["factors"][factor_name] = {
+                "ic_significance": ic_significance,
+            }
 
             # 中性化处理
             if enable_neutralization:
                 try:
-                    # 市值中性化
-                    mc_neutralized = factor_neutralization_service.neutralize_market_cap(
-                        df, factor_name, "market_cap"
-                    )
+                    # 使用第一只有效股票的数据进行中性化
+                    first_stock_df = None
+                    for stock_code, df in factor_data.items():
+                        if factor_name in df.columns:
+                            first_stock_df = df.copy()
+                            break
 
-                    # 计算中性化后的IC
-                    if "future_return" in df.columns:
-                        ic_after_mc = mc_neutralized.corr(df["future_return"])
-                        results["neutralization"][f"{factor_name}_mc"] = {
-                            "method": "市值中性化",
-                            "ic_before": results["factors"][factor_name]["ic_significance"]["ic"],
-                            "ic_after": float(ic_after_mc),
-                            "improvement": float(ic_after_mc - results["factors"][factor_name]["ic_significance"]["ic"]),
-                        }
+                    if first_stock_df is not None:
+                        # 市值中性化
+                        if "market_cap" in first_stock_df.columns:
+                            mc_neutralized = factor_neutralization_service.neutralize_market_cap(
+                                first_stock_df, factor_name, "market_cap"
+                            )
 
-                    # 行业中性化
-                    industry_neutralized = factor_neutralization_service.neutralize_industry(
-                        df, factor_name, "industry"
-                    )
+                            if "future_return" in first_stock_df.columns:
+                                ic_after_mc = mc_neutralized.corr(first_stock_df["future_return"])
+                                results["neutralization"][f"{factor_name}_mc"] = {
+                                    "method": "市值中性化",
+                                    "ic_before": results["factors"][factor_name]["ic_significance"]["ic"],
+                                    "ic_after": float(ic_after_mc),
+                                    "improvement": float(ic_after_mc - results["factors"][factor_name]["ic_significance"]["ic"]),
+                                }
 
-                    if "future_return" in df.columns:
-                        ic_after_ind = industry_neutralized.corr(df["future_return"])
-                        results["neutralization"][f"{factor_name}_ind"] = {
-                            "method": "行业中性化",
-                            "ic_before": results["factors"][factor_name]["ic_significance"]["ic"],
-                            "ic_after": float(ic_after_ind),
-                            "improvement": float(ic_after_ind - results["factors"][factor_name]["ic_significance"]["ic"]),
-                        }
+                        # 行业中性化
+                        if "industry" in first_stock_df.columns:
+                            industry_neutralized = factor_neutralization_service.neutralize_industry(
+                                first_stock_df, factor_name, "industry"
+                            )
+
+                            if "future_return" in first_stock_df.columns:
+                                ic_after_ind = industry_neutralized.corr(first_stock_df["future_return"])
+                                results["neutralization"][f"{factor_name}_ind"] = {
+                                    "method": "行业中性化",
+                                    "ic_before": results["factors"][factor_name]["ic_significance"]["ic"],
+                                    "ic_after": float(ic_after_ind),
+                                    "improvement": float(ic_after_ind - results["factors"][factor_name]["ic_significance"]["ic"]),
+                                }
 
                 except Exception as e:
                     results["neutralization"][factor_name] = {
@@ -174,23 +204,27 @@ class EnhancedAnalysisService:
             # 稳定性分析
             if enable_stability:
                 try:
-                    # 分布稳定性
+                    # 使用合并的因子值进行稳定性分析
                     dist_stability = factor_stability_service.calculate_distribution_stability(
-                        df[factor_name]
+                        combined_factor
                     )
 
                     # 时间序列稳定性（如果有IC序列）
-                    if "ic_series" in df.columns:
-                        ts_stability = factor_stability_service.calculate_time_series_stability(
-                            df["ic_series"]
-                        )
-                    else:
-                        ts_stability = None
+                    ts_stability = None
 
                     # 滚动窗口稳定性
-                    rolling_stability = factor_stability_service.calculate_rolling_stability(
-                        df, factor_name
-                    )
+                    first_stock_df = None
+                    for stock_code, df in factor_data.items():
+                        if factor_name in df.columns:
+                            first_stock_df = df.copy()
+                            break
+
+                    if first_stock_df is not None:
+                        rolling_stability = factor_stability_service.calculate_rolling_stability(
+                            first_stock_df, factor_name
+                        )
+                    else:
+                        rolling_stability = None
 
                     results["stability"][factor_name] = {
                         "distribution_stability": dist_stability,
@@ -206,18 +240,23 @@ class EnhancedAnalysisService:
             # 生成摘要
             if enable_summary:
                 try:
-                    # 准备分析数据
                     ic_analysis = results.get("factors", {})
                     stability_analysis = results.get("stability", {})
 
-                    summary = factor_summary_service.generate_factor_summary(
-                        factor_name,
-                        df,
-                        ic_analysis,
-                        stability_analysis
-                    )
+                    first_stock_df = None
+                    for stock_code, df in factor_data.items():
+                        if factor_name in df.columns:
+                            first_stock_df = df.copy()
+                            break
 
-                    results["summary"][factor_name] = summary
+                    if first_stock_df is not None:
+                        summary = factor_summary_service.generate_factor_summary(
+                            factor_name,
+                            first_stock_df,
+                            ic_analysis,
+                            stability_analysis
+                        )
+                        results["summary"][factor_name] = summary
 
                 except Exception as e:
                     results["summary"][factor_name] = {

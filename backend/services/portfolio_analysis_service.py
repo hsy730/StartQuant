@@ -435,7 +435,7 @@ class PortfolioAnalysisService:
             "method": method,
             "expected_return": float(weighted_return),
             "expected_volatility": float(weighted_volatility),
-            "sharpe_ratio": float(sharpe_ratio),
+            "sharpe_ratio": float(sharpe_ratio) if sharpe_ratio is not None else None,
         }
 
         # 添加额外信息

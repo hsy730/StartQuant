@@ -203,15 +203,16 @@ class SmartSlippageDetector:
         spread_est = 0
         
         if price_data:
-            all_returns = []
+            vols = []
             for code, df in price_data.items():
                 if "close" in df.columns and len(df) > 1:
                     returns = df["close"].pct_change().dropna()
-                    all_returns.extend(returns.tolist())
-            
-            if all_returns:
-                returns_series = pd.Series(all_returns)
-                price_vol = calculate_volatility(returns_series) or 0.0
+                    vol = calculate_volatility(returns)
+                    if vol is not None:
+                        vols.append(vol)
+
+            if vols:
+                price_vol = float(np.median(vols))
                 
                 # 估算买卖价差（基于波动率的简化模型）
                 # 价差 ≈ 波动率 * sqrt(1/250) * 2 （粗略估计）

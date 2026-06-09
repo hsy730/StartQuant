@@ -96,6 +96,16 @@ class SmartPreprocessingDetector:
             },
         }
 
+    @staticmethod
+    def _calc_outlier_ratio_mad(factor_col: pd.Series, n_sigma: float = 3.0) -> float:
+        """使用MAD法计算异常值比例，与推荐的去极值方法一致"""
+        median = factor_col.median()
+        mad = 1.4826 * (factor_col - median).abs().median()
+        if mad < 1e-10:
+            return 0.0
+        outlier_mask = (factor_col - median).abs() > n_sigma * mad
+        return float(outlier_mask.mean())
+
     def analyze_data(
         self,
         factor_data: Dict[str, pd.DataFrame],
@@ -171,7 +181,8 @@ class SmartPreprocessingDetector:
                     stats = {
                         "skewness": float(factor_col.skew()),
                         "kurtosis": float(factor_col.kurtosis()),
-                        "outlier_ratio": float(((factor_col - factor_col.mean()).abs() > 3 * factor_col.std()).mean()),
+                        # 使用MAD法计算异常值比例，与推荐的去极值方法一致
+                        "outlier_ratio": self._calc_outlier_ratio_mad(factor_col),
                     }
                     all_factor_stats.append((factor_name, stats))
 
@@ -182,7 +193,7 @@ class SmartPreprocessingDetector:
             kurtosis = factor_col_stats["kurtosis"]
             outlier_ratio = factor_col_stats["outlier_ratio"]
             has_outliers = outlier_ratio > 0
-            is_fat_tail = kurtosis > 0
+            is_fat_tail = kurtosis > 3  # 显著肥尾分布（正态分布超额峰度为0，>3为显著肥尾）
 
             # 横截面波动率（使用最保守因子的统计）
             if factor_name_selected in merged_df.columns and "date" in merged_df.columns:

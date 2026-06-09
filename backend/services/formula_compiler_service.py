@@ -154,7 +154,12 @@ class FormulaCompilerService:
                     # [1] = middleband（中轨），返回值顺序已在注释中明确标注（规则4）
                     return f"BBANDS({compiled_args[0]}, timeperiod=20)[1]  # TA-Lib返回(upper,middle,lower), [1]=middleband"
                 elif func_name == "ATR":
-                    return f"ATR({compiled_args[0]}, timeperiod={compiled_args[1]})"
+                    # TA-Lib ATR需要(high, low, close, timeperiod=N)三个价格序列
+                    if len(compiled_args) >= 4:
+                        return f"ATR({compiled_args[0]}, {compiled_args[1]}, {compiled_args[2]}, timeperiod={compiled_args[3]})"
+                    else:
+                        # 参数不足时走通用分支，让运行时报错更清晰
+                        return f"{func_name}({', '.join(compiled_args)})"
                 elif func_name == "OBV":
                     return f"OBV({compiled_args[0]}, {compiled_args[1]})"
                 else:

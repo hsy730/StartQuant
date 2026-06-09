@@ -512,8 +512,8 @@ class VectorBTBacktestService:
                 q_key = f"Q{q + 1}"
                 if q_key in cr["quantile_returns"]:
                     q_series = cr["quantile_returns"][q_key]
-                    if i > 0 and len(cr.get("equity_curve", [])) > overlap_size:
-                        # 按时间索引过滤warmup区
+                    if len(cr.get("equity_curve", [])) > overlap_size:
+                        # 所有分块（包括i=0）都过滤warmup区，确保分层收益与净值曲线一致
                         warmup_end_time = cr["equity_curve"].index[overlap_size]
                         q_series = q_series[q_series.index >= warmup_end_time]
                     q_parts.append(q_series)
