@@ -197,18 +197,51 @@ async def run_single_backtest(request: SingleBacktestRequest):
                 )
         else:
             # 多因子回测
-            df = list(all_factor_data.values())[0].copy()
-            result = await asyncio.to_thread(
-                backtest_service.multi_factor_backtest,
-                df=df,
-                factor_names=factor_names_to_use,
-                method=request.weight_method,
-                percentile=request.percentile,
-                direction=request.direction,
-                shares_per_trade=request.shares_per_trade,
-                freq=request.freq,
-                use_chunking=request.use_chunking,
-            )
+            if is_single_stock:
+                df = list(all_factor_data.values())[0].copy()
+                result = await asyncio.to_thread(
+                    backtest_service.multi_factor_backtest,
+                    df=df,
+                    factor_names=factor_names_to_use,
+                    method=request.weight_method,
+                    percentile=request.percentile,
+                    direction=request.direction,
+                    shares_per_trade=request.shares_per_trade,
+                    freq=request.freq,
+                    use_chunking=request.use_chunking,
+                )
+            else:
+                # 多股票多因子：合并所有股票数据，计算复合得分，使用横截面回测
+                merged_list = []
+                for code, data in all_factor_data.items():
+                    data_copy = data.copy()
+                    data_copy["stock_code"] = code
+                    if "date" not in data_copy.columns:
+                        data_copy = data_copy.reset_index()
+                    merged_list.append(data_copy)
+
+                df = pd.concat(merged_list, ignore_index=True)
+
+                # 计算复合得分（等权归一化因子值求和）
+                for factor_name in factor_names_to_use:
+                    if factor_name in df.columns:
+                        df[f"{factor_name}_rank"] = df.groupby("date")[factor_name].rank(pct=True)
+
+                rank_cols = [f"{fn}_rank" for fn in factor_names_to_use if f"{fn}_rank" in df.columns]
+                if rank_cols:
+                    df["composite_score"] = df[rank_cols].mean(axis=1)
+                else:
+                    raise HTTPException(status_code=400, detail="无法计算复合因子得分")
+
+                top_percentile = (100 - request.percentile) / 100.0
+                result = await asyncio.to_thread(
+                    backtest_service.cross_sectional_backtest,
+                    df=df,
+                    factor_name="composite_score",
+                    top_percentile=top_percentile,
+                    direction=request.direction,
+                    freq=request.freq,
+                )
 
         # 提取指标
         metrics = {k: v for k, v in result.items() if k in [

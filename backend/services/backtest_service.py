@@ -114,11 +114,11 @@ class BacktestService:
         """计算基准对比指标（委托risk_metrics统一入口，符合规则2）"""
         relative = calculate_relative_metrics(returns, benchmark_returns, annual_trading_days=annual_trading_days)
         return {
-            "excess_return": relative.get("excess_return", 0.0) or 0.0,
-            "tracking_error": relative.get("tracking_error", 0.0) or 0.0,
-            "information_ratio": relative.get("information_ratio", 0.0) or 0.0,
-            "correlation": relative.get("correlation", 0.0) or 0.0,
-            "beta": relative.get("beta", 1.0) or 1.0,
+            "excess_return": relative.get("excess_return"),
+            "tracking_error": relative.get("tracking_error"),
+            "information_ratio": relative.get("information_ratio"),
+            "correlation": relative.get("correlation"),
+            "beta": relative.get("beta"),
         }
 
     # ==================== 月度收益计算 ====================

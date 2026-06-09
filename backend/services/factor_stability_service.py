@@ -197,11 +197,12 @@ class FactorStabilityService:
         return {
             "mean": float(mean),
             "std": float(std),
-            "cv": float(cv),
+            "cv": float(cv) if cv is not None else None,
             "interpretation": (
-                "变异程度较低" if cv < 0.5 else
-                "变异程度中等" if cv < 1.0 else
-                "变异程度较高"
+                "变异程度较低" if cv is not None and cv < 0.5 else
+                "变异程度中等" if cv is not None and cv < 1.0 else
+                "变异程度较高" if cv is not None else
+                "无法计算（均值为0）"
             ),
         }
 

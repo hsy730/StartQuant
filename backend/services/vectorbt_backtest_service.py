@@ -14,7 +14,7 @@ import vectorbt as vbt
 from backend.services.risk_metrics import calculate_risk_metrics, calculate_volatility as _calc_volatility, _empty_metrics
 from backend.services.smart_slippage_detector import smart_slippage_detector, SlippageRecommendation
 from backend.utils.return_calculator import calculate_future_return
-from backend.utils.safe_math import safe_divide
+from backend.utils.safe_math import safe_divide, safe_series_divide
 
 logger = logging.getLogger(__name__)
 
@@ -709,15 +709,24 @@ class VectorBTBacktestService:
 
         # 从 stats Series 中提取指标
         # VectorBT 返回的百分比值需要除以100转换为小数
-        # 注意: stats.get() 的默认值仅在 key 不存在时生效，key 存在但值为 None 时需额外保护
-        total_return = (stats.get('Total Return [%]', 0) or 0) / 100.0
+        # 注意: 使用 _safe_stat 辅助函数避免 `or 0` 将 None/0.0 混淆（规则6）
+        def _safe_stat(key: str, default=0, divide_by_100: bool = False):
+            """安全提取 VectorBT 统计值，None 保持为 None（规则6）"""
+            val = stats.get(key, default)
+            if val is None or (isinstance(val, float) and np.isnan(val)):
+                return None
+            if divide_by_100:
+                return val / 100.0
+            return val
 
-        # 年化收益率：如果VectorBT返回0或NaN，则手动计算
-        annual_return = (stats.get('Annual Return [%]', 0) or 0) / 100.0
-        if annual_return == 0 or np.isnan(annual_return):
+        total_return = _safe_stat('Total Return [%]', divide_by_100=True)
+
+        # 年化收益率：如果VectorBT返回None/0/NaN，则手动计算
+        annual_return = _safe_stat('Annual Return [%]', divide_by_100=True)
+        if annual_return is None or annual_return == 0:
             # 手动计算年化收益率 = (1 + 总收益率)^(年化bar数/交易bar数) - 1
             n_days = len(returns_clean)
-            if n_days > 0 and total_return > -1:
+            if n_days > 0 and total_return is not None and total_return > -1:
                 annual_return = (1 + total_return) ** (fc["annual_bars"] / n_days) - 1
             else:
                 annual_return = None
@@ -727,11 +736,11 @@ class VectorBTBacktestService:
         # 使用统一的calculate_metrics计算Sharpe/Sortino（扣除无风险利率3%）
         # VectorBT默认rf=0，此处统一为rf=3%以保持与分块回测一致
         metrics = self.calculate_metrics(returns_clean, equity_curve=(1 + returns_clean).cumprod(), annual_trading_days=fc["annual_bars"])
-        sharpe_ratio = metrics["sharpe_ratio"] or 0
-        sortino_ratio = metrics["sortino_ratio"] or 0
-        max_drawdown = (stats.get('Max Drawdown [%]', 0) or 0) / 100.0
-        calmar_ratio = stats.get('Calmar Ratio', 0) or 0
-        win_rate = (stats.get('Win Rate [%]', 0) or 0) / 100.0
+        sharpe_ratio = metrics["sharpe_ratio"]
+        sortino_ratio = metrics["sortino_ratio"]
+        max_drawdown = _safe_stat('Max Drawdown [%]', divide_by_100=True)
+        calmar_ratio = _safe_stat('Calmar Ratio')
+        win_rate = _safe_stat('Win Rate [%]', divide_by_100=True)
 
         # VaR 和 CVaR 需要自己计算
         var_95, cvar_95 = self._calculate_var_cvar(returns_clean)
@@ -748,15 +757,15 @@ class VectorBTBacktestService:
             "equity_curve": equity,
             "trades_count": int(trades_count),
             "trades": trades_df,
-            # 手动计算的指标
-            "total_return": float(total_return),
-            "annual_return": float(annual_return or 0),
-            "sharpe_ratio": float(sharpe_ratio),
-            "sortino_ratio": float(sortino_ratio),
-            "max_drawdown": float(max_drawdown),
-            "calmar_ratio": float(calmar_ratio),
-            "win_rate": float(win_rate),
-            "volatility": float(volatility or 0),
+            # 手动计算的指标（None 保持为 None，符合规则6）
+            "total_return": float(total_return) if total_return is not None else None,
+            "annual_return": float(annual_return) if annual_return is not None else None,
+            "sharpe_ratio": float(sharpe_ratio) if sharpe_ratio is not None else None,
+            "sortino_ratio": float(sortino_ratio) if sortino_ratio is not None else None,
+            "max_drawdown": float(max_drawdown) if max_drawdown is not None else None,
+            "calmar_ratio": float(calmar_ratio) if calmar_ratio is not None else None,
+            "win_rate": float(win_rate) if win_rate is not None else None,
+            "volatility": float(volatility) if volatility is not None else None,
             "var_95": float(var_95),
             "cvar_95": float(cvar_95),
             # 滑点信息
@@ -816,8 +825,8 @@ class VectorBTBacktestService:
             if factor_name in df.columns:
                 rolling_mean = df[factor_name].rolling(std_window, min_periods=20).mean()
                 rolling_std = df[factor_name].rolling(std_window, min_periods=20).std()
-                df[f"{factor_name}_normalized"] = (
-                    (df[factor_name] - rolling_mean) / rolling_std.replace(0, np.nan)
+                df[f"{factor_name}_normalized"] = safe_series_divide(
+                    df[factor_name] - rolling_mean, rolling_std, fill_value=np.nan
                 ).fillna(0)
 
         # 2. 计算因子组合得分
@@ -1004,17 +1013,24 @@ class VectorBTBacktestService:
         # 使用 VectorBT 的 stats() 方法获取所有指标
         stats = pf.stats()
 
-        # 从 stats Series 中提取指标
-        # VectorBT 返回的百分比值需要除以100转换为小数
-        # 注意: stats.get() 的默认值仅在 key 不存在时生效，key 存在但值为 None 时需额外保护
-        total_return = (stats.get('Total Return [%]', 0) or 0) / 100.0
+        # 从 stats Series 中提取指标（使用 _safe_stat 避免 `or 0` 混淆 None/0.0，规则6）
+        def _safe_stat(key: str, default=0, divide_by_100: bool = False):
+            """安全提取 VectorBT 统计值，None 保持为 None（规则6）"""
+            val = stats.get(key, default)
+            if val is None or (isinstance(val, float) and np.isnan(val)):
+                return None
+            if divide_by_100:
+                return val / 100.0
+            return val
 
-        # 年化收益率：如果VectorBT返回0或NaN，则手动计算
-        annual_return = (stats.get('Annual Return [%]', 0) or 0) / 100.0
-        if annual_return == 0 or np.isnan(annual_return):
+        total_return = _safe_stat('Total Return [%]', divide_by_100=True)
+
+        # 年化收益率：如果VectorBT返回None/0/NaN，则手动计算
+        annual_return = _safe_stat('Annual Return [%]', divide_by_100=True)
+        if annual_return is None or annual_return == 0:
             # 手动计算年化收益率 = (1 + 总收益率)^(年化bar数/交易bar数) - 1
             n_days = len(returns_clean)
-            if n_days > 0 and total_return > -1:
+            if n_days > 0 and total_return is not None and total_return > -1:
                 annual_return = (1 + total_return) ** (fc["annual_bars"] / n_days) - 1
             else:
                 annual_return = None
@@ -1024,11 +1040,11 @@ class VectorBTBacktestService:
         # 使用统一的calculate_metrics计算Sharpe/Sortino（扣除无风险利率3%）
         # VectorBT默认rf=0，此处统一为rf=3%以保持与分块回测一致
         metrics = self.calculate_metrics(returns_clean, equity_curve=(1 + returns_clean).cumprod(), annual_trading_days=fc["annual_bars"])
-        sharpe_ratio = metrics["sharpe_ratio"] or 0
-        sortino_ratio = metrics["sortino_ratio"] or 0
-        max_drawdown = (stats.get('Max Drawdown [%]', 0) or 0) / 100.0
-        calmar_ratio = stats.get('Calmar Ratio', 0) or 0
-        win_rate = (stats.get('Win Rate [%]', 0) or 0) / 100.0
+        sharpe_ratio = metrics["sharpe_ratio"]
+        sortino_ratio = metrics["sortino_ratio"]
+        max_drawdown = _safe_stat('Max Drawdown [%]', divide_by_100=True)
+        calmar_ratio = _safe_stat('Calmar Ratio')
+        win_rate = _safe_stat('Win Rate [%]', divide_by_100=True)
 
         # VaR 和 CVaR 需要自己计算
         var_95, cvar_95 = self._calculate_var_cvar(returns_clean)
@@ -1045,17 +1061,17 @@ class VectorBTBacktestService:
             "trades_count": trades_count,
             "trades": trades_df,
             "daily_selected_count": trades_count,
-            # 手动计算的指标
-            "total_return": float(total_return),
-            "annual_return": float(annual_return or 0),
-            "sharpe_ratio": float(sharpe_ratio),
-            "sortino_ratio": float(sortino_ratio),
-            "max_drawdown": float(max_drawdown),
-            "calmar_ratio": float(calmar_ratio),
-            "win_rate": float(win_rate),
-            "volatility": float(volatility or 0),
-            "var_95": float(var_95),
-            "cvar_95": float(cvar_95),
+            # 手动计算的指标（None保持None，符合规则6）
+            "total_return": float(total_return) if total_return is not None else None,
+            "annual_return": float(annual_return) if annual_return is not None else None,
+            "sharpe_ratio": float(sharpe_ratio) if sharpe_ratio is not None else None,
+            "sortino_ratio": float(sortino_ratio) if sortino_ratio is not None else None,
+            "max_drawdown": float(max_drawdown) if max_drawdown is not None else None,
+            "calmar_ratio": float(calmar_ratio) if calmar_ratio is not None else None,
+            "win_rate": float(win_rate) if win_rate is not None else None,
+            "volatility": float(volatility) if volatility is not None else None,
+            "var_95": float(var_95) if var_95 is not None else None,
+            "cvar_95": float(cvar_95) if cvar_95 is not None else None,
             # 滑点信息
             "slippage_info": self.get_slippage_info(),
         }

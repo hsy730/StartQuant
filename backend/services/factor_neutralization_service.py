@@ -128,6 +128,7 @@ class FactorNeutralizationService:
             valid_mask = ~industries.isin(small_industries.index)
             valid_data = valid_data[valid_mask]
             industries = industries[valid_mask]
+            df = df[valid_mask]
             unique_industries = sorted(industries.unique())
             if len(unique_industries) < 2:
                 logger.warning("过滤小行业后行业分类不足2个，跳过行业中性化")
@@ -211,6 +212,7 @@ class FactorNeutralizationService:
                     valid_mask = ~industries.isin(small_industries.index)
                     valid_data = valid_data[valid_mask]
                     industries = industries[valid_mask]
+                    df = df[valid_mask]
                     unique_industries = sorted(industries.unique())
                     if len(unique_industries) < 2:
                         logger.warning("联合中性化：过滤小行业后行业分类不足2个，跳过行业中性化部分")

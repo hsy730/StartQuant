@@ -526,7 +526,7 @@ class AnalysisService:
             ir = safe_ir(ic_mean, ic_std, default=0.0)
 
             n = len(ic_s)
-            t_stat = ic_mean / (ic_std / np.sqrt(n)) if n > 1 and ic_std > 0 else 0.0
+            t_stat = safe_divide(ic_mean * np.sqrt(n), ic_std, default=0.0) if n > 1 else 0.0
             p_value = float(2 * (1 - scipy_stats.t.cdf(abs(t_stat), df=n - 1))) if n > 1 else 1.0
 
             ic_stats[factor_name] = {

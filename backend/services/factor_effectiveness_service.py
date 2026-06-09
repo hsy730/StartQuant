@@ -5,7 +5,7 @@ import logging
 import numpy as np
 import pandas as pd
 from typing import Dict, List, Optional, Any
-from scipy.stats import spearmanr
+from scipy.stats import spearmanr, pearsonr
 
 from backend.utils.returns import calculate_future_returns
 from backend.utils.safe_math import safe_ir

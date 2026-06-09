@@ -397,7 +397,8 @@ class ComprehensiveScoringService:
         # 2. 风险得分
         volatility = portfolio_metrics.get("volatility", 0.15)
         max_drawdown = portfolio_metrics.get("max_drawdown", 0.1)
-        risk_score = max(100 - (volatility / 0.2 * 50 + max_drawdown / 0.15 * 50), 0)
+        # empyrical 返回负值（如 -0.15 表示15%回撤），需取绝对值
+        risk_score = max(100 - (volatility / 0.2 * 50 + abs(max_drawdown) / 0.15 * 50), 0)
         total_score += weights["risk"] * risk_score
         details["risk_score"] = float(risk_score)
 
