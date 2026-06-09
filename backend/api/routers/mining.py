@@ -20,7 +20,7 @@ import time
 import logging
 from datetime import datetime
 
-from backend.core.database import get_db_session
+from backend.core.database import get_db
 from backend.models.mining_task import MiningTaskModel
 from backend.repositories.mining_task_repository import MiningTaskRepository
 
@@ -179,8 +179,7 @@ async def start_genetic_mining(request: GeneticMiningRequest, background_tasks: 
 
         # 持久化到数据库
         try:
-            db = get_db_session()
-            try:
+            with get_db() as db:
                 repo = MiningTaskRepository(db)
                 task_record = MiningTaskModel(
                     task_id=task_id,
@@ -194,8 +193,6 @@ async def start_genetic_mining(request: GeneticMiningRequest, background_tasks: 
                     config=request.model_dump(),
                 )
                 repo.create(task_record)
-            finally:
-                db.close()
         except Exception as e:
             logger.warning(f"持久化挖掘任务失败（不影响运行）: {e}")
 
@@ -276,38 +273,36 @@ async def _run_mining(task_id: str, request: GeneticMiningRequest):
         base_factor_codes = []
         if request.base_factors and len(request.base_factors) > 0:
             try:
-                db = get_db_session()
-                repo = FactorRepository(db)
+                with get_db() as db:
+                    repo = FactorRepository(db)
 
-                for factor_name in request.base_factors:
-                    factor = repo.get_by_name(factor_name)
-                    if factor:
-                        base_factor_codes.append(factor.code)
-                        logger.info(f"Found factor: {factor_name} -> {factor.code}")
-                    else:
-                        # Fuzzy match: try case-insensitive prefix match
-                        all_factors = repo.get_all()
-                        matched = None
-                        name_lower = factor_name.lower()
-                        prefix_lower = name_lower.replace(" ", "_")
-                        prefix_matches = []
-                        for f in all_factors:
-                            if f.name.lower() == name_lower:
-                                matched = f
-                                break
-                            if f.name.lower().startswith(prefix_lower):
-                                prefix_matches.append(f)
-                        if not matched and prefix_matches:
-                            # Choose the shortest name to get the most precise match (e.g. "rsi" prefers "rsi" over "rsi_volume")
-                            prefix_matches.sort(key=lambda f: len(f.name))
-                            matched = prefix_matches[0]
-                        if matched:
-                            base_factor_codes.append(matched.code)
-                            logger.info(f"Found factor (fuzzy): {factor_name} -> {matched.name} -> {matched.code}")
+                    for factor_name in request.base_factors:
+                        factor = repo.get_by_name(factor_name)
+                        if factor:
+                            base_factor_codes.append(factor.code)
+                            logger.info(f"Found factor: {factor_name} -> {factor.code}")
                         else:
-                            logger.warning(f"Factor not found in database: {factor_name}")
-
-                db.close()
+                            # Fuzzy match: try case-insensitive prefix match
+                            all_factors = repo.get_all()
+                            matched = None
+                            name_lower = factor_name.lower()
+                            prefix_lower = name_lower.replace(" ", "_")
+                            prefix_matches = []
+                            for f in all_factors:
+                                if f.name.lower() == name_lower:
+                                    matched = f
+                                    break
+                                if f.name.lower().startswith(prefix_lower):
+                                    prefix_matches.append(f)
+                            if not matched and prefix_matches:
+                                # Choose the shortest name to get the most precise match (e.g. "rsi" prefers "rsi" over "rsi_volume")
+                                prefix_matches.sort(key=lambda f: len(f.name))
+                                matched = prefix_matches[0]
+                            if matched:
+                                base_factor_codes.append(matched.code)
+                                logger.info(f"Found factor (fuzzy): {factor_name} -> {matched.name} -> {matched.code}")
+                            else:
+                                logger.warning(f"Factor not found in database: {factor_name}")
             except Exception as e:
                 logger.error(f"Error loading factors from database: {e}")
 
@@ -357,13 +352,14 @@ async def _run_mining(task_id: str, request: GeneticMiningRequest):
             await _run_simulated_mining(task_id, request, data, base_factor_codes, factor_service, logger)
 
     except Exception as e:
-        import logging
-        logger = logging.getLogger(__name__)
         logger.error(f"Task {task_id} failed: {str(e)}", exc_info=True)
         mining_tasks[task_id]["status"] = "failed"
         mining_tasks[task_id]["error"] = str(e)
         # 同步失败状态到数据库
         _sync_task_to_db(task_id, status="failed", error=str(e))
+    finally:
+        # 清理已完成/失败/取消的过期任务，防止内存泄漏
+        _cleanup_old_tasks()
 
 
 async def _run_genetic_only(
@@ -405,7 +401,7 @@ async def _run_genetic_only(
     # 保存服务引用（用于取消，必须在mine_factors之前）
     mining_services[task_id] = mining_service
 
-    result = mining_service.mine_factors()
+    result = await asyncio.to_thread(mining_service.mine_factors)
     result["source"] = "genetic"
     return result
 
@@ -450,7 +446,7 @@ async def _run_pysr_only(
     # 保存服务引用（用于取消）
     mining_services[task_id] = mining_service
 
-    result = mining_service.mine_factors()
+    result = await asyncio.to_thread(mining_service.mine_factors)
     result["source"] = "pysr"
     return result
 
@@ -543,7 +539,7 @@ async def _run_unified_mining(
     # 保存服务引用（用于取消）
     mining_services[task_id] = mining_service
 
-    result = mining_service.mine_factors()
+    result = await asyncio.to_thread(mining_service.mine_factors)
 
     # NOTE: Do NOT overwrite fitness_history from result here.
     # The progress callback already records normalized IC values per generation.
@@ -556,12 +552,9 @@ async def _run_unified_mining(
 def _sync_task_to_db(task_id: str, **kwargs):
     """同步任务状态到数据库（静默失败，不影响挖掘流程）"""
     try:
-        db = get_db_session()
-        try:
+        with get_db() as db:
             repo = MiningTaskRepository(db)
             repo.update_status(task_id, **kwargs)
-        finally:
-            db.close()
     except Exception as e:
         logger.debug(f"同步任务状态到数据库失败（不影响运行）: {e}")
 
@@ -785,134 +778,133 @@ def _finalize_task(task_id: str, result: dict, request: GeneticMiningRequest,
         return_values = data["return"]
 
     discovered_factors = []
-    db = get_db_session()
-    repo = GeneratedFactorRepository(db)
 
-    try:
-        for i, factor_info in enumerate(best_factors):
-            expression = factor_info["expression"]
-            source = factor_info.get("source", result.get("source", "unknown"))
-            complexity = factor_info.get("complexity", 0.0)
+    with get_db() as db:
+        repo = GeneratedFactorRepository(db)
 
-            # ---- 统一验证：用同一套标准重新打分 ----
-            unified = _unified_validate_factor(
-                expression=expression,
-                factor_calculator=factor_calculator,
-                data=data,
-                return_values=return_values,
-            )
+        try:
+            for i, factor_info in enumerate(best_factors):
+                expression = factor_info["expression"]
+                source = factor_info.get("source", result.get("source", "unknown"))
+                complexity = factor_info.get("complexity", 0.0)
 
-            # 保留各算法原始 fitness 作为参考
-            raw_fitness = factor_info.get("fitness", 0.0)
-
-            # 统一后的指标（全部来自同一个 validate_factor）
-            ic = unified["ic"]
-            ir = unified["ir"]
-            fitness = unified["fitness"]          # = validation_score / 100
-            validation_score = unified["validation_score"]
-            overall_passed = unified["overall_passed"]
-            turnover = unified["turnover"]
-            stability = unified["stability"]
-            full_validation = unified["validation"]
-
-            # 如果统一验证完全无结果（如 deep_implicit 的隐式因子），回退到算法自带数据
-            if validation_score == 0.0 and ic == 0.0 and ir == 0.0:
-                algo_validation = factor_info.get("validation", {})
-                ic = _safe_float(algo_validation.get("ic_validation", {}).get("ic", 0.0))
-                ir = _safe_float(algo_validation.get("ir_validation", {}).get("ir", 0.0))
-                fitness = _safe_float(raw_fitness)
-                validation_score = _safe_float(algo_validation.get("score", 0.0))
-                overall_passed = algo_validation.get("overall_passed", False)
-                full_validation = algo_validation
-
-            # 暂存到 generated_factors 表
-            existing = repo.get_by_expression(expression)
-            if existing:
-                existing.ic_value = _safe_float(ic)
-                existing.ir_value = _safe_float(ir)
-                existing.turnover_value = _safe_float(turnover) if turnover else None
-                existing.stability_score = _safe_float(stability) if stability else None
-                existing.validation_score = _safe_float(validation_score)
-                existing.is_valid = overall_passed
-                existing.generation_method = source
-                existing.complexity = str(complexity)
-                db.commit()
-                db.refresh(existing)
-                generated_id = existing.id
-            else:
-                gen_factor = GeneratedFactorModel(
+                # ---- 统一验证：用同一套标准重新打分 ----
+                unified = _unified_validate_factor(
                     expression=expression,
-                    generation_method=source,
-                    ic_value=_safe_float(ic),
-                    ir_value=_safe_float(ir),
-                    turnover_value=_safe_float(turnover) if turnover else None,
-                    stability_score=_safe_float(stability) if stability else None,
-                    validation_score=_safe_float(validation_score),
-                    is_valid=overall_passed,
-                    is_saved=False,
-                    complexity=str(complexity),
+                    factor_calculator=factor_calculator,
+                    data=data,
+                    return_values=return_values,
                 )
-                created = repo.create(gen_factor)
-                generated_id = created.id
 
-            discovered_factors.append({
-                "name": f"Mined_Factor_{i+1}",
-                "expression": expression,
-                "ic": _safe_float(ic),
-                "ir": _safe_float(ir),
-                "fitness": _safe_float(fitness),           # 统一验证后的 score/100
-                "raw_fitness": _safe_float(raw_fitness),   # 算法原始 fitness（参考）
-                "complexity": _safe_float(complexity),
-                "source": source,
-                "overall_passed": overall_passed,
-                "validation_score": _safe_float(validation_score),  # 统一验证分数
-                "generated_factor_id": generated_id,
-            })
-    except Exception as e:
-        logger.warning(f"保存挖掘结果到 generated_factors 表失败: {e}")
-        # 降级：即使暂存失败，仍然返回结果给前端（兼容旧逻辑）
-        for i, factor_info in enumerate(best_factors):
-            expression = factor_info["expression"]
-            source = factor_info.get("source", result.get("source", "unknown"))
-            complexity = factor_info.get("complexity", 0.0)
-            raw_fitness = factor_info.get("fitness", 0.0)
+                # 保留各算法原始 fitness 作为参考
+                raw_fitness = factor_info.get("fitness", 0.0)
 
-            # 降级时也尝试统一验证
-            unified = _unified_validate_factor(
-                expression=expression,
-                factor_calculator=factor_calculator,
-                data=data,
-                return_values=return_values,
-            )
-            ic = unified["ic"]
-            ir = unified["ir"]
-            fitness = unified["fitness"]
-            validation_score = unified["validation_score"]
-            overall_passed = unified["overall_passed"]
+                # 统一后的指标（全部来自同一个 validate_factor）
+                ic = unified["ic"]
+                ir = unified["ir"]
+                fitness = unified["fitness"]          # = validation_score / 100
+                validation_score = unified["validation_score"]
+                overall_passed = unified["overall_passed"]
+                turnover = unified["turnover"]
+                stability = unified["stability"]
+                _full_validation = unified["validation"]
 
-            if validation_score == 0.0 and ic == 0.0:
-                algo_validation = factor_info.get("validation", {})
-                ic = _safe_float(algo_validation.get("ic_validation", {}).get("ic", 0.0))
-                ir = _safe_float(algo_validation.get("ir_validation", {}).get("ir", 0.0))
-                fitness = _safe_float(raw_fitness)
-                validation_score = _safe_float(algo_validation.get("score", 0.0))
-                overall_passed = algo_validation.get("overall_passed", False)
+                # 如果统一验证完全无结果（如 deep_implicit 的隐式因子），回退到算法自带数据
+                if validation_score == 0.0 and ic == 0.0 and ir == 0.0:
+                    algo_validation = factor_info.get("validation", {})
+                    ic = _safe_float(algo_validation.get("ic_validation", {}).get("ic", 0.0))
+                    ir = _safe_float(algo_validation.get("ir_validation", {}).get("ir", 0.0))
+                    fitness = _safe_float(raw_fitness)
+                    validation_score = _safe_float(algo_validation.get("score", 0.0))
+                    overall_passed = algo_validation.get("overall_passed", False)
+                    _full_validation = algo_validation
 
-            discovered_factors.append({
-                "name": f"Mined_Factor_{i+1}",
-                "expression": expression,
-                "ic": _safe_float(ic),
-                "ir": _safe_float(ir),
-                "fitness": _safe_float(fitness),
-                "raw_fitness": _safe_float(raw_fitness),
-                "complexity": _safe_float(complexity),
-                "source": source,
-                "overall_passed": overall_passed,
-                "validation_score": _safe_float(validation_score),
-                "generated_factor_id": None,
-            })
-    finally:
-        db.close()
+                # 暂存到 generated_factors 表
+                existing = repo.get_by_expression(expression)
+                if existing:
+                    existing.ic_value = _safe_float(ic)
+                    existing.ir_value = _safe_float(ir)
+                    existing.turnover_value = _safe_float(turnover) if turnover else None
+                    existing.stability_score = _safe_float(stability) if stability else None
+                    existing.validation_score = _safe_float(validation_score)
+                    existing.is_valid = overall_passed
+                    existing.generation_method = source
+                    existing.complexity = str(complexity)
+                    db.commit()
+                    db.refresh(existing)
+                    generated_id = existing.id
+                else:
+                    gen_factor = GeneratedFactorModel(
+                        expression=expression,
+                        generation_method=source,
+                        ic_value=_safe_float(ic),
+                        ir_value=_safe_float(ir),
+                        turnover_value=_safe_float(turnover) if turnover else None,
+                        stability_score=_safe_float(stability) if stability else None,
+                        validation_score=_safe_float(validation_score),
+                        is_valid=overall_passed,
+                        is_saved=False,
+                        complexity=str(complexity),
+                    )
+                    created = repo.create(gen_factor)
+                    generated_id = created.id
+
+                discovered_factors.append({
+                    "name": f"Mined_Factor_{i+1}",
+                    "expression": expression,
+                    "ic": _safe_float(ic),
+                    "ir": _safe_float(ir),
+                    "fitness": _safe_float(fitness),           # 统一验证后的 score/100
+                    "raw_fitness": _safe_float(raw_fitness),   # 算法原始 fitness（参考）
+                    "complexity": _safe_float(complexity),
+                    "source": source,
+                    "overall_passed": overall_passed,
+                    "validation_score": _safe_float(validation_score),  # 统一验证分数
+                    "generated_factor_id": generated_id,
+                })
+        except Exception as e:
+            logger.warning(f"保存挖掘结果到 generated_factors 表失败: {e}")
+            # 降级：即使暂存失败，仍然返回结果给前端（兼容旧逻辑）
+            for i, factor_info in enumerate(best_factors):
+                expression = factor_info["expression"]
+                source = factor_info.get("source", result.get("source", "unknown"))
+                complexity = factor_info.get("complexity", 0.0)
+                raw_fitness = factor_info.get("fitness", 0.0)
+
+                # 降级时也尝试统一验证
+                unified = _unified_validate_factor(
+                    expression=expression,
+                    factor_calculator=factor_calculator,
+                    data=data,
+                    return_values=return_values,
+                )
+                ic = unified["ic"]
+                ir = unified["ir"]
+                fitness = unified["fitness"]
+                validation_score = unified["validation_score"]
+                overall_passed = unified["overall_passed"]
+
+                if validation_score == 0.0 and ic == 0.0:
+                    algo_validation = factor_info.get("validation", {})
+                    ic = _safe_float(algo_validation.get("ic_validation", {}).get("ic", 0.0))
+                    ir = _safe_float(algo_validation.get("ir_validation", {}).get("ir", 0.0))
+                    fitness = _safe_float(raw_fitness)
+                    validation_score = _safe_float(algo_validation.get("score", 0.0))
+                    overall_passed = algo_validation.get("overall_passed", False)
+
+                discovered_factors.append({
+                    "name": f"Mined_Factor_{i+1}",
+                    "expression": expression,
+                    "ic": _safe_float(ic),
+                    "ir": _safe_float(ir),
+                    "fitness": _safe_float(fitness),
+                    "raw_fitness": _safe_float(raw_fitness),
+                    "complexity": _safe_float(complexity),
+                    "source": source,
+                    "overall_passed": overall_passed,
+                    "validation_score": _safe_float(validation_score),
+                    "generated_factor_id": None,
+                })
 
     # Prefer fitness_history from progress callback (already normalized IC values),
     # fallback to logbook extraction (may contain raw multi-objective tuples).
@@ -1075,12 +1067,11 @@ async def get_mining_status(task_id: str):
         # 尝试从数据库获取started_at
         started_at = None
         try:
-            _db = get_db_session()
-            _repo = MiningTaskRepository(_db)
-            _rec = _repo.get_by_task_id(task_id)
-            if _rec and _rec.started_at:
-                started_at = _rec.started_at.isoformat()
-            _db.close()
+            with get_db() as _db:
+                _repo = MiningTaskRepository(_db)
+                _rec = _repo.get_by_task_id(task_id)
+                if _rec and _rec.started_at:
+                    started_at = _rec.started_at.isoformat()
         except Exception as e:
             logger.debug(f"获取任务启动时间失败: {e}")
 
@@ -1117,42 +1108,41 @@ async def get_mining_status(task_id: str):
 
     # 内存中没有，从数据库获取
     try:
-        db = get_db_session()
-        repo = MiningTaskRepository(db)
-        task_record = repo.get_by_task_id(task_id)
-        db.close()
+        with get_db() as db:
+            repo = MiningTaskRepository(db)
+            task_record = repo.get_by_task_id(task_id)
 
-        if not task_record:
-            raise HTTPException(status_code=404, detail="任务不存在")
+            if not task_record:
+                raise HTTPException(status_code=404, detail="任务不存在")
 
-        response_data = {
-            "task_id": task_id,
-            "status": task_record.status,
-            "progress": task_record.progress or 0,
-            "error": task_record.error,
-            "algorithm": task_record.algorithm,
-            "started_at": task_record.started_at.isoformat() if task_record.started_at else None,
-        }
+            response_data = {
+                "task_id": task_id,
+                "status": task_record.status,
+                "progress": task_record.progress or 0,
+                "error": task_record.error,
+                "algorithm": task_record.algorithm,
+                "started_at": task_record.started_at.isoformat() if task_record.started_at else None,
+            }
 
-        if task_record.status == "completed" and task_record.result:
-            result = task_record.result
-            response_data["current_generation"] = result.get("generations", task_record.current_generation or 0)
-            response_data["total_generations"] = result.get("generations", task_record.total_generations or 0)
-            response_data["best_fitness"] = result.get("best_fitness", task_record.best_fitness or 0)
-            response_data["avg_fitness"] = result.get("avg_fitness", task_record.avg_fitness or 0)
-            response_data["fitness_history"] = result.get("fitness_history", task_record.fitness_history or {"best": [], "average": []})
-            response_data["algorithm"] = result.get("algorithm", task_record.algorithm)
-        else:
-            response_data["current_generation"] = task_record.current_generation or 0
-            response_data["total_generations"] = task_record.total_generations or 0
-            response_data["best_fitness"] = task_record.best_fitness or 0
-            response_data["avg_fitness"] = task_record.avg_fitness or 0
-            response_data["fitness_history"] = task_record.fitness_history or {"best": [], "average": []}
+            if task_record.status == "completed" and task_record.result:
+                result = task_record.result
+                response_data["current_generation"] = result.get("generations", task_record.current_generation or 0)
+                response_data["total_generations"] = result.get("generations", task_record.total_generations or 0)
+                response_data["best_fitness"] = result.get("best_fitness", task_record.best_fitness or 0)
+                response_data["avg_fitness"] = result.get("avg_fitness", task_record.avg_fitness or 0)
+                response_data["fitness_history"] = result.get("fitness_history", task_record.fitness_history or {"best": [], "average": []})
+                response_data["algorithm"] = result.get("algorithm", task_record.algorithm)
+            else:
+                response_data["current_generation"] = task_record.current_generation or 0
+                response_data["total_generations"] = task_record.total_generations or 0
+                response_data["best_fitness"] = task_record.best_fitness or 0
+                response_data["avg_fitness"] = task_record.avg_fitness or 0
+                response_data["fitness_history"] = task_record.fitness_history or {"best": [], "average": []}
 
-        return {
-            "success": True,
-            "data": response_data
-        }
+            return {
+                "success": True,
+                "data": response_data
+            }
     except HTTPException:
         raise
     except Exception as e:
@@ -1171,12 +1161,11 @@ async def get_mining_results(task_id: str):
         result_data = task["result"]
         # 补充process_info
         try:
-            _db = get_db_session()
-            _repo = MiningTaskRepository(_db)
-            _rec = _repo.get_by_task_id(task_id)
-            if _rec and _rec.process_info:
-                result_data["process_info"] = _rec.process_info
-            _db.close()
+            with get_db() as _db:
+                _repo = MiningTaskRepository(_db)
+                _rec = _repo.get_by_task_id(task_id)
+                if _rec and _rec.process_info:
+                    result_data["process_info"] = _rec.process_info
         except Exception as e:
             logger.debug(f"获取任务过程信息失败: {e}")
         return {
@@ -1186,28 +1175,27 @@ async def get_mining_results(task_id: str):
 
     # 内存中没有，从数据库获取
     try:
-        db = get_db_session()
-        repo = MiningTaskRepository(db)
-        task_record = repo.get_by_task_id(task_id)
-        db.close()
+        with get_db() as db:
+            repo = MiningTaskRepository(db)
+            task_record = repo.get_by_task_id(task_id)
 
-        if not task_record:
-            raise HTTPException(status_code=404, detail="任务不存在")
+            if not task_record:
+                raise HTTPException(status_code=404, detail="任务不存在")
 
-        if task_record.status != "completed":
-            raise HTTPException(status_code=400, detail=f"任务尚未完成，当前状态: {task_record.status}")
+            if task_record.status != "completed":
+                raise HTTPException(status_code=400, detail=f"任务尚未完成，当前状态: {task_record.status}")
 
-        if not task_record.result:
-            raise HTTPException(status_code=404, detail="任务结果不存在")
+            if not task_record.result:
+                raise HTTPException(status_code=404, detail="任务结果不存在")
 
-        result_data = task_record.result
-        if task_record.process_info:
-            result_data["process_info"] = task_record.process_info
+            result_data = task_record.result
+            if task_record.process_info:
+                result_data["process_info"] = task_record.process_info
 
-        return {
-            "success": True,
-            "data": result_data
-        }
+            return {
+                "success": True,
+                "data": result_data
+            }
     except HTTPException:
         raise
     except Exception as e:
@@ -1239,44 +1227,43 @@ async def cancel_mining_task(task_id: str):
 async def get_active_tasks():
     """获取当前活跃的挖掘任务（pending/running），用于页面刷新后恢复状态"""
     try:
-        db = get_db_session()
-        repo = MiningTaskRepository(db)
+        with get_db() as db:
+            repo = MiningTaskRepository(db)
 
-        # 先检查内存中的活跃任务
-        active_in_memory = []
-        # 同时获取数据库记录以补充started_at等信息
-        db_tasks_map = {}
-        for task_record in (repo.get_active_tasks() or []):
-            db_tasks_map[task_record.task_id] = task_record
+            # 先检查内存中的活跃任务
+            active_in_memory = []
+            # 同时获取数据库记录以补充started_at等信息
+            db_tasks_map = {}
+            for task_record in (repo.get_active_tasks() or []):
+                db_tasks_map[task_record.task_id] = task_record
 
-        for tid, task in mining_tasks.items():
-            if task.get("status") in ("pending", "running"):
-                task_info = {
-                    "task_id": tid,
-                    "status": task["status"],
-                    "progress": task.get("progress", 0),
-                    "algorithm": task.get("algorithm", "genetic"),
-                    "current_generation": task.get("current_generation", 0),
-                    "total_generations": task.get("total_generations", 0),
-                    "best_fitness": task.get("best_fitness", 0),
-                    "avg_fitness": task.get("avg_fitness", 0),
-                    "fitness_history": task.get("fitness_history", {"best": [], "average": []}),
-                }
-                # 补充started_at
-                db_rec = db_tasks_map.get(tid)
-                if db_rec and db_rec.started_at:
-                    task_info["started_at"] = db_rec.started_at.isoformat()
-                active_in_memory.append(task_info)
+            for tid, task in mining_tasks.items():
+                if task.get("status") in ("pending", "running"):
+                    task_info = {
+                        "task_id": tid,
+                        "status": task["status"],
+                        "progress": task.get("progress", 0),
+                        "algorithm": task.get("algorithm", "genetic"),
+                        "current_generation": task.get("current_generation", 0),
+                        "total_generations": task.get("total_generations", 0),
+                        "best_fitness": task.get("best_fitness", 0),
+                        "avg_fitness": task.get("avg_fitness", 0),
+                        "fitness_history": task.get("fitness_history", {"best": [], "average": []}),
+                    }
+                    # 补充started_at
+                    db_rec = db_tasks_map.get(tid)
+                    if db_rec and db_rec.started_at:
+                        task_info["started_at"] = db_rec.started_at.isoformat()
+                    active_in_memory.append(task_info)
 
-        # 再检查数据库中的活跃任务（服务重启后内存中没有）
-        db_active = db_tasks_map.values()
-        db.close()
+            # 再检查数据库中的活跃任务（服务重启后内存中没有）
+            db_active = db_tasks_map.values()
 
-        # 合并去重
-        memory_task_ids = {t["task_id"] for t in active_in_memory}
-        for task_record in db_active:
-            if task_record.task_id not in memory_task_ids:
-                active_in_memory.append(repo.to_dict(task_record))
+            # 合并去重
+            memory_task_ids = {t["task_id"] for t in active_in_memory}
+            for task_record in db_active:
+                if task_record.task_id not in memory_task_ids:
+                    active_in_memory.append(repo.to_dict(task_record))
 
         return {
             "success": True,
@@ -1295,24 +1282,23 @@ async def get_mining_history(limit: int = Query(default=20, ge=1, le=100),
                               offset: int = Query(default=0, ge=0)):
     """获取挖掘历史记录（分页）"""
     try:
-        db = get_db_session()
-        repo = MiningTaskRepository(db)
+        with get_db() as db:
+            repo = MiningTaskRepository(db)
 
-        total = repo.get_history_count()
-        tasks = repo.get_history(limit=limit, offset=offset)
-        db.close()
+            total = repo.get_history_count()
+            tasks = repo.get_history(limit=limit, offset=offset)
 
-        items = [repo.to_summary_dict(t) for t in tasks]
+            items = [repo.to_summary_dict(t) for t in tasks]
 
-        return {
-            "success": True,
-            "data": {
-                "items": items,
-                "total": total,
-                "limit": limit,
-                "offset": offset,
+            return {
+                "success": True,
+                "data": {
+                    "items": items,
+                    "total": total,
+                    "limit": limit,
+                    "offset": offset,
+                }
             }
-        }
     except Exception as e:
         logger.error(f"获取挖掘历史失败: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -1322,18 +1308,17 @@ async def get_mining_history(limit: int = Query(default=20, ge=1, le=100),
 async def get_mining_history_detail(task_id: str):
     """获取挖掘历史详情"""
     try:
-        db = get_db_session()
-        repo = MiningTaskRepository(db)
-        task_record = repo.get_by_task_id(task_id)
-        db.close()
+        with get_db() as db:
+            repo = MiningTaskRepository(db)
+            task_record = repo.get_by_task_id(task_id)
 
-        if not task_record:
-            raise HTTPException(status_code=404, detail="任务不存在")
+            if not task_record:
+                raise HTTPException(status_code=404, detail="任务不存在")
 
-        return {
-            "success": True,
-            "data": repo.to_dict(task_record)
-        }
+            return {
+                "success": True,
+                "data": repo.to_dict(task_record)
+            }
     except HTTPException:
         raise
     except Exception as e:
@@ -1345,21 +1330,19 @@ async def get_mining_history_detail(task_id: str):
 async def delete_mining_history(task_id: str):
     """删除挖掘历史记录"""
     try:
-        db = get_db_session()
-        repo = MiningTaskRepository(db)
-        task_record = repo.get_by_task_id(task_id)
+        with get_db() as db:
+            repo = MiningTaskRepository(db)
+            task_record = repo.get_by_task_id(task_id)
 
-        if not task_record:
-            db.close()
-            raise HTTPException(status_code=404, detail="任务不存在")
+            if not task_record:
+                raise HTTPException(status_code=404, detail="任务不存在")
 
-        repo.delete(task_record.id)
-        db.close()
+            repo.delete(task_record.id)
 
-        return {
-            "success": True,
-            "message": "删除成功"
-        }
+            return {
+                "success": True,
+                "message": "删除成功"
+            }
     except HTTPException:
         raise
     except Exception as e:

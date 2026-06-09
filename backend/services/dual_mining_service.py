@@ -10,9 +10,7 @@
 """
 import logging
 from typing import List, Dict, Optional
-import time
 import pandas as pd
-import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +24,6 @@ from backend.services.pysr_factor_mining_service import (
     create_pysr_mining_service,
     PYSR_AVAILABLE,
 )
-from backend.services.factor_validation_service import factor_validation_service
 
 # 新算法模块（可选依赖）
 try:

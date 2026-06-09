@@ -6,10 +6,9 @@ import logging
 import numpy as np
 import pandas as pd
 import xgboost as xgb
-from typing import Dict, List, Optional, Tuple, Any
+from typing import Dict, List, Optional, Any
 from pathlib import Path
 from datetime import datetime
-import json
 
 # 配置日志
 logger = logging.getLogger(__name__)
@@ -23,7 +22,7 @@ except ImportError:
 from sklearn.preprocessing import StandardScaler
 
 from backend.core.settings import settings
-from backend.core.database import get_db_session
+from backend.core.database import get_db
 from backend.repositories.factor_repository import AnalysisCacheRepository
 from backend.models.factor import AnalysisCacheModel
 from backend.services.factor_service import factor_service
@@ -32,7 +31,6 @@ from backend.services.data_service import data_service
 from backend.services.factor_preprocessing_pipeline import (
     FactorPreprocessingPipeline,
     PreprocessingConfig,
-    default_pipeline,
 )
 from backend.services.lookahead_bias_detector import (
     lookahead_bias_detector,
@@ -194,10 +192,9 @@ class AnalysisService:
         """计算因子版本哈希（基于因子定义的code字段）"""
         try:
             from backend.repositories.factor_repository import FactorRepository
-            from backend.core.database import get_db_session
+            from backend.core.database import get_db
 
-            db = get_db_session()
-            try:
+            with get_db() as db:
                 repo = FactorRepository(db)
                 codes = []
                 for name in factor_names:
@@ -207,8 +204,6 @@ class AnalysisService:
 
                 if codes:
                     return hashlib.md5("|".join(sorted(codes)).encode()).hexdigest()[:16]
-            finally:
-                db.close()
         except Exception as e:
             logger.debug(f"计算因子版本哈希失败: {e}")
         return ""
@@ -243,14 +238,11 @@ class AnalysisService:
 
         # 缓存检查必须在数据获取之前，避免缓存命中时浪费昂贵的计算
         if use_cache:
-            db = get_db_session()
-            try:
+            with get_db() as db:
                 repo = AnalysisCacheRepository(db)
                 cached = repo.get_by_key(cache_key)
                 if cached:
                     return self._deserialize_from_cache(cached.result_data)
-            finally:
-                db.close()
 
         factor_data = factor_service.calculate_factors_for_stocks(
             stock_codes, factor_names, start_date, end_date, rolling_window
@@ -317,8 +309,7 @@ class AnalysisService:
             results["shap"] = {"error": "SHAP not available"}
 
         if use_cache:
-            db = get_db_session()
-            try:
+            with get_db() as db:
                 repo = AnalysisCacheRepository(db)
                 serialized_results = self._serialize_for_cache(results)
                 cache = AnalysisCacheModel(
@@ -330,8 +321,6 @@ class AnalysisService:
                     result_data=serialized_results,
                 )
                 repo.create(cache)
-            finally:
-                db.close()
 
         return results
 
@@ -688,7 +677,7 @@ class AnalysisService:
                 continue
 
             # 使用因子日期范围构建pricing_df（确保forward returns可计算）
-            factor_dates_sorted = sorted(factor_dates)
+            _factor_dates_sorted = sorted(factor_dates)
 
             # 构建完整的pricing_df（包含因子日期+额外未来日期用于计算forward returns）
             all_price_dates = set()
@@ -831,7 +820,7 @@ class AnalysisService:
                 if has_multiple_stocks and len(codes) >= 3:
                     # 多股票模式：使用横截面检测（更准确）
                     all_factor_rows = []
-                    all_return_rows = []
+                    _all_return_rows = []
                     for stock_code in codes:
                         df = factor_data.get(stock_code)
                         if df is None or factor_name not in df.columns:
@@ -1130,7 +1119,7 @@ class AnalysisService:
         if not SHAP_AVAILABLE:
             return {"error": "SHAP library not installed"}
 
-        logger.debug(f"[SHAP] Starting SHAP analysis")
+        logger.debug("[SHAP] Starting SHAP analysis")
         logger.debug(f"[SHAP] factor_names: {factor_names}")
         logger.debug(f"[SHAP] Number of stocks in factor_data: {len(factor_data)}")
 
@@ -1152,7 +1141,7 @@ class AnalysisService:
             logger.debug(f"[SHAP]   Available feature_cols: {feature_cols}")
 
             if not feature_cols:
-                logger.debug(f"[SHAP]   No feature columns found, skipping")
+                logger.debug("[SHAP]   No feature columns found, skipping")
                 continue
 
             X = df[feature_cols].dropna()
@@ -1173,7 +1162,7 @@ class AnalysisService:
                 y_list.append(y_valid)
                 logger.debug(f"[SHAP]   Added {len(X_valid)} valid samples")
             else:
-                logger.debug(f"[SHAP]   No valid samples after NaN removal")
+                logger.debug("[SHAP]   No valid samples after NaN removal")
 
         logger.debug(f"[SHAP] Total X_list length: {len(X_list)}")
 
@@ -1231,7 +1220,7 @@ class AnalysisService:
             "importance": np.abs(shap_values).mean(axis=0),
         }).sort_values("importance", ascending=False)
 
-        logger.debug(f"[SHAP] SHAP analysis completed successfully")
+        logger.debug("[SHAP] SHAP analysis completed successfully")
 
         return {
             "feature_importance": feature_importance.to_dict("records"),

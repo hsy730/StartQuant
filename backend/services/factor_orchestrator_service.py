@@ -21,7 +21,6 @@ from dataclasses import dataclass, field
 from enum import Enum
 from datetime import datetime
 import pandas as pd
-import numpy as np
 
 logger = logging.getLogger(__name__)
 

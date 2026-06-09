@@ -1,5 +1,6 @@
-# NOTE: Alpha101因子公式中的除零保护使用 .clip(lower=1e-10) 替代 +1e-10 hack，
-# 避免当分母接近零时产生极大值。
+# NOTE: Alpha101因子公式中的除零保护统一使用 .replace(0, np.nan)，
+# 将不可计算值转为NaN而非极大值，与项目规范一致。
+# np 在因子表达式执行上下文中可用。
 from typing import Dict, List
 
 
@@ -13,7 +14,7 @@ def get_alpha101_factors() -> Dict[str, List[Dict]]:
             },
             {
                 "name": "alpha002",
-                "code": "-1 * CORR(DELTA(np.log(volume), 2), (close - open) / open, 6)",
+                "code": "-1 * CORR(DELTA(np.log(volume), 2), (close - open) / open.replace(0, np.nan), 6)",
                 "description": "Alpha#2: 量变化与日内收益率的负相关",
             },
             {
@@ -43,12 +44,12 @@ def get_alpha101_factors() -> Dict[str, List[Dict]]:
             },
             {
                 "name": "alpha033",
-                "code": "-1 * (1 - open / close)",
+                "code": "-1 * (1 - open / close.replace(0, np.nan))",
                 "description": "Alpha#33: 日内阴线强度反转",
             },
             {
                 "name": "alpha034",
-                "code": "(1 - STD(RETURNS(close), 2) / STD(RETURNS(close), 5)) + (1 - DELTA(close, 1))",
+                "code": "(1 - STD(RETURNS(close), 2) / STD(RETURNS(close), 5).replace(0, np.nan)) + (1 - DELTA(close, 1))",
                 "description": "Alpha#34: 波动率比率与价格动量组合",
             },
             {
@@ -63,7 +64,7 @@ def get_alpha101_factors() -> Dict[str, List[Dict]]:
             },
             {
                 "name": "alpha050",
-                "code": "-1 * TSRANK(DELTA(close, 3) / close, 3)",
+                "code": "-1 * TSRANK(DELTA(close, 3) / close.replace(0, np.nan), 3)",
                 "description": "Alpha#50: 3日收益率时序排名反转",
             },
             {
@@ -73,7 +74,7 @@ def get_alpha101_factors() -> Dict[str, List[Dict]]:
             },
             {
                 "name": "alpha071",
-                "code": "(close - SMA(close, timeperiod=24)) / SMA(close, timeperiod=24) * 100",
+                "code": "(close - SMA(close, timeperiod=24)) / SMA(close, timeperiod=24).replace(0, np.nan) * 100",
                 "description": "Alpha#71: 价格偏离24日均线百分比",
             },
             {
@@ -83,7 +84,7 @@ def get_alpha101_factors() -> Dict[str, List[Dict]]:
             },
             {
                 "name": "alpha088",
-                "code": "(close - DELTA(close, 1)) / close",
+                "code": "(close - DELTA(close, 1)) / close.replace(0, np.nan)",
                 "description": "Alpha#88: 昨日收盘占今日收盘比",
             },
         ],
@@ -140,12 +141,12 @@ def get_alpha101_factors() -> Dict[str, List[Dict]]:
             },
             {
                 "name": "alpha053",
-                "code": "-1 * DELTA(((close - low - (high - close)) / (close - low).clip(lower=1e-10)) * volume, 1)",
+                "code": "-1 * DELTA(((close - low - (high - close)) / (close - low).replace(0, np.nan)) * volume, 1)",
                 "description": "Alpha#53: 日内价格位置加权成交量变化",
             },
             {
                 "name": "alpha055",
-                "code": "-1 * CORR(DELTA(close, 1) / close, volume, 5)",
+                "code": "-1 * CORR(DELTA(close, 1) / close.replace(0, np.nan), volume, 5)",
                 "description": "Alpha#55: 日收益率与成交量负相关",
             },
             {
@@ -217,19 +218,19 @@ def get_alpha101_factors() -> Dict[str, List[Dict]]:
             },
             {
                 "name": "alpha095",
-                "code": "STD(RETURNS(close), 20) / STD(RETURNS(close), 5)",
+                "code": "STD(RETURNS(close), 20) / STD(RETURNS(close), 5).replace(0, np.nan)",
                 "description": "Alpha#95: 长短期波动率比率",
             },
         ],
         "Alpha101-趋势强度": [
             {
                 "name": "alpha017",
-                "code": "-1 * TSRANK(close, 10) * DELTA(DELTA(close, 1), 1) * TSRANK(volume / SMA(close * volume, timeperiod=20), 5)",
+                "code": "-1 * TSRANK(close, 10) * DELTA(DELTA(close, 1), 1) * TSRANK(volume / SMA(close * volume, timeperiod=20).replace(0, np.nan), 5)",
                 "description": "Alpha#17: 价格时序排名×加速度×量比三因子",
             },
             {
                 "name": "alpha021",
-                "code": "IF(AVE(close, 8) + STD(close, 8) < AVE(close, 2), -1, IF(AVE(close, 2) < AVE(close, 8) - STD(close, 8), 1, IF(volume / SMA(close * volume, timeperiod=20) >= 1, 1, -1)))",
+                "code": "IF(AVE(close, 8) + STD(close, 8) < AVE(close, 2), -1, IF(AVE(close, 2) < AVE(close, 8) - STD(close, 8), 1, IF(volume / SMA(close * volume, timeperiod=20).replace(0, np.nan) >= 1, 1, -1)))",
                 "description": "Alpha#21: 均线布林带+量比综合趋势信号",
             },
             {
@@ -244,7 +245,7 @@ def get_alpha101_factors() -> Dict[str, List[Dict]]:
             },
             {
                 "name": "alpha030",
-                "code": "(1.0 - (SIGN(close - REF(close, 1)) + SIGN(REF(close, 1) - REF(close, 2)) + SIGN(REF(close, 2) - REF(close, 3)))) * SUM(volume, 5) / SUM(volume, 20)",
+                "code": "(1.0 - (SIGN(close - REF(close, 1)) + SIGN(REF(close, 1) - REF(close, 2)) + SIGN(REF(close, 2) - REF(close, 3)))) * SUM(volume, 5) / SUM(volume, 20).replace(0, np.nan)",
                 "description": "Alpha#30: 连续方向反转×短期量比",
             },
             {
@@ -264,7 +265,7 @@ def get_alpha101_factors() -> Dict[str, List[Dict]]:
             },
             {
                 "name": "alpha043",
-                "code": "TSRANK(volume / SMA(close * volume, timeperiod=20), 20) * TSRANK(-1 * DELTA(close, 7), 8)",
+                "code": "TSRANK(volume / SMA(close * volume, timeperiod=20).replace(0, np.nan), 20) * TSRANK(-1 * DELTA(close, 7), 8)",
                 "description": "Alpha#43: 量比时序排名×周度动量反转排名",
             },
             {
@@ -279,24 +280,24 @@ def get_alpha101_factors() -> Dict[str, List[Dict]]:
             },
             {
                 "name": "alpha072",
-                "code": "(AVE(close, 12) - AVE(close, 26)) / AVE(close, 26)",
+                "code": "(AVE(close, 12) - AVE(close, 26)) / AVE(close, 26).replace(0, np.nan)",
                 "description": "Alpha#72: 12/26日均线偏离度（类MACD）",
             },
             {
                 "name": "alpha073",
-                "code": "TSRANK(DELTA(close, 1), 20) / TSRANK(volume, 20)",
+                "code": "TSRANK(DELTA(close, 1), 20) / TSRANK(volume, 20).replace(0, np.nan)",
                 "description": "Alpha#73: 价格变化排名与成交量排名之比",
             },
         ],
         "Alpha101-综合信号": [
             {
                 "name": "alpha024",
-                "code": "IF(np.abs(DELTA(AVE(close, 100), 100) / REF(close, 100).clip(lower=1e-10)) <= 0.05, -1 * (close - LLV(close, 100)), -1 * DELTA(close, 3))",
+                "code": "IF(np.abs(DELTA(AVE(close, 100), 100) / REF(close, 100).replace(0, np.nan)) <= 0.05, -1 * (close - LLV(close, 100)), -1 * DELTA(close, 3))",
                 "description": "Alpha#24: 横盘时用价格位置，趋势时用短期动量",
             },
             {
                 "name": "alpha054",
-                "code": "-1 * (low - close) ** 2 * volume / ((low - high) ** 2).clip(lower=1e-10)",
+                "code": "-1 * (low - close) ** 2 * volume / ((low - high) ** 2).replace(0, np.nan)",
                 "description": "Alpha#54: 低价偏离度加权成交量反转",
             },
             {
@@ -331,7 +332,7 @@ def get_alpha101_factors() -> Dict[str, List[Dict]]:
             },
             {
                 "name": "alpha101",
-                "code": "(close - open) / (high - low).clip(lower=1e-10) * volume",
+                "code": "(close - open) / (high - low).replace(0, np.nan) * volume",
                 "description": "Alpha#101: 日内方向强度加权成交量",
             },
         ],

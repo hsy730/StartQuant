@@ -4,17 +4,16 @@
 import logging
 import pandas as pd
 import numpy as np
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List
 from scipy import stats
 from statsmodels.tsa.stattools import adfuller
 
 from backend.utils.returns import calculate_future_returns
 from backend.utils.safe_math import safe_divide, safe_ir
-from backend.services.analysis_service import AnalysisService
 from backend.services.data_service import data_service
 from backend.services.factor_service import factor_service
 from backend.repositories.factor_repository import FactorRepository
-from backend.core.database import get_db_session
+from backend.core.database import get_db
 
 logger = logging.getLogger(__name__)
 
@@ -379,10 +378,9 @@ class FactorStabilityService:
                 raise ValueError(f"稳定性检验至少需要3只股票，当前{len(stock_codes)}只")
 
             # 2. 获取因子定义
-            db = get_db_session()
-            repo = FactorRepository(db)
-            factor = repo.get_by_name(factor_name)
-            db.close()
+            with get_db() as db:
+                repo = FactorRepository(db)
+                factor = repo.get_by_name(factor_name)
 
             if not factor:
                 raise ValueError(f"因子 '{factor_name}' 不存在")
@@ -498,7 +496,7 @@ class FactorStabilityService:
 
             # 横截面统计量的时间序列（均值和标准差）
             cs_mean = cross_section_panel.mean(axis=1)
-            cs_std = cross_section_panel.std(axis=1)
+            _cs_std = cross_section_panel.std(axis=1)
             combined_factor = cs_mean.dropna()
 
             # 6. 执行多维度稳定性分析

@@ -1,9 +1,7 @@
 """
 等权重策略 - 等权配置所有股票
 """
-from typing import Dict
 import pandas as pd
-import numpy as np
 from .base_strategy import BaseStrategy
 
 

@@ -328,7 +328,7 @@ class SmartPreprocessingDetector:
 
         # ==================== 2️⃣ 去极值强度（n_sigma）====================
         base_board_config = self._board_patterns.get(chars.market_board, {})
-        volatility_factor = base_board_config.get("volatility_factor", 1.0)
+        _volatility_factor = base_board_config.get("volatility_factor", 1.0)
         base_n_sigma = base_board_config.get("default_n_sigma", 3.0)
 
         # 根据波动性和用户偏好调整
@@ -362,7 +362,8 @@ class SmartPreprocessingDetector:
             # 市值差异大 → 必须中性化
             config["enable_market_cap_neutralization"] = True
             confidence_scores.append(0.95)
-            reasoning_parts.append(f"市值差异显著(CV={chars.market_cap_std/chars.avg_market_cap:.2f})，启用市值中性化")
+            cv_value = safe_divide(float(chars.market_cap_std), float(chars.avg_market_cap), default=0.0)
+            reasoning_parts.append(f"市值差异显著(CV={cv_value:.2f})，启用市值中性化")
         else:
             config["enable_market_cap_neutralization"] = True  # 默认开启
             confidence_scores.append(0.75)
@@ -444,34 +445,34 @@ class SmartPreprocessingDetector:
         config = recommendation.config_dict
         
         lines = [
-            f"# 🤖 智能预处理参数推荐报告",
-            f"",
-            f"## 📊 数据概况",
+            "# 🤖 智能预处理参数推荐报告",
+            "",
+            "## 📊 数据概况",
             f"- **股票数量**: {chars.n_stocks} 只",
             f"- **时间跨度**: {chars.n_dates} 个交易日",
             f"- **总样本量**: {chars.total_samples:,}",
             f"- **市场板块**: {self._get_board_name(chars.market_board)}",
             f"- **平均市值**: {chars.avg_market_cap/1e8:.1f} 亿",
             f"- **因子波动率**: {chars.factor_volatility:.4f}",
-            f"",
+            "",
             f"## 🎯 推荐配置 (置信度: {recommendation.confidence*100:.0f}%)",
-            f"",
-            f"| 参数 | 推荐值 | 说明 |",
-            f"|------|--------|------|",
+            "",
+            "| 参数 | 推荐值 | 说明 |",
+            "|------|--------|------|",
             f"| 去极值方法 | **{config.get('winsorize_method', 'mad').upper()}** | {'稳健抗异常值' if config.get('winsorize_method') == 'mad' else '适应非正态'} |",
             f"| 去极值强度 | **{config.get('winsorize_n_sigma', 3.0):.2f}σ** | 基于{self._get_board_name(chars.market_board)}特性调整 |",
             f"| 市值中性化 | **{'✅ 启用' if config.get('enable_market_cap_neutralization') else '❌ 关闭'}** | {'市值差异大' if config.get('enable_market_cap_neutralization') else '-'} |",
             f"| 行业中性化 | **{'✅ 启用' if config.get('enable_industry_neutralization') else '❌ 关闭'}** | {f'{chars.n_industries}个行业' if config.get('enable_industry_neutralization') else '样本不足'} |",
             f"| 标准化方法 | **{config.get('standardize_method', 'zscore').upper()}** | {'抗异常值' if config.get('standardize_method') == 'rank' else '保持线性'} |",
-            f"",
-            f"## 💡 推荐理由",
+            "",
+            "## 💡 推荐理由",
             f"{recommendation.reasoning}",
         ]
         
         if recommendation.warnings:
             lines.extend([
-                f"",
-                f"## ⚠️ 注意事项",
+                "",
+                "## ⚠️ 注意事项",
             ])
             for warning in recommendation.warnings:
                 lines.append(f"- {warning}")

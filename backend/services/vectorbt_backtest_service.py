@@ -5,7 +5,6 @@
 import pandas as pd
 import numpy as np
 from typing import Dict, List, Optional, Tuple
-from datetime import datetime
 import logging
 import traceback
 import gc
@@ -503,7 +502,7 @@ class VectorBTBacktestService:
             raise ValueError("净值曲线拼接结果为空")
 
         # 从拼接净值计算收益率
-        returns = equity_curve.pct_change().dropna()
+        returns = equity_curve.pct_change().replace([np.inf, -np.inf], np.nan).dropna()
 
         # 拼接分层收益（按时间索引裁剪warmup区，而非按位置）
         quantile_returns = {}
@@ -545,6 +544,11 @@ class VectorBTBacktestService:
             if "Entry Timestamp" in trades_df.columns and "Exit Timestamp" in trades_df.columns:
                 trades_df = trades_df.drop_duplicates(subset=["Entry Timestamp", "Exit Timestamp"])
 
+        # 释放分块中的Portfolio对象，避免内存积累
+        for cr in chunk_results:
+            cr.pop("pf", None)
+        gc.collect()
+
         # 指标计算（委托risk_metrics统一入口）
         n_bars = len(returns)
         returns_series = pd.Series(returns) if not isinstance(returns, pd.Series) else returns
@@ -577,7 +581,7 @@ class VectorBTBacktestService:
 
         logger.info(
             f"✅ 分块回测完成: {len(chunk_results)} 块 → "
-            f"净值曲线 {len(equity_curve)} bars, 年化收益 {annual_return:.2%}"
+            + (f"净值曲线 {len(equity_curve)} bars, 年化收益 {annual_return:.2%}" if annual_return is not None else f"净值曲线 {len(equity_curve)} bars, 年化收益 N/A")
         )
 
         return {
@@ -939,7 +943,7 @@ class VectorBTBacktestService:
         price_df.index = pd.to_datetime(price_df.index)
 
         # 1. 计算收益率
-        returns_df = price_df.pct_change()
+        _returns_df = price_df.pct_change()
 
         # 2. 向量化选择股票（替代逐日循环，性能提升数十倍）
         ranks = factor_df.rank(pct=True, axis=1)

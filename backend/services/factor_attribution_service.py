@@ -4,8 +4,8 @@
 import logging
 import numpy as np
 import pandas as pd
-from typing import Dict, List, Optional, Any
-from scipy.stats import pearsonr, ttest_1samp
+from typing import Dict, Optional, Any
+from scipy.stats import ttest_1samp
 import akshare as ak
 
 from backend.services.risk_metrics import calculate_sharpe, calculate_volatility

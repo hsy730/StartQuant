@@ -5,7 +5,6 @@ import logging
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from typing import Optional, List
 from backend.services.data_service import data_service
 from backend.utils.serialization import sanitize_dict
 

@@ -236,7 +236,7 @@ class DeepFactorMiningService:
             raise ImportError("PyTorch 未安装，请运行: pip install torch")
 
         self.base_factor_codes = base_factors
-        self.data = data
+        self.data = data.copy() if data is not None else None
         self.return_column = return_column
         self.factor_calculator = factor_calculator
         self.max_eval_stocks = max_eval_stocks
@@ -258,7 +258,7 @@ class DeepFactorMiningService:
         self.early_stopping_patience = early_stopping_patience
         self.sparsity_coeff = sparsity_coeff
 
-        self.return_values = data[return_column] if return_column in data.columns else None
+        self.return_values = data[return_column].copy() if data is not None and return_column in data.columns else None
 
         # 股票池
         self.stock_codes: List[str] = []
@@ -286,6 +286,23 @@ class DeepFactorMiningService:
     # ------------------------------------------------------------------
     # 股票池设置
     # ------------------------------------------------------------------
+
+    def cleanup(self):
+        """释放GPU模型和张量资源"""
+        try:
+            import torch
+            if hasattr(self, '_trained_model') and self._trained_model is not None:
+                del self._trained_model
+                self._trained_model = None
+            if hasattr(self, 'data') and self.data is not None:
+                # Don't delete self.data as it may be shared, just remove reference
+                self.data = None
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except ImportError:
+            pass
+        except Exception as e:
+            logger.debug(f"GPU cleanup error: {e}")
 
     def set_stock_pool(self, stock_codes: List[str], start_date: str, end_date: str):
         """设置股票池，用于横截面 IC 评估"""
@@ -657,24 +674,30 @@ class DeepFactorMiningService:
 
         n_samples = len(X_tensor) - self.seq_length + 1
         if n_samples > 0:
-            # 批量构建滑动窗口，替代逐样本循环推理
-            windows = torch.stack([
-                X_tensor[start: start + self.seq_length]
-                for start in range(n_samples)
-            ])  # (n_samples, seq_length, n_features)
-            # 分块推理，避免单次前向传播显存溢出
+            # 分块构建滑动窗口并推理，避免一次性创建所有窗口导致GPU OOM
             chunk_size = 256
+            all_factors = []
             with torch.no_grad():
-                for i in range(0, n_samples, chunk_size):
-                    chunk = windows[i:i + chunk_size]
-                    _, latent = model(chunk)
-                    all_factors.extend(latent[:, -1, :].cpu().numpy().tolist())
+                for chunk_start in range(0, n_samples, chunk_size):
+                    chunk_end = min(chunk_start + chunk_size, n_samples)
+                    chunk_windows = torch.stack([
+                        X_tensor[start: start + self.seq_length]
+                        for start in range(chunk_start, chunk_end)
+                    ])
+                    _, chunk_latent = self._trained_model(chunk_windows.to(self.device))
+                    all_factors.append(chunk_latent[:, -1, :].cpu())
+                    del chunk_windows
+            if all_factors:
+                factor_array_chunk = torch.cat(all_factors, dim=0).numpy()
+                all_factors = [factor_array_chunk]
+            else:
+                all_factors = []
 
         if not all_factors:
             logger.warning("未能提取任何隐因子")
             return {}
 
-        factor_array = np.array(all_factors)  # (N_valid, n_latent_factors)
+        factor_array = all_factors[0]  # (N_valid, n_latent_factors)
 
         # 构建索引: 对齐到原始数据的时间索引
         combined = pd.DataFrame(
@@ -863,6 +886,9 @@ class DeepFactorMiningService:
                 "message": "PyTorch 未安装",
                 "best_factors": [],
             }
+
+        # 释放上一次训练的GPU资源，避免内存泄漏
+        self.cleanup()
 
         logger.info("开始深度隐式因子挖掘...")
         logger.info(

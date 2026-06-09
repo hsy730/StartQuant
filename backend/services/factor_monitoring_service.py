@@ -4,7 +4,7 @@
 import logging
 import numpy as np
 import pandas as pd
-from typing import Dict, List, Optional, Any
+from typing import Dict, Any
 from scipy.fft import fft, fftfreq
 from scipy.signal import find_peaks
 
@@ -279,6 +279,14 @@ class FactorMonitoringService:
         positive_power = power[positive_freq_idx]
 
         # 找出主要周期（功率谱峰值的对应频率）
+        if len(positive_power) == 0:
+            return {
+                "frequencies": [],
+                "powers": [],
+                "dominant_periods": [],
+                "data_length": len(time_series),
+                "interpretation": "无正频率成分，无法进行周期性分析"
+            }
         peaks, _ = find_peaks(positive_power, height=np.mean(positive_power))
 
         # 转换频率为周期（天数）

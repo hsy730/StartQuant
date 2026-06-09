@@ -4,7 +4,7 @@
 import logging
 import numpy as np
 import pandas as pd
-from typing import Dict, List, Optional, Any
+from typing import Dict, Any
 
 
 from backend.utils.safe_math import safe_divide

@@ -2,8 +2,7 @@
 公式编译器服务 - 可视化因子构建
 """
 import ast
-import re
-from typing import Dict, List, Optional, Any, Tuple
+from typing import Dict, Tuple
 
 
 class FormulaCompilerService:
@@ -140,8 +139,15 @@ class FormulaCompilerService:
                     return f"RSI({compiled_args[0]}, timeperiod={compiled_args[1]})"
                 elif func_name == "MACD":
                     # MACD返回(macd, signal, histogram)，默认取macd线
-                    # 用户可通过第三个参数选择: 0=macd, 1=signal, 2=histogram
-                    macd_idx = compiled_args[1] if len(compiled_args) > 1 else "0"
+                    # 用户可通过第二个参数选择: 0=macd, 1=signal, 2=histogram
+                    macd_idx = "0"  # default: MACD line
+                    if len(compiled_args) > 1:
+                        # Try to parse the second argument as an integer index
+                        try:
+                            idx = int(compiled_args[1].strip().strip('"').strip("'"))
+                            macd_idx = str(idx)
+                        except (ValueError, AttributeError):
+                            macd_idx = "0"
                     return f"MACD({compiled_args[0]}, fastperiod=12, slowperiod=26, signalperiod=9)[{macd_idx}]"
                 elif func_name == "BBANDS":
                     # TA-Lib BBANDS返回(upperband, middleband, lowerband)

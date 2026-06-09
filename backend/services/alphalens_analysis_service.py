@@ -148,7 +148,7 @@ class AlphalensAnalysisService:
                 ic_spearman = alphalens.performance.factor_information_coefficient(
                     factor_data, by_group=by_group
                 )
-                mean_ic_spearman = alphalens.performance.mean_information_coefficient(
+                _mean_ic_spearman = alphalens.performance.mean_information_coefficient(
                     factor_data, by_group=by_group
                 )
 
@@ -175,29 +175,20 @@ class AlphalensAnalysisService:
         """手动计算Pearson IC（alphalens默认只提供Spearman Rank IC）"""
         ic_results = {}
         return_cols = [c for c in factor_data.columns if c not in ['factor', 'factor_quantile', 'group']]
+        dates = factor_data.index.get_level_values(0)
         for period_col in return_cols:
-            dates = factor_data.index.get_level_values(0).unique()
-            ic_values = []
-            ic_dates = []
-            for date in dates:
-                try:
-                    date_data = factor_data.loc[date]
-                    if len(date_data) < 2:
-                        continue
-                    factor_vals = date_data['factor'].values
-                    return_vals = date_data[period_col].values
-                    valid = ~(np.isnan(factor_vals) | np.isnan(return_vals) | np.isinf(factor_vals) | np.isinf(return_vals))
-                    if valid.sum() < 2:
-                        continue
-                    corr = np.corrcoef(factor_vals[valid], return_vals[valid])[0, 1]
-                    if not np.isnan(corr):
-                        ic_values.append(corr)
-                        ic_dates.append(date)
-                except Exception as e:
-                    logger.debug(f"IC计算异常: {e}")
-                    continue
-            if ic_values:
-                ic_results[period_col] = pd.Series(ic_values, index=ic_dates)
+            merged = pd.DataFrame({
+                'factor': factor_data['factor'].values,
+                'return': factor_data[period_col].values,
+            }, index=dates)
+            merged = merged.replace([np.inf, -np.inf], np.nan).dropna()
+            if len(merged) < 2:
+                continue
+            daily_ic = merged.groupby(merged.index).apply(
+                lambda g: g['factor'].corr(g['return']) if len(g) >= 2 else np.nan
+            ).dropna()
+            if len(daily_ic) > 0:
+                ic_results[period_col] = daily_ic
         if ic_results:
             return pd.DataFrame(ic_results)
         return pd.DataFrame()

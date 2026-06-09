@@ -15,7 +15,7 @@ import logging
 
 import pandas as pd
 import numpy as np
-from typing import Dict, List, Optional
+from typing import Dict, List
 from sklearn.linear_model import LinearRegression
 
 from backend.services.data_service import data_service

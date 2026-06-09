@@ -16,7 +16,6 @@ Phik混合类型相关性服务（可选依赖）
 import logging
 from typing import Dict, List, Any, Optional
 import pandas as pd
-import numpy as np
 
 logger = logging.getLogger(__name__)
 

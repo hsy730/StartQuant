@@ -5,13 +5,12 @@ import ast
 import numpy as np
 import pandas as pd
 import talib
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional
 from backend.utils.safe_math import safe_divide
-from pathlib import Path
 import yaml
 import logging
 
-from backend.core.database import get_db_session
+from backend.core.database import get_db
 from backend.core.settings import settings
 from backend.models.factor import FactorModel
 from backend.repositories.factor_repository import FactorRepository
@@ -465,14 +464,11 @@ class FactorCalculator:
 
                 return result
             except Exception as e:
-                import traceback
                 # 记录详细错误信息用于调试
                 error_msg = f"因子计算失败: {str(e)}\n"
                 error_msg += f"因子代码类型: {'函数' if is_function else '表达式'}\n"
                 error_msg += f"代码长度: {len(factor_code)} 字符"
                 # 在开发环境可以添加traceback，生产环境使用日志
-                import logging
-                logger = logging.getLogger(__name__)
                 logger.error(error_msg, exc_info=True)
                 raise ValueError(error_msg)
         else:
@@ -507,8 +503,10 @@ class FactorCalculator:
                 "set": set,
                 "len": len,
                 "range": range,
-                # NumPy
+                # NumPy / pandas
                 "np": np,
+                "pd": pd,
+                "safe_divide": safe_divide,
                 **self.talib_funcs,
                 **self.mylanguage_funcs,
             }
@@ -539,8 +537,6 @@ class FactorCalculator:
 
                 return result
             except Exception as e:
-                import logging
-                logger = logging.getLogger(__name__)
                 logger.error(f"因子表达式计算失败: {factor_code}", exc_info=True)
                 raise ValueError(f"因子表达式计算失败: {e}")
 
@@ -584,9 +580,9 @@ class FactorCalculator:
         for col in df.columns:
             rolling_mean = df[col].rolling(window=window, min_periods=1).mean()
             rolling_std = df[col].rolling(window=window, min_periods=1).std()
-            # 避免除以0，当标准差为0或接近0时，返回0而不是inf
-            rolling_std_safe = rolling_std.replace(0, np.nan)
-            result[col] = (df[col] - rolling_mean) / rolling_std_safe
+            # 使用 safe_series_divide 统一除零保护，替代 .replace(0, np.nan) hack
+            from backend.utils.safe_math import safe_series_divide
+            result[col] = safe_series_divide(df[col] - rolling_mean, rolling_std)
             # 将无穷大值替换为NaN
             result[col] = result[col].replace([np.inf, -np.inf], np.nan)
         return result
@@ -632,50 +628,46 @@ class FactorService:
             self._create_default_preset_factors()
             return
 
-        db = get_db_session()
-        repo = FactorRepository(db)
+        with get_db() as db:
+            repo = FactorRepository(db)
 
-        for category, factors in config.items():
-            for factor_data in factors:
-                # 检查因子是否已存在
-                existing = repo.get_by_name(factor_data["name"])
-                if existing:
-                    continue
+            for category, factors in config.items():
+                for factor_data in factors:
+                    # 检查因子是否已存在
+                    existing = repo.get_by_name(factor_data["name"])
+                    if existing:
+                        continue
 
-                factor = FactorModel(
-                    name=factor_data["name"],
-                    code=factor_data["code"],
-                    description=factor_data.get("description", ""),
-                    source="preset",
-                    category=category,
-                    is_active=1,
-                )
-                repo.create(factor)
-
-        db.close()
+                    factor = FactorModel(
+                        name=factor_data["name"],
+                        code=factor_data["code"],
+                        description=factor_data.get("description", ""),
+                        source="preset",
+                        category=category,
+                        is_active=1,
+                    )
+                    repo.create(factor)
 
     def _create_default_preset_factors(self) -> None:
         """创建默认预置因子"""
         preset_factors = self._get_default_factors()
-        db = get_db_session()
-        repo = FactorRepository(db)
+        with get_db() as db:
+            repo = FactorRepository(db)
 
-        for category, factors in preset_factors.items():
-            for factor_data in factors:
-                existing = repo.get_by_name(factor_data["name"])
-                if existing:
-                    continue
-                factor = FactorModel(
-                    name=factor_data["name"],
-                    code=factor_data["code"],
-                    description=factor_data.get("description", ""),
-                    source="preset",
-                    category=category,
-                    is_active=1,
-                )
-                repo.create(factor)
-
-        db.close()
+            for category, factors in preset_factors.items():
+                for factor_data in factors:
+                    existing = repo.get_by_name(factor_data["name"])
+                    if existing:
+                        continue
+                    factor = FactorModel(
+                        name=factor_data["name"],
+                        code=factor_data["code"],
+                        description=factor_data.get("description", ""),
+                        source="preset",
+                        category=category,
+                        is_active=1,
+                    )
+                    repo.create(factor)
 
     def _get_default_factors(self) -> Dict[str, List[Dict]]:
         """获取默认预置因子定义"""
@@ -685,37 +677,37 @@ class FactorService:
             "价格收益率": [
                 {
                     "name": "log_return_1",
-                    "code": "np.log(close / close.shift(1))",
+                    "code": "np.log(close / close.shift(1).replace(0, np.nan))",
                     "description": "日对数收益率",
                 },
                 {
                     "name": "log_return_5",
-                    "code": "np.log(close / close.shift(5))",
+                    "code": "np.log(close / close.shift(5).replace(0, np.nan))",
                     "description": "5日累计收益",
                 },
                 {
                     "name": "price_vs_sma20",
-                    "code": "close / SMA(close, timeperiod=20)",
+                    "code": "close / SMA(close, timeperiod=20).replace(0, np.nan)",
                     "description": "相对20日均线位置",
                 },
                 {
                     "name": "price_vs_sma60",
-                    "code": "close / SMA(close, timeperiod=60)",
+                    "code": "close / SMA(close, timeperiod=60).replace(0, np.nan)",
                     "description": "相对60日均线位置",
                 },
                 {
                     "name": "sma20_vs_sma60",
-                    "code": "SMA(close, timeperiod=20) / SMA(close, timeperiod=60)",
+                    "code": "(SMA(close, timeperiod=20) / SMA(close, timeperiod=60).replace(0, np.nan))",
                     "description": "短期vs长期趋势方向",
                 },
                 {
                     "name": "high_low_ratio",
-                    "code": "(high - low) / open",
+                    "code": "(high - low) / open.replace(0, np.nan)",
                     "description": "日内波动幅度",
                 },
                 {
                     "name": "close_open_ratio",
-                    "code": "close / open",
+                    "code": "close / open.replace(0, np.nan)",
                     "description": "收盘相对开盘强度",
                 },
             ],
@@ -752,7 +744,7 @@ class FactorService:
                 },
                 {
                     "name": "roc_10",
-                    "code": "(close - close.shift(10)) / close.shift(10)",
+                    "code": "(close - close.shift(10)) / close.shift(10).replace(0, np.nan)",
                     "description": "10日变化率",
                 },
             ],
@@ -764,29 +756,29 @@ class FactorService:
                 },
                 {
                     "name": "atr_norm",
-                    "code": "ATR(high, low, close, timeperiod=14) / close",
+                    "code": "ATR(high, low, close, timeperiod=14) / close.replace(0, np.nan)",
                     "description": "波动率相对价格水平",
                 },
                 {
                     "name": "volatility_10",
-                    "code": "np.log(close / close.shift(1)).rolling(window=10).std()",
+                    "code": "np.log(close / close.shift(1).replace(0, np.nan)).rolling(window=10).std()",
                     "description": "近10日收益率标准差",
                 },
                 {
                     "name": "bollinger_bandwidth",
-                    "code": "(BBANDS(close, timeperiod=20)[0] - BBANDS(close, timeperiod=20)[2]) / BBANDS(close, timeperiod=20)[1]",
+                    "code": "(BBANDS(close, timeperiod=20)[0] - BBANDS(close, timeperiod=20)[2]) / pd.Series(BBANDS(close, timeperiod=20)[1], index=close.index).replace(0, np.nan)",
                     "description": "布林带宽度",
                 },
                 {
                     "name": "bollinger_position",
-                    "code": "(close - BBANDS(close, timeperiod=20)[2]) / (BBANDS(close, timeperiod=20)[0] - BBANDS(close, timeperiod=20)[2])",
+                    "code": "(close - BBANDS(close, timeperiod=20)[2]) / pd.Series(BBANDS(close, timeperiod=20)[0] - BBANDS(close, timeperiod=20)[2], index=close.index).replace(0, np.nan)",
                     "description": "价格在布林带中的相对位置",
                 },
             ],
             "成交量资金流": [
                 {
                     "name": "volume_ma_ratio",
-                    "code": "volume / SMA(volume, timeperiod=10)",
+                    "code": "volume / SMA(volume, timeperiod=10).replace(0, np.nan)",
                     "description": "当日量能vs近期均量",
                 },
                 {
@@ -808,7 +800,7 @@ class FactorService:
                 },
                 {
                     "name": "regime_volatility",
-                    "code": "(np.log(close / close.shift(1)).rolling(window=20).std() > np.log(close / close.shift(1)).rolling(window=20).std().shift(1).expanding().max()).astype(int)",
+                    "code": "(np.log(close / close.shift(1).replace(0, np.nan)).rolling(window=20).std() > np.log(close / close.shift(1).replace(0, np.nan)).rolling(window=20).std().shift(1).expanding().max()).astype(int)",
                     "description": "高波动regime标记（当前波动大于历史最大值）",
                 },
                 {
@@ -820,44 +812,44 @@ class FactorService:
             "动量加速度": [
                 {
                     "name": "momentum_20",
-                    "code": "close / close.shift(20) - 1",
+                    "code": "close / close.shift(20).replace(0, np.nan) - 1",
                     "description": "20日动量（20日收益率）",
                 },
                 {
                     "name": "momentum_60",
-                    "code": "close / close.shift(60) - 1",
+                    "code": "close / close.shift(60).replace(0, np.nan) - 1",
                     "description": "60日动量（60日收益率）",
                 },
                 {
                     "name": "momentum_acceleration",
-                    "code": "(close / close.shift(10) - 1) - (close.shift(10) / close.shift(20) - 1)",
+                    "code": "(close / close.shift(10).replace(0, np.nan) - 1) - (close.shift(10) / close.shift(20).replace(0, np.nan) - 1)",
                     "description": "动量加速度（近期动量减去前期动量）",
                 },
                 {
                     "name": "price_momentum_strength",
-                    "code": "(SMA(close, timeperiod=5) / SMA(close, timeperiod=20) - 1) * 100",
+                    "code": "(SMA(close, timeperiod=5) / SMA(close, timeperiod=20).replace(0, np.nan) - 1) * 100",
                     "description": "价格动量强度（短期均线相对长期均线的百分比）",
                 },
             ],
             "反转信号": [
                 {
                     "name": "reversal_5",
-                    "code": "-(close / close.shift(5) - 1)",
+                    "code": "-(close / close.shift(5).replace(0, np.nan) - 1)",
                     "description": "5日反转因子（负收益率，用于捕捉短期反转）",
                 },
                 {
                     "name": "reversal_10",
-                    "code": "-(close / close.shift(10) - 1)",
+                    "code": "-(close / close.shift(10).replace(0, np.nan) - 1)",
                     "description": "10日反转因子",
                 },
                 {
                     "name": "deviation_from_ma20",
-                    "code": "(close - SMA(close, timeperiod=20)) / SMA(close, timeperiod=20)",
+                    "code": "(close - SMA(close, timeperiod=20)) / SMA(close, timeperiod=20).replace(0, np.nan)",
                     "description": "价格偏离20日均线的程度",
                 },
                 {
                     "name": "deviation_from_ma60",
-                    "code": "(close - SMA(close, timeperiod=60)) / SMA(close, timeperiod=60)",
+                    "code": "(close - SMA(close, timeperiod=60)) / SMA(close, timeperiod=60).replace(0, np.nan)",
                     "description": "价格偏离60日均线的程度",
                 },
                 {
@@ -916,17 +908,17 @@ class FactorService:
             "市场情绪": [
                 {
                     "name": "price_change_1",
-                    "code": "(close - close.shift(1)) / close.shift(1)",
+                    "code": "(close - close.shift(1)) / close.shift(1).replace(0, np.nan)",
                     "description": "1日涨跌幅",
                 },
                 {
                     "name": "price_change_5",
-                    "code": "(close - close.shift(5)) / close.shift(5)",
+                    "code": "(close - close.shift(5)) / close.shift(5).replace(0, np.nan)",
                     "description": "5日涨跌幅",
                 },
                 {
                     "name": "volatility_change",
-                    "code": "np.log(close / close.shift(1)).rolling(window=10).std() - np.log(close / close.shift(1)).rolling(window=10).std().shift(5)",
+                    "code": "np.log(close / close.shift(1).replace(0, np.nan)).rolling(window=10).std() - np.log(close / close.shift(1).replace(0, np.nan)).rolling(window=10).std().shift(5)",
                     "description": "波动率变化（当前10日波动率减去5日前波动率）",
                 },
                 {
@@ -943,27 +935,27 @@ class FactorService:
             "风险指标": [
                 {
                     "name": "downside_risk",
-                    "code": "np.log(close / close.shift(1)).pipe(lambda x: x[x < 0]).rolling(window=20).std()",
+                    "code": "np.log(close / close.shift(1).replace(0, np.nan)).pipe(lambda x: x[x < 0]).rolling(window=20).std()",
                     "description": "下行风险（仅计算负收益的标准差，半离差）",
                 },
                 {
                     "name": "skewness_20",
-                    "code": "np.log(close / close.shift(1)).rolling(window=20).skew()",
+                    "code": "np.log(close / close.shift(1).replace(0, np.nan)).rolling(window=20).skew()",
                     "description": "20日收益率偏度（衡量分布不对称性）",
                 },
                 {
                     "name": "kurtosis_20",
-                    "code": "np.log(close / close.shift(1)).rolling(window=20).kurt()",
+                    "code": "np.log(close / close.shift(1).replace(0, np.nan)).rolling(window=20).kurt()",
                     "description": "20日收益率峰度（衡量尾部风险）",
                 },
                 {
                     "name": "max_drawdown_20",
-                    "code": "close.rolling(window=20).apply(lambda x: ((x - x.cummax()) / x.cummax()).min())",
+                    "code": "close.rolling(window=20).apply(lambda x: ((x - x.cummax()) / x.cummax().replace(0, np.nan)).min())",
                     "description": "20日最大回撤（百分比）",
                 },
                 {
                     "name": "var_95_20",
-                    "code": "np.log(close / close.shift(1)).rolling(window=20).quantile(0.05)",
+                    "code": "np.log(close / close.shift(1).replace(0, np.nan)).rolling(window=20).quantile(0.05)",
                     "description": "20日95% VaR（在险价值）",
                 },
             ],
@@ -1005,12 +997,12 @@ class FactorService:
                 },
                 {
                     "name": "ma_bias_5_20",
-                    "code": "(SMA(close, timeperiod=5) - SMA(close, timeperiod=20)) / SMA(close, timeperiod=20)",
+                    "code": "(SMA(close, timeperiod=5) - SMA(close, timeperiod=20)) / SMA(close, timeperiod=20).replace(0, np.nan)",
                     "description": "5日均线乖离率（相对20日均线）",
                 },
                 {
                     "name": "ma_bias_10_60",
-                    "code": "(SMA(close, timeperiod=10) - SMA(close, timeperiod=60)) / SMA(close, timeperiod=60)",
+                    "code": "(SMA(close, timeperiod=10) - SMA(close, timeperiod=60)) / SMA(close, timeperiod=60).replace(0, np.nan)",
                     "description": "10日均线乖离率（相对60日均线）",
                 },
                 {
@@ -1084,47 +1076,45 @@ class FactorService:
 
     def get_all_factors(self) -> List[Dict]:
         """获取所有因子"""
-        db = get_db_session()
-        repo = FactorRepository(db)
-        factors = repo.get_all(active_only=True)
-        db.close()
-        return [f.to_dict() for f in factors]
+        with get_db() as db:
+            repo = FactorRepository(db)
+            factors = repo.get_all(active_only=True)
+            return [f.to_dict() for f in factors]
 
     def get_factor_stats(self) -> Dict:
         """获取因子统计信息"""
-        db = get_db_session()
-        repo = FactorRepository(db)
+        with get_db() as db:
+            repo = FactorRepository(db)
 
-        # 获取缓存统计
-        from backend.services.cache_service import cache_service
-        cache_stats = cache_service.get_stats()
-        stock_cache_count = cache_stats.get("total_count", 0)
+            # 获取缓存统计
+            from backend.services.cache_service import cache_service
+            cache_stats = cache_service.get_stats()
+            stock_cache_count = cache_stats.get("total_count", 0)
 
-        # 检查AKShare健康状态
-        akshare_healthy = True
-        try:
-            import akshare as ak
-            # 使用用户指定的接口验证连接
-            stock_zh_a_daily_qfq_df = ak.stock_zh_a_daily(
-                symbol="sz000001",
-                start_date="20230903",
-                end_date="20231027",
-                adjust="qfq"
-            )
-        except Exception as e:
-            logger.warning(f"akshare健康检查失败: {e}")
-            akshare_healthy = False
+            # 检查AKShare健康状态
+            akshare_healthy = True
+            try:
+                import akshare as ak
+                # 使用用户指定的接口验证连接
+                _stock_zh_a_daily_qfq_df = ak.stock_zh_a_daily(
+                    symbol="sz000001",
+                    start_date="20230903",
+                    end_date="20231027",
+                    adjust="qfq"
+                )
+            except Exception as e:
+                logger.warning(f"akshare健康检查失败: {e}")
+                akshare_healthy = False
 
-        stats = {
-            "preset_count": repo.get_preset_count(),
-            "user_count": repo.get_user_count(),
-            "total_count": repo.get_preset_count() + repo.get_user_count(),
-            "strategy_count": 0,  # 暂时为0，后续可以根据实际情况添加
-            "stock_cache_count": stock_cache_count,
-            "akshare_healthy": akshare_healthy,
-        }
-        db.close()
-        return stats
+            stats = {
+                "preset_count": repo.get_preset_count(),
+                "user_count": repo.get_user_count(),
+                "total_count": repo.get_preset_count() + repo.get_user_count(),
+                "strategy_count": 0,  # 暂时为0，后续可以根据实际情况添加
+                "stock_cache_count": stock_cache_count,
+                "akshare_healthy": akshare_healthy,
+            }
+            return stats
 
     def create_factor(
         self, name: str, code: str, description: str = "",
@@ -1142,57 +1132,53 @@ class FactorService:
             generated_factor_id: 关联的 generated_factors 表记录ID（挖掘因子必传）
             skip_validation: 是否跳过验证门控（仅预置因子/手动创建时使用）
         """
-        db = get_db_session()
-        repo = FactorRepository(db)
+        with get_db() as db:
+            repo = FactorRepository(db)
 
-        # 验证门控：挖掘因子必须通过验证才能入库
-        if not skip_validation and generated_factor_id is not None:
-            from backend.repositories.generated_factor_repository import GeneratedFactorRepository
-            gen_repo = GeneratedFactorRepository(db)
-            gen_factor = gen_repo.get_by_id(generated_factor_id)
-            if gen_factor is None:
-                db.close()
-                raise ValueError(f"生成的因子记录 ID={generated_factor_id} 不存在，无法保存")
-            if not gen_factor.is_valid:
-                db.close()
-                raise ValueError(
-                    f"因子未通过验证（验证得分: {gen_factor.validation_score:.1f}），"
-                    f"不能保存到因子库。请先通过因子验证。"
-                )
-            # 标记为已保存
-            gen_repo.mark_saved(generated_factor_id, name)
-        elif not skip_validation and generated_factor_id is None and category in ("遗传挖掘", "因子挖掘"):
-            # 挖掘类因子但没有关联 generated_factor_id，给出警告但不阻止（兼容旧流程）
-            logger.warning(f"挖掘因子 '{name}' 未关联 generated_factor_id，跳过验证门控")
+            # 验证门控：挖掘因子必须通过验证才能入库
+            if not skip_validation and generated_factor_id is not None:
+                from backend.repositories.generated_factor_repository import GeneratedFactorRepository
+                gen_repo = GeneratedFactorRepository(db)
+                gen_factor = gen_repo.get_by_id(generated_factor_id)
+                if gen_factor is None:
+                    raise ValueError(f"生成的因子记录 ID={generated_factor_id} 不存在，无法保存")
+                if not gen_factor.is_valid:
+                    raise ValueError(
+                        f"因子未通过验证（验证得分: {gen_factor.validation_score:.1f}），"
+                        f"不能保存到因子库。请先通过因子验证。"
+                    )
+                # 标记为已保存
+                gen_repo.mark_saved(generated_factor_id, name)
+            elif not skip_validation and generated_factor_id is None and category in ("遗传挖掘", "因子挖掘"):
+                # 挖掘类因子但没有关联 generated_factor_id，给出警告但不阻止（兼容旧流程）
+                logger.warning(f"挖掘因子 '{name}' 未关联 generated_factor_id，跳过验证门控")
 
-        # 检查名称是否已存在
-        existing_factor = repo.get_by_name(name, include_inactive=True)
+            # 检查名称是否已存在
+            existing_factor = repo.get_by_name(name, include_inactive=True)
 
-        if existing_factor:
-            # 如果因子已存在
-            if existing_factor.is_active == 1:
-                # 活跃因子，不能创建
-                db.close()
-                raise ValueError(f"因子名称 '{name}' 已存在")
-            else:
-                # 已软删除的因子，硬删除旧记录后创建新记录
-                logger.info(f"因子 '{name}' 已存在但已删除，将替换为新记录")
-                from sqlalchemy import delete
-                stmt = delete(FactorModel).where(FactorModel.id == existing_factor.id)
-                db.execute(stmt)
-                db.commit()
+            if existing_factor:
+                # 如果因子已存在
+                if existing_factor.is_active == 1:
+                    # 活跃因子，不能创建
+                    raise ValueError(f"因子名称 '{name}' 已存在")
+                else:
+                    # 已软删除的因子，硬删除旧记录后创建新记录
+                    logger.info(f"因子 '{name}' 已存在但已删除，将替换为新记录")
+                    from sqlalchemy import delete
+                    stmt = delete(FactorModel).where(FactorModel.id == existing_factor.id)
+                    db.execute(stmt)
+                    db.commit()
 
-        factor = FactorModel(
-            name=name,
-            code=code,
-            description=description,
-            source="user",
-            category=category,
-            is_active=1,
-        )
-        result = repo.create(factor)
-        db.close()
-        return result.to_dict()
+            factor = FactorModel(
+                name=name,
+                code=code,
+                description=description,
+                source="user",
+                category=category,
+                is_active=1,
+            )
+            result = repo.create(factor)
+            return result.to_dict()
 
     def update_factor(
         self, factor_id: int, name: str = None, code: str = None, description: str = None,
@@ -1212,44 +1198,41 @@ class FactorService:
         Returns:
             更新后的因子信息
         """
-        db = get_db_session()
-        repo = FactorRepository(db)
-        factor = repo.get_by_id(factor_id)
+        with get_db() as db:
+            repo = FactorRepository(db)
+            factor = repo.get_by_id(factor_id)
 
-        if not factor:
-            db.close()
-            raise ValueError(f"因子ID {factor_id} 不存在")
+            if not factor:
+                raise ValueError(f"因子ID {factor_id} 不存在")
 
-        if factor.source == "preset" and (name or code):
-            db.close()
-            raise ValueError("预置因子的名称和代码不能修改")
+            if factor.source == "preset" and (name or code):
+                raise ValueError("预置因子的名称和代码不能修改")
 
-        # 如果需要创建版本且代码有变化，先保存版本
-        if create_version and code and code != factor.code:
-            try:
-                factor_version_service.create_version(
-                    factor_id=factor_id,
-                    code=factor.code,
-                    description=factor.description,
-                    change_reason=change_reason or "更新前自动保存",
-                    auto_increment=True,
-                )
-            except Exception as e:
-                logger.warning(f"创建版本快照失败: {e}")
+            # 如果需要创建版本且代码有变化，先保存版本
+            if create_version and code and code != factor.code:
+                try:
+                    factor_version_service.create_version(
+                        factor_id=factor_id,
+                        code=factor.code,
+                        description=factor.description,
+                        change_reason=change_reason or "更新前自动保存",
+                        auto_increment=True,
+                    )
+                except Exception as e:
+                    logger.warning(f"创建版本快照失败: {e}")
 
-        # 更新因子
-        if name:
-            factor.name = name
-        if code:
-            factor.code = code
-        if description is not None:
-            factor.description = description
-        if category:
-            factor.category = category
+            # 更新因子
+            if name:
+                factor.name = name
+            if code:
+                factor.code = code
+            if description is not None:
+                factor.description = description
+            if category:
+                factor.category = category
 
-        result = repo.update(factor)
-        db.close()
-        return result.to_dict()
+            result = repo.update(factor)
+            return result.to_dict()
 
     def get_factor_versions(self, factor_id: int) -> List[Dict]:
         """获取因子的版本历史"""
@@ -1261,15 +1244,10 @@ class FactorService:
 
     def delete_factor(self, factor_id: int) -> bool:
         """删除因子"""
-        db = get_db_session()
-        repo = FactorRepository(db)
-        try:
+        with get_db() as db:
+            repo = FactorRepository(db)
             result = repo.delete(factor_id)
-            db.close()
             return result
-        except ValueError as e:
-            db.close()
-            raise e
 
     def validate_factor_code(self, code: str) -> tuple[bool, str]:
         """验证因子代码"""
@@ -1420,14 +1398,13 @@ class FactorService:
         df = data_service.get_stock_data(stock_code, start_date, end_date)
 
         # 获取因子定义
-        db = get_db_session()
-        repo = FactorRepository(db)
-        factors = []
-        for name in factor_names:
-            factor = repo.get_by_name(name)
-            if factor:
-                factors.append(factor)
-        db.close()
+        with get_db() as db:
+            repo = FactorRepository(db)
+            factors = []
+            for name in factor_names:
+                factor = repo.get_by_name(name)
+                if factor:
+                    factors.append(factor)
 
         if not factors:
             raise ValueError("未找到有效的因子")

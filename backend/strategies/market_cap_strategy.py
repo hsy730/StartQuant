@@ -1,9 +1,7 @@
 """
 市值加权策略 - 按市值分配权重
 """
-from typing import Dict
 import pandas as pd
-import numpy as np
 from .base_strategy import BaseStrategy
 from backend.utils.safe_math import safe_divide
 

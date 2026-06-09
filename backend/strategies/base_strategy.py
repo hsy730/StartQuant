@@ -2,7 +2,7 @@
 策略基类 - 定义策略接口
 """
 from abc import ABC, abstractmethod
-from typing import Dict, Optional
+from typing import Dict
 import pandas as pd
 
 from backend.services.risk_metrics import calculate_risk_metrics as _calculate_risk_metrics, _empty_metrics as _risk_empty_metrics

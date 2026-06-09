@@ -59,7 +59,7 @@ class BaseMiningService(ABC):
         naming_pattern: str = "factor_{i}",
     ):
         self.base_factor_codes = base_factors
-        self.data = data
+        self.data = data.copy() if data is not None else None
         self.return_column = return_column
         self.factor_calculator = factor_calculator
         self.max_eval_stocks = max_eval_stocks
@@ -67,7 +67,7 @@ class BaseMiningService(ABC):
         self.cv_folds = cv_folds
         self.naming_pattern = naming_pattern
 
-        self.return_values = data[return_column] if return_column in data.columns else None
+        self.return_values = data[return_column].copy() if data is not None and return_column in data.columns else None
 
         # 股票池
         self.stock_codes: List[str] = []

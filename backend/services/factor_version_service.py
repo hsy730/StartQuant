@@ -2,12 +2,10 @@
 因子版本服务 - 因子版本管理
 """
 from typing import List, Optional, Dict
-from sqlalchemy.orm import Session
 
-from backend.core.database import get_db_session
+from backend.core.database import get_db
 from backend.repositories.factor_version_repository import FactorVersionRepository
 from backend.repositories.factor_repository import FactorRepository
-from backend.models.factor import FactorModel
 
 
 class FactorVersionService:
@@ -15,10 +13,6 @@ class FactorVersionService:
 
     def __init__(self):
         pass
-
-    def _get_db(self) -> Session:
-        """获取数据库会话"""
-        return get_db_session()
 
     def create_version(
         self,
@@ -41,8 +35,7 @@ class FactorVersionService:
         Returns:
             创建的版本信息
         """
-        db = self._get_db()
-        try:
+        with get_db() as db:
             version_repo = FactorVersionRepository(db)
             factor_repo = FactorRepository(db)
 
@@ -68,9 +61,6 @@ class FactorVersionService:
 
             return version.to_dict()
 
-        finally:
-            db.close()
-
     def rollback_to_version(self, factor_id: int, version_code: str) -> bool:
         """
         回滚因子到指定版本
@@ -82,8 +72,7 @@ class FactorVersionService:
         Returns:
             是否回滚成功
         """
-        db = self._get_db()
-        try:
+        with get_db() as db:
             version_repo = FactorVersionRepository(db)
             factor_repo = FactorRepository(db)
 
@@ -116,9 +105,6 @@ class FactorVersionService:
 
             return True
 
-        finally:
-            db.close()
-
     def get_version_history(self, factor_id: int) -> List[Dict]:
         """
         获取因子的版本历史
@@ -129,14 +115,10 @@ class FactorVersionService:
         Returns:
             版本历史列表
         """
-        db = self._get_db()
-        try:
+        with get_db() as db:
             version_repo = FactorVersionRepository(db)
             versions = version_repo.get_by_factor_id(factor_id)
             return [v.to_dict() for v in versions]
-
-        finally:
-            db.close()
 
     def get_current_version_info(self, factor_id: int) -> Optional[Dict]:
         """
@@ -148,14 +130,10 @@ class FactorVersionService:
         Returns:
             当前版本信息
         """
-        db = self._get_db()
-        try:
+        with get_db() as db:
             version_repo = FactorVersionRepository(db)
             version = version_repo.get_current_version(factor_id)
             return version.to_dict() if version else None
-
-        finally:
-            db.close()
 
     def delete_version(self, version_id: int) -> bool:
         """
@@ -167,8 +145,7 @@ class FactorVersionService:
         Returns:
             是否删除成功
         """
-        db = self._get_db()
-        try:
+        with get_db() as db:
             version_repo = FactorVersionRepository(db)
 
             # 不能删除当前版本
@@ -177,9 +154,6 @@ class FactorVersionService:
                 raise ValueError("不能删除当前版本")
 
             return version_repo.delete(version_id)
-
-        finally:
-            db.close()
 
     def compare_versions(self, factor_id: int, version_code1: str, version_code2: str) -> Dict:
         """
@@ -193,8 +167,7 @@ class FactorVersionService:
         Returns:
             比较结果
         """
-        db = self._get_db()
-        try:
+        with get_db() as db:
             version_repo = FactorVersionRepository(db)
 
             version1 = version_repo.get_by_version_code(factor_id, version_code1)
@@ -218,21 +191,14 @@ class FactorVersionService:
                 "description_changed": version1.description != version2.description,
             }
 
-        finally:
-            db.close()
-
     def _generate_version_code(self, factor_id: int) -> str:
         """自动生成版本号"""
-        db = self._get_db()
-        try:
+        with get_db() as db:
             version_repo = FactorVersionRepository(db)
             count = version_repo.get_version_count(factor_id)
             major = count // 10 + 1
             minor = count % 10
             return f"v{major}.{minor}"
-
-        finally:
-            db.close()
 
 
 # 全局因子版本服务实例

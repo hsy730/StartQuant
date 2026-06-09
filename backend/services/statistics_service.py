@@ -3,7 +3,7 @@
 """
 import pandas as pd
 import numpy as np
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List
 from contextlib import contextmanager
 from scipy import stats
 from sklearn.preprocessing import PolynomialFeatures
@@ -11,7 +11,7 @@ import warnings
 import logging
 
 from backend.utils.returns import calculate_future_returns
-from backend.utils.safe_math import safe_divide, safe_ir
+from backend.utils.safe_math import safe_divide
 from backend.services.risk_metrics import calculate_risk_metrics
 
 # 配置日志
@@ -289,7 +289,7 @@ class StatisticsService:
         with _suppress_scipy_warnings():
             # 创建多项式特征（包含交互项）
             poly = PolynomialFeatures(degree=degree, include_bias=False)
-            poly_features = poly.fit_transform(factor_df)
+            _poly_features = poly.fit_transform(factor_df)
 
             # 获取特征名称
             feature_names = poly.get_feature_names_out(factor_names)
@@ -401,7 +401,7 @@ class StatisticsService:
             Dict: 各分层收益统计
         """
         results = {}
-        daily_rf = risk_free_rate / annual_trading_days
+        _daily_rf = risk_free_rate / annual_trading_days
 
         with _suppress_scipy_warnings():
             for quantile_name, returns in quantile_returns.items():

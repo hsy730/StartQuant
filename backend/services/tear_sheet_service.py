@@ -13,7 +13,6 @@ Tear Sheet 全貌报告生成器 - 专业因子分析报告系统
 - 包含统计检验结果和专业解读
 - 符合量化研究的报告标准
 """
-import numpy as np
 import pandas as pd
 from typing import Dict, List, Optional, Any, Tuple
 from dataclasses import dataclass, field

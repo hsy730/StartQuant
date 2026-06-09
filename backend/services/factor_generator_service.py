@@ -1,11 +1,11 @@
 """
 因子生成器服务 - 基于预置因子生成新因子
 """
-from typing import List, Dict, Optional
+from typing import List, Dict
 import pandas as pd
 import numpy as np
 import random
-from itertools import combinations, product
+from itertools import combinations
 
 from backend.utils.safe_math import safe_ir
 
@@ -328,7 +328,6 @@ class FactorGeneratorService:
         Returns:
             可执行的Python代码
         """
-        import re
 
         # 使用正则进行函数替换，避免简单字符串替换的互相干扰
         # 定义函数映射表（按函数名长度降序排列，避免短名匹配长名）
@@ -633,7 +632,7 @@ def calculate_factor(df):
 
         for factor_info in factors:
             expression = factor_info["expression"]
-            factor_name = f"factor_{len(selected_factors)}"
+            _factor_name = f"factor_{len(selected_factors)}"
 
             if expression in factor_data_map:
                 factor_values = factor_data_map[expression]
@@ -645,7 +644,7 @@ def calculate_factor(df):
                 }).dropna()
 
                 # 检查数据比例
-                valid_ratio = len(aligned_data) / len(factor_values)
+                valid_ratio = len(aligned_data) / len(factor_values) if len(factor_values) > 0 else 0.0
                 if valid_ratio < min_valid_ratio:
                     continue
 

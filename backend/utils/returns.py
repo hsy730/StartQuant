@@ -5,7 +5,7 @@
 """
 import numpy as np
 import pandas as pd
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, Sequence, Tuple
 from scipy import stats as scipy_stats
 
 from backend.utils.safe_math import safe_divide, safe_ir

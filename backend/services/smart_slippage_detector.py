@@ -18,7 +18,7 @@ from backend.services.risk_metrics import calculate_volatility
 from enum import Enum
 import logging
 
-from backend.core.market_board import MarketBoard, detect_market_board, get_board_slippage_multiplier
+from backend.core.market_board import MarketBoard, detect_market_board
 from backend.utils.safe_math import safe_divide
 
 logger = logging.getLogger(__name__)
@@ -513,32 +513,32 @@ class SmartSlippageDetector:
         chars = rec.market_characteristics
         
         lines = [
-            f"# 🎯 智能交易滑点推荐报告",
-            f"",
-            f"## 📊 市场概况",
+            "# 🎯 智能交易滑点推荐报告",
+            "",
+            "## 📊 市场概况",
             f"- **股票数量**: {chars.n_stocks} 只",
             f"- **市场板块**: {self._get_board_name(chars.market_board)} ({self._get_board_distribution_str(chars.board_distribution)})",
             f"- **平均市值**: {chars.avg_market_cap/1e8:.2f} 亿" if chars.avg_market_cap > 0 else "- **平均市值**: 数据不足",
             f"- **日均成交额**: {chars.avg_daily_amount/1e8:.2f} 亿" if chars.avg_daily_amount > 0 else "- **日均成交额**: 数据不足",
             f"- **价格波动率**: {chars.price_volatility*100:.1f}%/年" if chars.price_volatility > 0 else "- **价格波动率**: 数据不足",
-            f"",
+            "",
             f"## 🎯 推荐滑点设置 (置信度: {rec.confidence*100:.0f}%)",
-            f"",
-            f"| 场景 | 滑点率 | 说明 |",
-            f"|------|--------|------|",
+            "",
+            "| 场景 | 滑点率 | 说明 |",
+            "|------|--------|------|",
             f"| **推荐值** | **{rec.recommended_slippage*100:.3f}%** | 基于市场特征的最优估计 |",
             f"| 保守估计 | {rec.conservative_slippage*100:.3f}% | 不利情况下的上限 |",
             f"| 激进估计 | {rec.aggressive_slippage*100:.3f}% | 理想情况下的下限 |",
-            f"",
-            f"## 💡 推荐理由",
+            "",
+            "## 💡 推荐理由",
             f"{rec.reasoning}",
-            f"",
-            f"## 📈 敏感性分析",
-            f"",
-            f"### 不同滑点下的预估影响（假设年化收益15%，回测换手率需实际计算）",
-            f"",
-            f"| 滑点设置 | 年化成本 | 净收益估计 | 收益衰减 |",
-            f"|---------|---------|-----------|---------|",
+            "",
+            "## 📈 敏感性分析",
+            "",
+            "### 不同滑点下的预估影响（假设年化收益15%，回测换手率需实际计算）",
+            "",
+            "| 滑点设置 | 年化成本 | 净收益估计 | 收益衰减 |",
+            "|---------|---------|-----------|---------|",
         ]
         
         for scenario, data in rec.sensitivity_analysis["test_scenarios"].items():
@@ -549,18 +549,18 @@ class SmartSlippageDetector:
             )
         
         lines.extend([
-            f"",
+            "",
             f"**敏感性等级**: {rec.sensitivity_analysis['sensitivity_level'].upper()}",
             f"**优化建议**: {rec.sensitivity_analysis['recommendation']}",
         ])
         
         if rec.warnings:
-            lines.extend([f"", f"## ⚠️ 风险警告"])
+            lines.extend(["", "## ⚠️ 风险警告"])
             for w in rec.warnings:
                 lines.append(f"- {w}")
         
         if rec.tips:
-            lines.extend([f"", f"## ✨ 优化建议"])
+            lines.extend(["", "## ✨ 优化建议"])
             for t in rec.tips:
                 lines.append(f"- {t}")
         

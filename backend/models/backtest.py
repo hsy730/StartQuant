@@ -2,7 +2,7 @@
 回测结果数据模型
 """
 from datetime import datetime
-from sqlalchemy import String, DateTime, Text, Integer, Float, JSON, ForeignKey
+from sqlalchemy import String, DateTime, Integer, Float, JSON, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column
 from backend.core.database import Base
 

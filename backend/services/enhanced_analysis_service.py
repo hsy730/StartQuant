@@ -3,7 +3,7 @@
 """
 import pandas as pd
 import numpy as np
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Any
 from scipy import stats
 
 from backend.services.factor_neutralization_service import factor_neutralization_service

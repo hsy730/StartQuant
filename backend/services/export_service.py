@@ -3,7 +3,6 @@
 """
 from typing import Dict
 import pandas as pd
-import numpy as np
 from datetime import datetime
 
 
@@ -242,7 +241,7 @@ class ExportService:
                         "独立T检验p值": f"{test_result['independent_t_test']['p_value']:.4f}",
                         "显著性": "是" if test_result['independent_t_test']['significant'] else "否",
                         "配对T检验p值": f"{test_result['paired_t_test']['p_value']:.4f}",
-                        "显著性": "是" if test_result['paired_t_test']['significant'] else "否",
+                        "显著性(配对)": "是" if test_result['paired_t_test']['significant'] else "否",
                         "相关系数": f"{test_result['correlation']:.4f}",
                     })
 

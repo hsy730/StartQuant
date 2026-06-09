@@ -30,10 +30,8 @@ ML 模型注册中心（Model Registry）— ML 模型的版本管理和生命�
 import logging
 import os
 import json
-import shutil
 import hashlib
-import time
-from typing import Dict, List, Optional, Any, Tuple
+from typing import Dict, List, Optional, Any
 from dataclasses import dataclass, field
 from enum import Enum
 from datetime import datetime
@@ -504,6 +502,7 @@ class ModelRegistry:
             import joblib
             joblib.dump(model, path)
         elif framework == ModelFramework.PYTORCH:
+            import torch
             torch.save(model.state_dict(), path)
         else:
             # Generic: 尝试 pickle

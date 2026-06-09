@@ -7,7 +7,7 @@ from typing import List, Optional, Dict
 import numpy as np
 import asyncio
 
-from backend.utils.serialization import safe_numeric_value, sanitize_dict
+from backend.utils.serialization import sanitize_dict
 from backend.services.vectorbt_backtest_service import VectorBTBacktestService, check_vectorbt_available
 from backend.services.risk_metrics import calculate_sharpe, calculate_volatility
 from backend.repositories.backtest_repository import BacktestRepository
@@ -70,7 +70,6 @@ async def run_single_backtest(request: SingleBacktestRequest):
         from backend.services.data_service import data_service
         from backend.services.factor_service import factor_service
         from backend.repositories.factor_repository import FactorRepository
-        from backend.core.database import get_db
         import pandas as pd
 
         # 确定要使用的因子列表
@@ -152,7 +151,7 @@ async def run_single_backtest(request: SingleBacktestRequest):
                     price_data[stock_code] = df[["close", "volume"]]
 
             # 调用智能滑点检测器
-            slippage_rec = backtest_service.set_smart_slippage(
+            _slippage_rec = backtest_service.set_smart_slippage(
                 stock_codes=request.stock_codes,
                 strategy_turnover=12.0,  # 默认年化换手率12倍（可在后续版本中从回测结果动态计算）
                 price_data=price_data if price_data else None,
@@ -378,11 +377,29 @@ async def run_single_backtest(request: SingleBacktestRequest):
                     "values": eq_values
                 }
             else:
-                # 多股票模式或没有equity_curve时，生成基于收盘价的基准曲线
-                stock_chart_data["equity"] = {
-                    "dates": df.index.strftime('%Y-%m-%d').tolist(),
-                    "values": (df["close"] / df["close"].iloc[0] * request.initial_capital).tolist()
-                }
+                # 多股票模式：尝试从回测结果获取组合净值曲线
+                equity_values = None
+                equity_dates = None
+                if isinstance(result, dict) and "metrics" in result:
+                    portfolio_returns = result.get("portfolio_returns")
+                    if portfolio_returns is not None and len(portfolio_returns) > 0:
+                        equity_curve = (1 + portfolio_returns).cumprod() * request.initial_capital
+                        equity_values = equity_curve.tolist()
+                        equity_dates = portfolio_returns.index.strftime('%Y-%m-%d').tolist() if hasattr(portfolio_returns.index, 'strftime') else [str(d) for d in portfolio_returns.index]
+
+                if equity_values is not None and equity_dates is not None:
+                    stock_chart_data["equity"] = {
+                        "dates": equity_dates,
+                        "values": equity_values
+                    }
+                else:
+                    # Fallback: 使用基准价格曲线（明确标注为基准）
+                    first_close = df["close"].iloc[0] if len(df) > 0 and df["close"].iloc[0] != 0 else 1.0
+                    stock_chart_data["equity"] = {
+                        "dates": df.index.strftime('%Y-%m-%d').tolist(),
+                        "values": (df["close"] / first_close * request.initial_capital).tolist(),
+                        "is_benchmark": True  # 标记为基准曲线
+                    }
 
             # 保存当前股票的图表数据
             chart_data[stock_code] = stock_chart_data
@@ -418,7 +435,6 @@ async def run_strategy_comparison(request: ComparisonRequest):
         from backend.services.data_service import data_service
         from backend.services.factor_service import factor_service
         import pandas as pd
-        import numpy as np
 
         # 获取数据
         all_data = {}
@@ -541,29 +557,30 @@ async def run_strategy_comparison(request: ComparisonRequest):
 async def get_backtest_history(limit: int = 10):
     """获取回测历史"""
     try:
-        repo = BacktestRepository()
-        history = repo.get_history(limit=limit)
+        with get_db() as db:
+            repo = BacktestRepository(db)
+            history = repo.get_history(limit=limit)
 
-        # 转换为字典列表
-        history_list = []
-        for record in history:
-            history_list.append({
-                "id": record.id,
-                "strategy_name": record.strategy_name,
-                "factor_combination": record.factor_combination,
-                "start_date": record.start_date,
-                "end_date": record.end_date,
-                "total_return": record.total_return,
-                "sharpe_ratio": record.sharpe_ratio,
-                "max_drawdown": record.max_drawdown,
-                "created_at": record.created_at.isoformat()
-            })
+            # 转换为字典列表
+            history_list = []
+            for record in history:
+                history_list.append({
+                    "id": record.id,
+                    "strategy_name": record.strategy_name,
+                    "factor_combination": record.factor_combination,
+                    "start_date": record.start_date,
+                    "end_date": record.end_date,
+                    "total_return": record.total_return,
+                    "sharpe_ratio": record.sharpe_ratio,
+                    "max_drawdown": record.max_drawdown,
+                    "created_at": record.created_at.isoformat()
+                })
 
-        return {
-            "success": True,
-            "data": history_list,
-            "total": len(history_list)
-        }
+            return {
+                "success": True,
+                "data": history_list,
+                "total": len(history_list)
+            }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -572,16 +589,17 @@ async def get_backtest_history(limit: int = 10):
 async def delete_backtest_history(record_id: int):
     """删除回测历史"""
     try:
-        repo = BacktestRepository()
-        success = repo.delete_by_id(record_id)
+        with get_db() as db:
+            repo = BacktestRepository(db)
+            success = repo.delete_by_id(record_id)
 
-        if not success:
-            raise HTTPException(status_code=404, detail="记录不存在或删除失败")
+            if not success:
+                raise HTTPException(status_code=404, detail="记录不存在或删除失败")
 
-        return {
-            "success": True,
-            "message": "删除成功"
-        }
+            return {
+                "success": True,
+                "message": "删除成功"
+            }
     except HTTPException:
         raise
     except Exception as e:

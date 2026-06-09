@@ -13,7 +13,8 @@
 """
 import logging
 import operator
-from typing import List, Dict, Optional, Tuple
+import threading
+from typing import List, Dict, Optional
 from collections import OrderedDict
 import pandas as pd
 import numpy as np
@@ -29,10 +30,8 @@ except ImportError:
     logger.warning("DEAP库未安装，遗传算法功能将不可用")
 
 from backend.services.base_mining_service import BaseMiningService
-from backend.services.factor_generator_service import factor_generator_service
 from backend.services.factor_validation_service import factor_validation_service
 from backend.services.alphalens_analysis_service import alphalens_analysis_service
-from backend.services.data_service import data_service
 from backend.services.factor_primitives import (
     create_pset,
     tree_to_expression,
@@ -157,6 +156,7 @@ class GeneticFactorMiningService(BaseMiningService):
 
         # Phase 4: factor value cache (keyed by tree string)
         self._factor_cache: OrderedDict = OrderedDict()
+        self._cache_lock = threading.Lock()
 
         # Build tradable_mask from OHLC data (detect limit-up/down days)
         self.tradable_mask: Optional[pd.Series] = self._build_tradable_mask()
@@ -271,18 +271,21 @@ class GeneticFactorMiningService(BaseMiningService):
 
     def _cache_get(self, tree_str: str) -> Optional[Dict[str, pd.Series]]:
         """Look up pre-computed factor values for a tree expression."""
-        return self._factor_cache.get(tree_str)
+        with self._cache_lock:
+            return self._factor_cache.get(tree_str)
 
     def _cache_set(self, tree_str: str, values: Dict[str, pd.Series]):
         """Store factor values in the LRU cache."""
-        if len(self._factor_cache) >= self.max_cache_size:
-            # evict oldest entry
-            self._factor_cache.popitem(last=False)
-        self._factor_cache[tree_str] = values
+        with self._cache_lock:
+            if len(self._factor_cache) >= self.max_cache_size:
+                # evict oldest entry
+                self._factor_cache.popitem(last=False)
+            self._factor_cache[tree_str] = values
 
     def _cache_clear(self):
         """Clear the factor value cache (call once per generation)."""
-        self._factor_cache.clear()
+        with self._cache_lock:
+            self._factor_cache.clear()
 
     # ------------------------------------------------------------------
     # Evaluation
@@ -775,12 +778,17 @@ class GeneticFactorMiningService(BaseMiningService):
         for idx, fi in enumerate(best_factors):
             fi["rank"] = idx + 1
 
-        return {
+        result = {
             "success": True,
             "best_factors": best_factors,
             "logbook": logbook,
-            "final_population": population,
+            "final_population_size": len(population),
         }
+
+        # Release memory held by DEAP population and Hall-of-Fame objects
+        self._halloffame = None
+
+        return result
 
     # ------------------------------------------------------------------
     # Evolve from seed

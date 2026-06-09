@@ -11,7 +11,6 @@ PySR符号回归因子挖掘服务
 """
 import logging
 from typing import List, Dict, Optional, Tuple
-from concurrent.futures import ThreadPoolExecutor, as_completed
 import pandas as pd
 import numpy as np
 
@@ -28,7 +27,6 @@ from backend.services.base_mining_service import BaseMiningService
 from backend.utils.safe_math import safe_divide
 from backend.services.factor_validation_service import factor_validation_service
 from backend.services.alphalens_analysis_service import alphalens_analysis_service
-from backend.services.data_service import data_service
 
 
 _PYSR_OPERATOR_MAP = {
@@ -203,7 +201,7 @@ class PySRFactorMiningService(BaseMiningService):
         result = expr_str
 
         for var_name in sorted(feature_names, key=len, reverse=True):
-            idx = int(var_name.replace("x", ""))
+            _idx = int(var_name.replace("x", ""))
             factor_code = self.base_factor_values.get(var_name, {}).get("code", var_name)
             result = result.replace(var_name, f"({factor_code})")
 
@@ -263,7 +261,7 @@ class PySRFactorMiningService(BaseMiningService):
             best_fv = factor_values_dict.get(first_code)
             best_ret = self.stock_pool_return_values.get(first_code)
 
-        logger.info(f"[PySR Eval] Attempting alphalens cross-sectional analysis...")
+        logger.info("[PySR Eval] Attempting alphalens cross-sectional analysis...")
 
         try:
             all_dates = set()
@@ -284,7 +282,7 @@ class PySRFactorMiningService(BaseMiningService):
             )
 
             if factor_data is not None and not factor_data.empty:
-                logger.info(f"[PySR Eval] Factor data prepared, calling analyze_ic...")
+                logger.info("[PySR Eval] Factor data prepared, calling analyze_ic...")
                 ic_results = alphalens_analysis_service.analyze_ic(factor_data)
                 logger.info(f"[PySR Eval] IC results: {list(ic_results.keys())}")
                 if "error" not in ic_results:
@@ -304,7 +302,7 @@ class PySRFactorMiningService(BaseMiningService):
                                 ir_val = float(period_stats.get("ir", 0))
                                 break
 
-                    stability = float(ic_results.get("stability", 0))
+                    _stability = float(ic_results.get("stability", 0))
 
                     ir_capped = min(ir_val, 5.0)
 
@@ -328,7 +326,7 @@ class PySRFactorMiningService(BaseMiningService):
             logger.warning(f"[PySR Eval] ❌ Alphalens FAILED: {e}")
 
         if not alphalens_success:
-            logger.info(f"[PySR Eval] Attempting fallback to single-stock validation...")
+            logger.info("[PySR Eval] Attempting fallback to single-stock validation...")
             logger.info(f"[PySR Eval] best_fv={'available' if best_fv is not None else 'None'}, best_ret={'available' if best_ret is not None else 'None'}")
 
             if best_fv is not None and best_ret is not None and self.return_values is not None:
@@ -343,7 +341,7 @@ class PySRFactorMiningService(BaseMiningService):
                     logger.debug(f"PySR validation failed: {e}")
                     validation = {}
             else:
-                logger.warning(f"[PySR Eval] ⚠️ No fallback possible: best_fv or best_ret is None")
+                logger.warning("[PySR Eval] ⚠️ No fallback possible: best_fv or best_ret is None")
 
         logger.info(f"[PySR Eval] Returning: fitness={fitness:.4f}, validation_keys={list(validation.keys())}")
         return fitness, validation
@@ -397,6 +395,9 @@ class PySRFactorMiningService(BaseMiningService):
 
         For other objectives, returns the raw metric directly.
         """
+        # Call super to update zscore stats (collects IC/IR values for _update_zscore_stats)
+        super()._route_fitness(ic_results, factor_values_dict)
+
         best_ic, best_ir = self._extract_best_ic_ir(ic_results)
 
         if self.fitness_objective == "ir_ratio":
@@ -408,6 +409,16 @@ class PySRFactorMiningService(BaseMiningService):
             return 0.6 * best_ic + 0.4 * best_ir
         else:
             return best_ic
+
+    def cleanup(self):
+        """释放PySR模型和Julia子进程资源"""
+        try:
+            if hasattr(self, '_pysr_model') and self._pysr_model is not None:
+                # PySR doesn't have explicit cleanup, but we can release the reference
+                self._pysr_model = None
+            self._halloffame = None
+        except Exception as e:
+            logger.debug(f"PySR cleanup error: {e}")
 
     def mine_factors(self) -> Dict:
         """Execute PySR-based symbolic regression factor mining.
@@ -437,7 +448,7 @@ class PySRFactorMiningService(BaseMiningService):
 
             logger.info(f"Feature matrix shape: {X.shape}, target shape: {y.shape}")
 
-            model = pysr.PySRRegressor(
+            self._pysr_model = pysr.PySRRegressor(
                 niterations=self.niterations,
                 populations=self.populations,
                 binary_operators=self.binary_operators,
@@ -455,7 +466,7 @@ class PySRFactorMiningService(BaseMiningService):
                 random_state=42,
             )
 
-            model.fit(X, y)
+            self._pysr_model.fit(X, y)
             self._current_iteration = self.niterations
 
             # 取消检查（PySR的fit无法中断，但可以在后处理前停止）
@@ -466,7 +477,7 @@ class PySRFactorMiningService(BaseMiningService):
             if self.progress_callback:
                 self.progress_callback(self.niterations, self.niterations, 0.0, 0.0)
 
-            equations_df = model.equations_
+            equations_df = self._pysr_model.equations_
             if equations_df is None or len(equations_df) == 0:
                 logger.warning("PySR未发现有效方程")
                 return {"success": True, "best_factors": [], "equations": None, "source": "pysr"}
@@ -531,7 +542,7 @@ class PySRFactorMiningService(BaseMiningService):
             return {
                 "success": True,
                 "best_factors": best_factors,
-                "equations": equations_df.to_dict() if equations_df is not None else None,
+                "equations": equations_df[[col for col in equations_df.columns if equations_df[col].apply(lambda x: not callable(x)).all()]].to_dict() if equations_df is not None else {},
                 "source": "pysr",
             }
 

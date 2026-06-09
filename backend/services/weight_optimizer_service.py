@@ -153,7 +153,7 @@ class WeightOptimizer:
             mu = expected_returns.mean_historical_return(factor_returns)
             S = risk_models.sample_cov(factor_returns)
             ef = EfficientFrontier(mu, S)
-            raw_weights = ef.max_sharpe()
+            _raw_weights = ef.max_sharpe()
             clean_weights = ef.clean_weights()
 
             weights = {k: v for k, v in clean_weights.items() if k in factor_names}
@@ -169,14 +169,31 @@ class WeightOptimizer:
         """
         try:
             from pypfopt import EfficientFrontier, risk_models
-            factor_df = pd.DataFrame(factor_values)
+            # Align all series to common index before creating DataFrame
+            aligned_values = {}
+            common_index = None
+            for name, series in factor_values.items():
+                if isinstance(series, pd.Series):
+                    if common_index is None:
+                        common_index = series.index
+                    else:
+                        common_index = common_index.intersection(series.index)
+            if common_index is not None and len(common_index) > 0:
+                for name, series in factor_values.items():
+                    if isinstance(series, pd.Series):
+                        aligned_values[name] = series.reindex(common_index)
+                    else:
+                        aligned_values[name] = series
+            else:
+                aligned_values = factor_values
+            factor_df = pd.DataFrame(aligned_values)
             factor_returns = factor_df[factor_names].diff().dropna()
             if len(factor_returns) < 20:
                 return self._equal_weight(factor_names)
 
             S = risk_models.sample_cov(factor_returns)
             ef = EfficientFrontier(None, S)
-            raw_weights = ef.min_volatility()
+            _raw_weights = ef.min_volatility()
             clean_weights = ef.clean_weights()
 
             weights = {k: v for k, v in clean_weights.items() if k in factor_names}
@@ -198,7 +215,7 @@ class WeightOptimizer:
                 return self._equal_weight(factor_names)
 
             hrp = HRPOpt(factor_returns)
-            raw_weights = hrp.optimize()
+            _raw_weights = hrp.optimize()
             clean_weights = hrp.clean_weights()
 
             weights = {k: v for k, v in clean_weights.items() if k in factor_names}

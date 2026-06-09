@@ -8,7 +8,6 @@
 4. 提交前确认所有检查项已勾选
 """
 import pandas as pd
-import numpy as np
 from backend.strategies.base_strategy import BaseStrategy
 
 

@@ -1,14 +1,11 @@
 """
 因子验证服务 - 验证因子质量（含未来函数检测）
 """
-from typing import Dict, Optional, List
+from typing import Dict, Optional
 import pandas as pd
 import numpy as np
 from scipy import stats
-from sklearn.metrics import pairwise_distances
-from backend.services.alphalens_analysis_service import alphalens_analysis_service
 from backend.services.lookahead_bias_detector import (
-    LookaheadBiasDetector,
     lookahead_bias_detector,
     BiasRiskLevel,
 )

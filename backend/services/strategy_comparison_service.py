@@ -3,9 +3,7 @@
 """
 from typing import List, Dict, Optional
 import pandas as pd
-import numpy as np
 from scipy import stats
-from backend.strategies.base_strategy import BaseStrategy
 from backend.services.strategy_registry import strategy_registry
 
 

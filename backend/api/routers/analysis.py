@@ -5,7 +5,6 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import List, Optional, Dict
 import pandas as pd
-import numpy as np
 import logging
 import traceback
 
@@ -79,10 +78,10 @@ async def calculate_factor(request: CalculateRequest):
         from backend.services.data_service import data_service
         from backend.services.factor_service import factor_service
         from backend.repositories.factor_repository import FactorRepository
-        from backend.core.database import get_db_session
+        from backend.core.database import get_db
 
         # 获取因子定义
-        with get_db_session() as db:
+        with get_db() as db:
             repo = FactorRepository(db)
             factor = repo.get_by_name(request.factor_name)
 
@@ -315,12 +314,11 @@ async def decay_analysis(request: ICAnalysisRequest):
         from backend.services.data_service import data_service
         from backend.services.factor_service import factor_service
         from backend.repositories.factor_repository import FactorRepository
-        from backend.core.database import get_db_session
-        import pandas as pd
+        from backend.core.database import get_db
         import numpy as np
 
         # 获取因子定义
-        with get_db_session() as db:
+        with get_db() as db:
             repo = FactorRepository(db)
             factor = repo.get_by_name(request.factor_name)
 
@@ -394,15 +392,14 @@ async def exposure_analysis(request: CalculateRequest):
 
 
     try:
-        from backend.services.data_service import data_service
         from backend.services.factor_service import factor_service
         from backend.repositories.factor_repository import FactorRepository
-        from backend.core.database import get_db_session
+        from backend.core.database import get_db
 
         logger.info(f"开始因子暴露度分析: {request.factor_name}, 股票: {request.stock_codes}")
 
         # 获取因子定义
-        with get_db_session() as db:
+        with get_db() as db:
             repo = FactorRepository(db)
             factor = repo.get_by_name(request.factor_name)
 
@@ -444,15 +441,14 @@ async def effectiveness_analysis(request: ICAnalysisRequest):
 
 
     try:
-        from backend.services.data_service import data_service
         from backend.services.factor_service import factor_service
         from backend.repositories.factor_repository import FactorRepository
-        from backend.core.database import get_db_session
+        from backend.core.database import get_db
 
         logger.info(f"开始因子有效性分析: {request.factor_name}, 股票: {request.stock_codes}")
 
         # 获取因子定义
-        with get_db_session() as db:
+        with get_db() as db:
             repo = FactorRepository(db)
             factor = repo.get_by_name(request.factor_name)
 
@@ -494,15 +490,14 @@ async def attribution_analysis(request: ICAnalysisRequest):
 
 
     try:
-        from backend.services.data_service import data_service
         from backend.services.factor_service import factor_service
         from backend.repositories.factor_repository import FactorRepository
-        from backend.core.database import get_db_session
+        from backend.core.database import get_db
 
         logger.info(f"开始因子贡献度分解: {request.factor_name}, 股票: {request.stock_codes}")
 
         # 获取因子定义
-        with get_db_session() as db:
+        with get_db() as db:
             repo = FactorRepository(db)
             factor = repo.get_by_name(request.factor_name)
 
@@ -544,15 +539,14 @@ async def monitoring_analysis(request: ICAnalysisRequest):
 
 
     try:
-        from backend.services.data_service import data_service
         from backend.services.factor_service import factor_service
         from backend.repositories.factor_repository import FactorRepository
-        from backend.core.database import get_db_session
+        from backend.core.database import get_db
 
         logger.info(f"开始时间序列动态监测: {request.factor_name}, 股票: {request.stock_codes}")
 
         # 获取因子定义
-        with get_db_session() as db:
+        with get_db() as db:
             repo = FactorRepository(db)
             factor = repo.get_by_name(request.factor_name)
 
@@ -616,7 +610,6 @@ async def enhanced_correlation_analysis(request: CorrelationAnalysisRequest):
 
     
     try:
-        from backend.services.data_service import data_service
         from backend.services.factor_service import factor_service
         
         logger.info(
@@ -731,7 +724,6 @@ async def correlation_interpretation(request: CorrelationAnalysisRequest):
 
     
     try:
-        from backend.services.factor_correlation_service import factor_correlation_service
         
         return {
             "success": True,
@@ -836,17 +828,16 @@ async def quantile_returns_analysis(request: QuantileReturnsRequest):
 
     
     try:
-        from backend.services.data_service import data_service
         from backend.services.factor_service import factor_service
         from backend.repositories.factor_repository import FactorRepository
-        from backend.core.database import get_db_session
+        from backend.core.database import get_db
         
         logger.info(
             f"开始因子分组收益分析: {request.factor_name}, "
             f"股票数={len(request.stock_codes)}"
         )
         
-        with get_db_session() as db:
+        with get_db() as db:
             repo = FactorRepository(db)
             factor = repo.get_by_name(request.factor_name)
         
@@ -867,7 +858,7 @@ async def quantile_returns_analysis(request: QuantileReturnsRequest):
             factor_return_analysis_service
         )
         
-        config = {
+        _config = {
             "n_quantiles": request.n_quantiles,
         }
         
@@ -879,7 +870,7 @@ async def quantile_returns_analysis(request: QuantileReturnsRequest):
         if "error" in result:
             raise HTTPException(status_code=500, detail=result["error"])
         
-        logger.info(f"因子分组收益分析完成")
+        logger.info("因子分组收益分析完成")
         
         return sanitize_dict({
             "success": True,
@@ -916,14 +907,13 @@ async def cumulative_returns_analysis(request: QuantileReturnsRequest):
 
     
     try:
-        from backend.services.data_service import data_service
         from backend.services.factor_service import factor_service
         from backend.repositories.factor_repository import FactorRepository
-        from backend.core.database import get_db_session
+        from backend.core.database import get_db
         
         logger.info(f"开始累计收益曲线分析: {request.factor_name}")
         
-        with get_db_session() as db:
+        with get_db() as db:
             repo = FactorRepository(db)
             factor = repo.get_by_name(request.factor_name)
         
@@ -990,14 +980,13 @@ async def turnover_analysis(request: ICAnalysisRequest):
 
     
     try:
-        from backend.services.data_service import data_service
         from backend.services.factor_service import factor_service
         from backend.repositories.factor_repository import FactorRepository
-        from backend.core.database import get_db_session
+        from backend.core.database import get_db
         
         logger.info(f"开始换手率分析: {request.factor_name}")
         
-        with get_db_session() as db:
+        with get_db() as db:
             repo = FactorRepository(db)
             factor = repo.get_by_name(request.factor_name)
         
@@ -1066,14 +1055,13 @@ async def full_tear_sheet(request: QuantileReturnsRequest):
 
     
     try:
-        from backend.services.data_service import data_service
         from backend.services.factor_service import factor_service
         from backend.repositories.factor_repository import FactorRepository
-        from backend.core.database import get_db_session
+        from backend.core.database import get_db
         
         logger.info(f"🎯 开始生成Tear Sheet全貌报告: {request.factor_name}")
         
-        with get_db_session() as db:
+        with get_db() as db:
             repo = FactorRepository(db)
             factor = repo.get_by_name(request.factor_name)
         
@@ -1156,9 +1144,7 @@ async def weighted_ic_analysis(request: WeightedICRequest):
 
     
     try:
-        from backend.services.data_service import data_service
         from backend.services.factor_service import factor_service
-        from backend.core.database import get_db_session
         
         logger.info(
             f"开始加权IC分析: 因子={request.factor_names}, "
@@ -1274,7 +1260,6 @@ async def factor_importance_analysis(request: WeightedICRequest):
 
     
     try:
-        from backend.services.data_service import data_service
         from backend.services.factor_service import factor_service
         
         logger.info(f"开始因子重要性排名: {request.factor_names}")
@@ -1371,10 +1356,8 @@ async def detect_lookahead_bias(request: LookaheadBiasRequest):
 
 
     try:
-        from backend.services.data_service import data_service
         from backend.services.factor_service import factor_service
         from backend.services.lookahead_bias_detector import (
-            LookaheadBiasDetector,
             lookahead_bias_detector,
             strict_lookahead_bias_detector,
         )

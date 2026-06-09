@@ -2,12 +2,13 @@
 因子导入服务 - 从CSV文件导入因子
 """
 import logging
-import pandas as pd
-from typing import Optional, Dict, List
-from pathlib import Path
-from sqlalchemy.orm import Session
 
-from backend.core.database import get_db_session
+logger = logging.getLogger(__name__)
+import pandas as pd
+from typing import Dict
+from pathlib import Path
+
+from backend.core.database import get_db
 from backend.repositories.factor_repository import FactorRepository
 from backend.models.factor import FactorModel
 
@@ -17,10 +18,6 @@ class FactorImportService:
 
     def __init__(self):
         pass
-
-    def _get_db(self) -> Session:
-        """获取数据库会话"""
-        return get_db_session()
 
     def import_from_csv(
         self,
@@ -63,8 +60,7 @@ class FactorImportService:
             factor_code = self._generate_import_code(date_column, factor_column)
 
             # 保存到数据库
-            db = self._get_db()
-            try:
+            with get_db() as db:
                 repo = FactorRepository(db)
 
                 # 检查因子是否已存在
@@ -92,9 +88,6 @@ class FactorImportService:
                     "date_range": f"{df[date_column].min()} 至 {df[date_column].max()}",
                     "message": f"成功导入因子 '{factor_name}'，共 {len(df)} 条数据",
                 }
-
-            finally:
-                db.close()
 
         except Exception as e:
             return {
@@ -141,8 +134,7 @@ class FactorImportService:
             factor_code = self._generate_import_code(date_column, factor_column)
 
             # 保存到数据库
-            db = self._get_db()
-            try:
+            with get_db() as db:
                 repo = FactorRepository(db)
 
                 # 检查因子是否已存在
@@ -169,9 +161,6 @@ class FactorImportService:
                     "row_count": len(df),
                     "message": f"成功导入因子 '{factor_name}'，共 {len(df)} 条数据",
                 }
-
-            finally:
-                db.close()
 
         except Exception as e:
             return {

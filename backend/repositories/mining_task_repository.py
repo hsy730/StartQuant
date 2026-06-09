@@ -4,7 +4,7 @@
 import json
 from typing import List, Optional, Dict
 from sqlalchemy.orm import Session
-from sqlalchemy import select, desc
+from sqlalchemy import select
 
 from backend.models.mining_task import MiningTaskModel
 

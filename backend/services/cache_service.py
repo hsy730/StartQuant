@@ -9,10 +9,8 @@ from pathlib import Path
 from datetime import datetime
 from typing import Optional, Any, Dict
 
-from sqlalchemy.orm import Session
-
 from backend.core.settings import settings
-from backend.core.database import get_db_session
+from backend.core.database import get_db
 from backend.repositories.cache_repository import CacheRepository
 
 logger = logging.getLogger(__name__)
@@ -34,10 +32,6 @@ class CacheService:
         # 统计信息
         self._hits = 0  # 缓存命中次数
         self._misses = 0  # 缓存未命中次数
-
-    def _get_db(self) -> Session:
-        """获取数据库会话"""
-        return get_db_session()
 
     def _generate_cache_key(self, *args) -> str:
         """
@@ -73,8 +67,7 @@ class CacheService:
         Returns:
             缓存的数据，如果不存在或已过期则返回默认值
         """
-        db = self._get_db()
-        try:
+        with get_db() as db:
             repo = CacheRepository(db)
             metadata = repo.get_by_key(cache_key)
 
@@ -113,9 +106,6 @@ class CacheService:
                     repo.delete(metadata)
                 return default
 
-        finally:
-            db.close()
-
     def set(
         self,
         cache_key: str,
@@ -144,8 +134,7 @@ class CacheService:
             file_size = os.path.getsize(cache_path)
 
             # 保存或更新元数据
-            db = self._get_db()
-            try:
+            with get_db() as db:
                 repo = CacheRepository(db)
                 existing_metadata = repo.get_by_key(cache_key)
 
@@ -165,9 +154,6 @@ class CacheService:
                     )
 
                 return True
-
-            finally:
-                db.close()
 
         except Exception as e:
             logger.warning(f"保存缓存失败: {e}")
@@ -193,12 +179,9 @@ class CacheService:
                 logger.debug(f"删除缓存文件失败: {e}")
 
         # 删除元数据
-        db = self._get_db()
-        try:
+        with get_db() as db:
             repo = CacheRepository(db)
             return repo.delete_by_key(cache_key)
-        finally:
-            db.close()
 
     def cleanup_expired(self) -> int:
         """
@@ -207,8 +190,7 @@ class CacheService:
         Returns:
             清理的缓存数量
         """
-        db = self._get_db()
-        try:
+        with get_db() as db:
             repo = CacheRepository(db)
             expired_metadata_list = repo.get_all_expired()
 
@@ -228,9 +210,6 @@ class CacheService:
 
             return cleaned_count
 
-        finally:
-            db.close()
-
     def get_stats(self) -> Dict[str, Any]:
         """
         获取缓存统计信息
@@ -238,8 +217,7 @@ class CacheService:
         Returns:
             包含统计信息的字典
         """
-        db = self._get_db()
-        try:
+        with get_db() as db:
             repo = CacheRepository(db)
             stats = repo.get_stats()
 
@@ -255,9 +233,6 @@ class CacheService:
 
             return stats
 
-        finally:
-            db.close()
-
     def clear_all(self) -> int:
         """
         清空所有缓存（元数据和文件）
@@ -265,8 +240,7 @@ class CacheService:
         Returns:
             清理的缓存数量
         """
-        db = self._get_db()
-        try:
+        with get_db() as db:
             repo = CacheRepository(db)
             all_metadata = repo.get_all()
 
@@ -281,9 +255,6 @@ class CacheService:
 
             # 清空元数据表
             return repo.clear_all()
-
-        finally:
-            db.close()
 
     def exists(self, cache_key: str) -> bool:
         """

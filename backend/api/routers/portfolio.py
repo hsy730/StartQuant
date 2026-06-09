@@ -4,8 +4,7 @@
 import logging
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from typing import List, Dict, Optional
-import numpy as np
+from typing import List
 
 from backend.utils.serialization import safe_numeric_value, sanitize_dict
 from backend.utils.safe_math import safe_divide, safe_ir
@@ -90,6 +89,7 @@ async def optimize_weights(request: OptimizeWeightsRequest):
                 if values is not None and len(values.dropna()) > 0:
                     factor_values[factor_name] = values
             except Exception as e:
+                logger.warning(f"因子 {factor_name} 计算失败: {e}")
                 continue
 
         if not factor_values:
@@ -234,7 +234,6 @@ async def calculate_composite_score(request: CompositeScoreRequest):
         from backend.services.factor_service import factor_service
         from backend.repositories.factor_repository import FactorRepository
         from backend.core.database import get_db
-        import pandas as pd
 
         # 获取股票数据
         stock_data = data_service.get_stock_data(

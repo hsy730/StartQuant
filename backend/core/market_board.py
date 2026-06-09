@@ -5,7 +5,6 @@ A股板块识别工具
 消除 data_service、smart_preprocessing_detector、smart_slippage_detector 中的重复定义。
 """
 from enum import Enum
-from typing import Dict, Optional
 
 
 class MarketBoard(Enum):

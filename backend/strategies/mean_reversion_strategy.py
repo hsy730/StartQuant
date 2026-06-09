@@ -1,7 +1,6 @@
 """
 均值回归策略 - 价格偏离均值时回归
 """
-from typing import Dict
 import pandas as pd
 import numpy as np
 from .base_strategy import BaseStrategy

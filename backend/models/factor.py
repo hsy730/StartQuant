@@ -2,7 +2,7 @@
 因子相关数据模型
 """
 from datetime import datetime
-from sqlalchemy import String, DateTime, Text, Integer, Float, JSON
+from sqlalchemy import String, DateTime, Text, Integer, JSON
 from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.core.database import Base

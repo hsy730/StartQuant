@@ -19,8 +19,6 @@ import logging
 import random
 import math
 from typing import List, Dict, Optional, Tuple
-from collections import OrderedDict
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import pandas as pd
 import numpy as np
@@ -41,15 +39,10 @@ except ImportError:
 
 from backend.services.base_mining_service import BaseMiningService
 from backend.utils.safe_math import safe_divide
-from backend.services.factor_generator_service import factor_generator_service
 from backend.services.factor_validation_service import factor_validation_service
 from backend.services.alphalens_analysis_service import alphalens_analysis_service
-from backend.services.data_service import data_service
 from backend.services.factor_primitives import (
     create_pset,
-    tree_to_expression,
-    tree_to_placeholder_expr,
-    compile_tree,
     expression_similarity,
 )
 

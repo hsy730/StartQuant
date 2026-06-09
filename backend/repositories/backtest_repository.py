@@ -1,19 +1,21 @@
 """
 回测结果数据访问层
 """
+import logging
 from typing import Optional, List, Dict, Any
 from sqlalchemy import select, delete, desc
-from datetime import datetime
+from sqlalchemy.orm import Session
 
 from backend.models.backtest import BacktestResultModel, TradeRecordModel
-from backend.core.database import get_db_session
+
+logger = logging.getLogger(__name__)
 
 
 class BacktestRepository:
     """回测结果数据访问类"""
 
-    def __init__(self):
-        self.db = get_db_session()
+    def __init__(self, db: Session):
+        self.db = db
 
     def save_result(self, result_data: Dict[str, Any]) -> BacktestResultModel:
         """
@@ -211,7 +213,3 @@ class BacktestRepository:
             "avg_return": avg_return,
             "avg_sharpe": avg_sharpe,
         }
-
-    def close(self):
-        """关闭数据库连接"""
-        self.db.close()

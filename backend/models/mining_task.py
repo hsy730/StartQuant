@@ -1,7 +1,7 @@
 """
 挖掘任务数据模型
 """
-from sqlalchemy import Column, Integer, String, Text, Float, JSON, DateTime
+from sqlalchemy import Integer, String, Text, Float, JSON, DateTime
 from sqlalchemy.orm import Mapped, mapped_column
 from datetime import datetime
 

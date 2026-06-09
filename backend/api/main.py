@@ -1,7 +1,7 @@
 """
 FastAPI主应用
 """
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -12,7 +12,6 @@ import logging
 from pathlib import Path
 import numpy as np
 import json
-import os
 
 logger = logging.getLogger(__name__)
 
@@ -20,10 +19,8 @@ logger = logging.getLogger(__name__)
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from backend.core.settings import settings
 from backend.core.database import init_db
 from backend.services.factor_service import factor_service
-from backend.services.data_service import data_service
 
 # 导入路由
 from .routers import (

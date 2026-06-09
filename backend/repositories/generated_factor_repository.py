@@ -3,7 +3,7 @@
 """
 from typing import List, Optional, Dict
 from sqlalchemy.orm import Session
-from sqlalchemy import select, update
+from sqlalchemy import select
 
 from backend.models.generated_factor import GeneratedFactorModel
 

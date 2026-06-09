@@ -17,7 +17,6 @@
 import logging
 from typing import List, Dict, Optional, Tuple
 import pandas as pd
-import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -41,8 +40,6 @@ if not TREE_PRESCREEN_AVAILABLE:
 
 from backend.services.base_mining_service import BaseMiningService
 # ---- 下游服务延迟导入 ----
-from backend.services.factor_validation_service import factor_validation_service
-from backend.services.data_service import data_service
 
 
 class TreePrescreenMiningService(BaseMiningService):
@@ -317,7 +314,7 @@ class TreePrescreenMiningService(BaseMiningService):
         # 按重要性降序排列，取 Top-K
         sorted_features = sorted(filtered.items(), key=lambda x: x[1], reverse=True)
         selected = [name for name, _ in sorted_features[:effective_k]]
-        selected_importance = {name: imp for name, imp in sorted_features[:effective_k]}
+        _selected_importance = {name: imp for name, imp in sorted_features[:effective_k]}
 
         self._feature_importance = importance_dict
         self._selected_features = selected
@@ -418,7 +415,6 @@ class TreePrescreenMiningService(BaseMiningService):
     def _run_downstream_genetic(self, selected_factor_codes: List[str]) -> Dict:
         """运行 DEAP 遗传规划下游"""
         from backend.services.genetic_factor_mining_service import (
-            GeneticFactorMiningService,
             create_genetic_mining_service,
             DEAP_AVAILABLE,
         )
@@ -464,7 +460,6 @@ class TreePrescreenMiningService(BaseMiningService):
     def _run_downstream_pysr(self, selected_factor_codes: List[str]) -> Dict:
         """运行 PySR 符号回归下游"""
         from backend.services.pysr_factor_mining_service import (
-            PySRFactorMiningService,
             create_pysr_mining_service,
             PYSR_AVAILABLE,
         )

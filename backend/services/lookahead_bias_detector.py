@@ -24,11 +24,10 @@
 """
 import numpy as np
 import pandas as pd
-from typing import Dict, List, Optional, Tuple, Any
+from typing import Dict, List, Optional, Any
 from dataclasses import dataclass, field
 from enum import Enum
 import logging
-from scipy import stats as scipy_stats
 
 from backend.utils.safe_math import safe_divide, safe_ir
 

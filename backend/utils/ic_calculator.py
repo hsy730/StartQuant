@@ -6,7 +6,7 @@ TODO: 逐步迁移各服务中的IC计算到此处
 """
 import numpy as np
 import pandas as pd
-from typing import Optional, Tuple
+from typing import Optional
 
 
 def calculate_ic(

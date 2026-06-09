@@ -14,15 +14,15 @@
 """
 import numpy as np
 import pandas as pd
-from typing import Dict, List, Optional, Tuple, Union, Literal
-from dataclasses import dataclass, field
+from typing import Dict, List, Optional, Tuple
+from dataclasses import dataclass
 from enum import Enum
 import logging
 from concurrent.futures import ThreadPoolExecutor
 import warnings
 
 from sklearn.linear_model import LinearRegression
-from sklearn.preprocessing import StandardScaler, RobustScaler
+from sklearn.preprocessing import StandardScaler
 from scipy.stats.mstats import winsorize as scipy_winsorize
 
 import statsmodels.api as sm
@@ -477,7 +477,6 @@ class FactorPreprocessingPipeline:
         去极值（全局模式，横截面去极值见 _process_cross_sectional）
         """
         method = self.config.winsorize_method
-        original = series.copy()
         clipped_count = 0
 
         if method == WinsorizeMethod.MAD:

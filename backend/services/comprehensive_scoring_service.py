@@ -3,8 +3,6 @@
 """
 from typing import Dict, List, Optional
 import logging
-import pandas as pd
-import numpy as np
 
 from backend.services.smart_slippage_detector import smart_slippage_detector
 from backend.utils.safe_math import safe_divide
@@ -518,11 +516,11 @@ class ComprehensiveScoringService:
             报告文本
         """
         report = f"# {name} 评分报告\n\n"
-        report += f"## 综合得分\n\n"
+        report += "## 综合得分\n\n"
         report += f"**得分**: {score_result['total_score']:.2f}/100\n"
         report += f"**评级**: {score_result['grade']}\n\n"
 
-        report += f"## 分项得分\n\n"
+        report += "## 分项得分\n\n"
 
         details = score_result.get("details", {})
         weights = score_result.get("weights", {})

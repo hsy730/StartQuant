@@ -7,24 +7,17 @@ VectorBT不可用时抛出明确错误，不再使用有Bug的自建fallback。
 """
 import pandas as pd
 import numpy as np
-from typing import Dict, List, Optional, Tuple
-from datetime import datetime
+from typing import Dict, List, Optional
 import logging
 
-from backend.strategies.base_strategy import BaseStrategy
 from backend.services.strategy_registry import strategy_registry
 from backend.services.strategy_comparison_service import strategy_comparison_service
 from backend.services.position_analysis_service import position_analysis_service
 from backend.services.export_service import export_service
 from backend.services.risk_metrics import calculate_risk_metrics, calculate_relative_metrics, _empty_metrics as _risk_empty_metrics
-from backend.services.factor_preprocessing_pipeline import (
-    FactorPreprocessingPipeline,
-    PreprocessingConfig,
-)
 
 from backend.services.vectorbt_backtest_service import (
     VectorBTBacktestService,
-    check_vectorbt_available,
 )
 
 logger = logging.getLogger(__name__)

@@ -92,8 +92,8 @@ class CacheRepository:
         # 计算命中率（假设每次 get 都是一次访问尝试）
         # 这里简化计算：访问总数 / (访问总数 + 过期数)
         # 实际命中率需要在 CacheService 中跟踪
-        hit_count = total_access_count
-        miss_count = expired_count  # 简化假设
+        _hit_count = total_access_count
+        _miss_count = expired_count  # 简化假设
 
         return {
             "total_count": total_count,

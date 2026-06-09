@@ -13,14 +13,13 @@
 import logging
 import numpy as np
 import pandas as pd
-from typing import Dict, List, Optional, Tuple, Any
+from typing import Dict, List, Tuple, Any
 from scipy import stats as scipy_stats
 
-from backend.utils.safe_math import safe_divide, safe_ir
+from backend.utils.safe_math import safe_divide
 
 logger = logging.getLogger(__name__)
 
-import alphalens
 
 try:
     import phik
@@ -545,7 +544,7 @@ class FactorCorrelationService:
         
         # 总体评估
         n_high = len(interp['high_correlation_pairs'])
-        n_low = len(interp['low_correlation_pairs'])
+        _n_low = len(interp['low_correlation_pairs'])
         
         if n_high == 0:
             interp['overall_assessment'] = '✅ 因子间独立性良好，适合组合使用'

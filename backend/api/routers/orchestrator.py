@@ -10,7 +10,7 @@
 - AlphaMiner: ❌ → ✅ (通过 FactorOrchestrator)
 - StockRanker: ❌ → ✅ (通过 StockRankerService)
 """
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 import traceback
@@ -70,7 +70,6 @@ async def orchestrator_validate(request: OrchestratorValidateRequest):
         from backend.services.factor_orchestrator_service import (
             FactorOrchestrator,
             OrchestratorConfig,
-            factor_orchestrator,
         )
 
         config = OrchestratorConfig(
@@ -109,7 +108,6 @@ async def orchestrator_batch_validate(request: OrchestratorBatchRequest):
     try:
         from backend.services.factor_orchestrator_service import (
             FactorOrchestrator,
-            factor_orchestrator,
         )
 
         orchestrator = FactorOrchestrator()
@@ -184,7 +182,6 @@ async def stock_ranker_train(request: RankerTrainRequest):
                 detail="XGBoost 未安装，StockRanker 服务不可用。请执行: pip install xgboost",
             )
 
-        from backend.services.data_service import data_service
 
         # 构造特征数据（示例：使用基础因子作为特征）
         # 实际生产中应从数据库/因子库中获取预计算的特征矩阵

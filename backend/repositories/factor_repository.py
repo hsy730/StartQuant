@@ -3,7 +3,7 @@
 """
 from typing import List, Optional
 from sqlalchemy.orm import Session
-from sqlalchemy import select, update, delete, func
+from sqlalchemy import select, delete, func
 
 from backend.models.factor import FactorModel, AnalysisCacheModel
 

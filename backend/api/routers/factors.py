@@ -124,15 +124,12 @@ async def get_factor_stats():
 async def get_factor(factor_id: int):
     """获取因子详情"""
     try:
-        from backend.core.database import get_db_session
+        from backend.core.database import get_db
         from backend.repositories.factor_repository import FactorRepository
 
-        db = get_db_session()
-        try:
+        with get_db() as db:
             repo = FactorRepository(db)
             factor_model = repo.get_by_id(factor_id)
-        finally:
-            db.close()
 
         if not factor_model:
             raise HTTPException(status_code=404, detail="因子不存在")
@@ -547,9 +544,9 @@ async def promote_generated_factor(generated_id: int, request: PromoteFactorRequ
     try:
         result = {processed_expr}
         return result
-    except Exception as e:
+    except Exception as ex:
         import logging
-        logging.getLogger(__name__).warning(f"因子计算异常: {e}")
+        logging.getLogger(__name__).warning(f"因子计算异常: {ex}")
         return pd.Series(float('nan'), index=df.index)
 """
 

@@ -3,7 +3,6 @@
 
 项目规范5：未来收益率计算在15处各自实现，提取统一入口
 """
-import numpy as np
 import pandas as pd
 
 
