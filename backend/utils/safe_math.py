@@ -95,3 +95,67 @@ def safe_ir(ic_mean: float, ic_std: float, default: Optional[float] = None) -> O
         return default
 
     return safe_divide(ic_mean, ic_std, default=default)
+
+
+def safe_series_divide(
+    numerator: Union[pd.Series, np.ndarray],
+    denominator: Union[pd.Series, np.ndarray],
+    fill_value: float = np.nan,
+) -> Union[pd.Series, np.ndarray]:
+    """
+    安全Series除法 — 分母零值/NaN处填充fill_value而非产生inf
+
+    适用于因子代码字符串中的除法保护模式（替代 .replace(0, np.nan) hack）。
+    与 safe_divide 的区别：本函数对零值分母填充 fill_value（默认NaN），
+    而 safe_divide 对零值分母填充 default（默认None）。
+
+    因子计算场景中，NaN 是最合适的"无效值"标记（后续 dropna 可自动移除），
+    而 None 无法放入 Series。因此因子代码字符串中的除法应统一使用本函数。
+
+    Args:
+        numerator: 分子（Series或ndarray）
+        denominator: 分母（Series或ndarray）
+        fill_value: 分母无效时的填充值（默认NaN，因子计算推荐）
+
+    Returns:
+        除法结果，分母零值/NaN处为fill_value
+
+    Examples:
+        >>> s1 = pd.Series([10, 20, 30])
+        >>> s2 = pd.Series([2, 0, 5])
+        >>> safe_series_divide(s1, s2)
+        0    5.0
+        1    NaN   # 0分母 → NaN
+        2    6.0
+        dtype: float64
+
+        >>> safe_series_divide(s1, s2, fill_value=0.0)
+        0    5.0
+        1    0.0   # 0分母 → 0.0
+        2    6.0
+        dtype: float64
+    """
+    if isinstance(denominator, pd.Series):
+        invalid = (denominator.abs() < 1e-10) | denominator.isna()
+        safe_denom = denominator.copy()
+        safe_denom[invalid] = 1.0
+        result = numerator / safe_denom
+        result[invalid] = fill_value
+        return result
+    elif isinstance(denominator, np.ndarray):
+        invalid = (np.abs(denominator) < 1e-10) | np.isnan(denominator)
+        safe_denom = denominator.copy()
+        safe_denom[invalid] = 1.0
+        result = numerator / safe_denom
+        result[invalid] = fill_value
+        return result
+    else:
+        # 标量分母
+        if denominator is None or (isinstance(denominator, (float, np.floating)) and np.isnan(denominator)) or abs(denominator) < 1e-10:
+            # 保持与分子相同的类型：Series分子→Series全fill_value，ndarray分子→ndarray全fill_value
+            if isinstance(numerator, pd.Series):
+                return pd.Series(fill_value, index=numerator.index, dtype=float)
+            elif isinstance(numerator, np.ndarray):
+                return np.full_like(numerator, fill_value, dtype=float)
+            return fill_value
+        return numerator / denominator

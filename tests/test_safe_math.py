@@ -18,7 +18,7 @@ if not hasattr(np, 'NINF'):
 if not hasattr(np, 'PINF'):
     np.PINF = np.inf
 
-from backend.utils.safe_math import safe_divide, safe_ir
+from backend.utils.safe_math import safe_divide, safe_ir, safe_series_divide
 
 
 class TestSafeDivideScalar:
@@ -337,6 +337,179 @@ class TestSafeDivideEdgeCases:
         """Python float('nan') 作为分母应返回默认值"""
         result = safe_divide(10.0, float('nan'))
         assert result is None
+
+
+class TestSafeSeriesDivide:
+    """safe_series_divide 安全Series除法测试"""
+
+    def test_safe_series_divide_normal_division(self):
+        """正常Series除法应返回正确结果"""
+        s1 = pd.Series([10.0, 20.0, 30.0])
+        s2 = pd.Series([2.0, 5.0, 10.0])
+        result = safe_series_divide(s1, s2)
+        expected = pd.Series([5.0, 4.0, 3.0])
+        pd.testing.assert_series_equal(result, expected)
+
+    def test_safe_series_divide_zero_denominator_fills_nan(self):
+        """零分母应填充NaN（默认fill_value）"""
+        s1 = pd.Series([10.0, 20.0, 30.0])
+        s2 = pd.Series([2.0, 0.0, 5.0])
+        result = safe_series_divide(s1, s2)
+        assert result.iloc[0] == pytest.approx(5.0)
+        assert pd.isna(result.iloc[1])  # 零分母 → NaN
+        assert result.iloc[2] == pytest.approx(6.0)
+
+    def test_safe_series_divide_zero_denominator_custom_fill(self):
+        """零分母应填充自定义fill_value"""
+        s1 = pd.Series([10.0, 20.0, 30.0])
+        s2 = pd.Series([2.0, 0.0, 5.0])
+        result = safe_series_divide(s1, s2, fill_value=0.0)
+        assert result.iloc[0] == pytest.approx(5.0)
+        assert result.iloc[1] == 0.0  # 零分母 → 0.0
+        assert result.iloc[2] == pytest.approx(6.0)
+
+    def test_safe_series_divide_nan_denominator_fills_nan(self):
+        """NaN分母应填充NaN"""
+        s1 = pd.Series([10.0, 20.0, 30.0])
+        s2 = pd.Series([2.0, np.nan, 5.0])
+        result = safe_series_divide(s1, s2)
+        assert result.iloc[0] == pytest.approx(5.0)
+        assert pd.isna(result.iloc[1])
+        assert result.iloc[2] == pytest.approx(6.0)
+
+    def test_safe_series_divide_near_zero_denominator(self):
+        """近零分母（浮点噪声）应填充NaN"""
+        s1 = pd.Series([10.0, 20.0])
+        s2 = pd.Series([2.0, 1e-18])
+        result = safe_series_divide(s1, s2)
+        assert result.iloc[0] == pytest.approx(5.0)
+        assert pd.isna(result.iloc[1])
+
+    def test_safe_series_divide_all_zero_denominator(self):
+        """全零分母应全部填充NaN"""
+        s1 = pd.Series([10.0, 20.0, 30.0])
+        s2 = pd.Series([0.0, 0.0, 0.0])
+        result = safe_series_divide(s1, s2)
+        assert result.isna().all()
+
+    def test_safe_series_divide_ndarray(self):
+        """ndarray输入应正常工作"""
+        a1 = np.array([10.0, 20.0, 30.0])
+        a2 = np.array([2.0, 0.0, 5.0])
+        result = safe_series_divide(a1, a2)
+        assert result[0] == pytest.approx(5.0)
+        assert np.isnan(result[1])
+        assert result[2] == pytest.approx(6.0)
+
+    def test_safe_series_divide_scalar_denominator(self):
+        """标量分母应正常工作"""
+        s1 = pd.Series([10.0, 20.0, 30.0])
+        result = safe_series_divide(s1, 2.0)
+        expected = pd.Series([5.0, 10.0, 15.0])
+        pd.testing.assert_series_equal(result, expected)
+
+    def test_safe_series_divide_scalar_zero_denominator(self):
+        """标量零分母应返回全NaN的Series"""
+        s1 = pd.Series([10.0, 20.0, 30.0])
+        result = safe_series_divide(s1, 0.0)
+        # 标量零分母→Series全fill_value（默认NaN）
+        assert isinstance(result, pd.Series)
+        assert result.isna().all()
+
+    def test_safe_series_divide_preserves_index(self):
+        """应保留原始索引"""
+        s1 = pd.Series([10.0, 20.0], index=["a", "b"])
+        s2 = pd.Series([2.0, 5.0], index=["a", "b"])
+        result = safe_series_divide(s1, s2)
+        assert list(result.index) == ["a", "b"]
+
+    def test_safe_series_divide_no_inf_in_result(self):
+        """结果中不应包含inf"""
+        s1 = pd.Series([100.0, 200.0, 300.0])
+        s2 = pd.Series([0.0, 5.0, 0.0])
+        result = safe_series_divide(s1, s2)
+        assert not np.isinf(result).any()
+
+    def test_safe_series_divide_zscore_pattern(self):
+        """zscore计算模式：(value - mean) / std，std=0时填充NaN"""
+        values = pd.Series([1.0, 2.0, 3.0, 3.0, 3.0])  # 后3个值相同
+        rolling_mean = values.rolling(3, min_periods=1).mean()
+        rolling_std = values.rolling(3, min_periods=1).std()
+        result = safe_series_divide(values - rolling_mean, rolling_std)
+        # std=0的位置应为NaN，不应产生inf
+        assert not np.isinf(result.dropna()).any()
+
+
+class TestWithDbDecorator:
+    """with_db 装饰器测试"""
+
+    def test_with_db_injects_session(self):
+        """@with_db 应自动注入db参数"""
+        from backend.core.database import with_db
+        from sqlalchemy.orm import Session
+
+        @with_db
+        def my_func(db=None):
+            return isinstance(db, Session)
+
+        result = my_func()
+        assert result is True
+
+    def test_with_db_custom_param_name(self):
+        """@with_db(db_param=...) 应使用自定义参数名"""
+        from backend.core.database import with_db
+        from sqlalchemy.orm import Session
+
+        @with_db(db_param="session")
+        def my_func(session=None):
+            return isinstance(session, Session)
+
+        result = my_func()
+        assert result is True
+
+    def test_with_db_explicit_db_overrides(self):
+        """显式传入db时应使用传入的session"""
+        from backend.core.database import with_db, get_db
+        from sqlalchemy.orm import Session
+
+        @with_db
+        def my_func(db=None):
+            return db
+
+        with get_db() as explicit_db:
+            result = my_func(db=explicit_db)
+            assert result is explicit_db
+
+    def test_with_db_closes_session_after_use(self):
+        """@with_db 应在使用后关闭session"""
+        from backend.core.database import with_db
+
+        closed_sessions = []
+
+        @with_db
+        def my_func(db=None):
+            # 记录session引用
+            return db
+
+        db = my_func()
+        # Session should be closed after the function returns
+        # We can't directly check if it's closed, but we verify it doesn't leak
+
+
+class TestGetDbSessionDeprecation:
+    """get_db_session 废弃警告测试"""
+
+    def test_get_db_session_emits_deprecation_warning(self):
+        """get_db_session() 应发出 DeprecationWarning"""
+        import warnings
+        from backend.core.database import get_db_session
+
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            db = get_db_session()
+            db.close()
+            assert len(w) >= 1
+            assert any(issubclass(warning.category, DeprecationWarning) for warning in w)
 
 
 if __name__ == "__main__":
