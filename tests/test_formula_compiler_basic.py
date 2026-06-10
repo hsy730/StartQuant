@@ -57,7 +57,7 @@ class TestCompileOperation:
             "right": {"type": "literal", "value": 2},
         }
         code = compiler.compile_formula(tree)
-        assert code == '(df["close"] / 2)'
+        assert code == 'safe_series_divide(df["close"], 2)'
 
 
 class TestCompileSMA:
@@ -274,7 +274,7 @@ class TestCompileComplexFormula:
             },
         }
         code = compiler.compile_formula(tree)
-        assert code == '(df["close"] / SMA(df["close"], timeperiod=20))'
+        assert code == 'safe_series_divide(df["close"], SMA(df["close"], timeperiod=20))'
 
         # 创建测试数据并执行
         df = pd.DataFrame({
@@ -285,11 +285,12 @@ class TestCompileComplexFormula:
         def SMA(series, timeperiod=20):
             return series.rolling(window=timeperiod).mean()
 
-        local_vars = {"df": df, "SMA": SMA, "np": np}
+        from backend.utils.safe_math import safe_series_divide
+        local_vars = {"df": df, "SMA": SMA, "np": np, "safe_series_divide": safe_series_divide}
         result = eval(code, {"__builtins__": {}}, local_vars)
 
-        # 手动计算期望结果
-        expected = df["close"] / df["close"].rolling(window=20).mean()
+        # 手动计算期望结果（使用 safe_series_divide 的行为：零分母→NaN）
+        expected = safe_series_divide(df["close"], df["close"].rolling(window=20).mean())
 
         pd.testing.assert_series_equal(result, expected)
 

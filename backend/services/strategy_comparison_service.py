@@ -1,11 +1,14 @@
 """
 策略对比服务 - 对比多个策略的表现
 """
+import logging
 from typing import List, Dict, Optional
 import pandas as pd
 from scipy import stats
 from backend.services.strategy_registry import strategy_registry
 from backend.utils.safe_math import safe_divide
+
+logger = logging.getLogger(__name__)
 
 
 class StrategyComparisonService:
@@ -33,6 +36,9 @@ class StrategyComparisonService:
         """
         if strategy_params is None:
             strategy_params = {}
+
+        # Bug 3: 输入数据不可变，服务层入口必须 .copy()
+        df = df.copy()
 
         results = {
             "strategies": {},
@@ -127,6 +133,7 @@ class StrategyComparisonService:
                 ).dropna()
 
                 if len(aligned_data) < 30:  # 样本量太小
+                    logger.warning(f"跳过 {strat1} vs {strat2} 对比：对齐后样本量不足 ({len(aligned_data)}<30)")
                     continue
 
                 # T检验：均值是否显著不同
@@ -190,10 +197,11 @@ class StrategyComparisonService:
                 if col != "overall" and strategy in col_ranking:
                     rank_sum += col_ranking[strategy]
                     rank_count += 1
-            overall_scores[strategy] = safe_divide(rank_sum, rank_count, default=0.0)
+            overall_scores[strategy] = safe_divide(rank_sum, rank_count, default=None)
 
-        # 按综合得分排名（得分越低越好）
-        sorted_overall = sorted(overall_scores.items(), key=lambda x: x[1])
+        # 按综合得分排名（得分越低越好），排除 None（无可比指标的策略）
+        valid_scores = {k: v for k, v in overall_scores.items() if v is not None}
+        sorted_overall = sorted(valid_scores.items(), key=lambda x: x[1])
         rankings["overall"] = {strategy: i + 1 for i, (strategy, _) in enumerate(sorted_overall)}
 
         return rankings

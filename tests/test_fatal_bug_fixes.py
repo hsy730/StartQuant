@@ -269,7 +269,8 @@ class TestStatisticalFunctionDoubleWrappingFix:
         assert 'df["df["' not in code, f"检测到双重包装: {code}"
 
         # 应该能成功执行
-        local_vars = {"df": self.df, "np": np}
+        from backend.utils.safe_math import safe_series_divide
+        local_vars = {"df": self.df, "np": np, "safe_series_divide": safe_series_divide}
         result = eval(code, {"__builtins__": {}}, local_vars)
 
         # 验证zscore计算逻辑：滚动窗口默认20，数据只有10行，前19个应为NaN

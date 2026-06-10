@@ -59,6 +59,7 @@ class FormulaCompilerService:
     ALLOWED_FUNCTIONS = set()
     for _category in ["indicators", "statistics"]:
         ALLOWED_FUNCTIONS.update(AVAILABLE_ELEMENTS[_category].keys())
+    ALLOWED_FUNCTIONS.add("safe_series_divide")
 
     def __init__(self):
         pass
@@ -181,7 +182,7 @@ class FormulaCompilerService:
             elif func_name == "zscore":
                 # 使用滚动窗口zscore避免前视偏差，默认窗口20
                 window = compiled_args[1] if len(compiled_args) > 1 else 20
-                return f'(({compiled_args[0]} - {compiled_args[0]}.rolling({window}).mean()) / {compiled_args[0]}.rolling({window}).std())'
+                return f'safe_series_divide({compiled_args[0]} - {compiled_args[0]}.rolling({window}).mean(), {compiled_args[0]}.rolling({window}).std())'
             else:
                 return f"{func_name}({', '.join(compiled_args)})"
 
@@ -192,7 +193,7 @@ class FormulaCompilerService:
             right = self._compile_node(node["right"])
 
             if operator == "/":
-                return f"({left} / {right})"
+                return f"safe_series_divide({left}, {right})"
             else:
                 return f"({left} {operator} {right})"
 

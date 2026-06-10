@@ -377,7 +377,7 @@ class PySRFactorMiningService(BaseMiningService):
             return fitness, validation
         else:
             # 无收益率数据时，使用变异系数(CV)作为代理适应度
-            cv_value = safe_divide(float(fv.std()), float(fv.mean()), default=0.0)
+            cv_value = safe_divide(float(fv.std()), abs(float(fv.mean())), default=None)
             if np.isfinite(cv_value) and abs(fv.mean()) > 1e-8:
                 fitness = cv_value
             else:

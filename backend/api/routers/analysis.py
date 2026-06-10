@@ -9,6 +9,7 @@ import logging
 import traceback
 
 from backend.utils.serialization import safe_numeric_value, sanitize_dict
+from backend.utils.ic_calculator import calculate_rolling_ic
 
 
 logger = logging.getLogger(__name__)
@@ -361,7 +362,6 @@ async def decay_analysis(request: ICAnalysisRequest):
                 # 计算未来收益率
                 future_returns = data["close"].pct_change(period).shift(-period)
                 # 计算IC（使用Spearman，符合规则7.1）
-                from backend.utils.ic_calculator import calculate_rolling_ic
                 ic = calculate_rolling_ic(factor_series, future_returns, window=20, method='spearman')
                 if not ic.empty and ic.dropna().count() > 0:
                     all_ics.append(ic.dropna().mean())
@@ -1231,7 +1231,6 @@ def _extract_all_ics(
                 )
                 
                 if valid_mask.sum() > 20:
-                    from backend.utils.ic_calculator import calculate_rolling_ic
                     ic_series = calculate_rolling_ic(
                         df.loc[valid_mask, factor_name], future_ret.loc[valid_mask],
                         window=20, method='spearman'

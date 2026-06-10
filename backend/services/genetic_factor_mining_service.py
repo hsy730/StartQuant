@@ -649,87 +649,12 @@ class GeneticFactorMiningService(BaseMiningService):
         record = self.stats.compile(population)
         logbook.record(gen=0, **record)
 
-        for gen in range(1, self.n_generations + 1):
-            # 取消检查
-            if self._cancel_flag:
-                logger.info(f"挖掘任务在第 {gen} 代被用户取消")
-                break
-
-            self._current_generation = gen
-            self._refresh_stock_sample()
-
-            # Phase 4: clear factor value cache at generation boundary
-            self._cache_clear()
-
-            # ---- Elitism: copy top elite_size individuals unchanged ----
-            if self.use_nsga2:
-                elites = tools.selNSGA2(population, self.elite_size)
-            else:
-                elites = tools.selBest(population, self.elite_size)
-            elites = list(map(self.toolbox.clone, elites))
-
-            # ---- Selection ----
-            if self.use_nsga2:
-                offspring = self.toolbox.select(population, len(population) - self.elite_size)
-            else:
-                offspring = self.toolbox.select(population, len(population) - self.elite_size)
-            offspring = list(map(self.toolbox.clone, offspring))
-
-            # ---- Crossover ----
-            for i in range(1, len(offspring), 2):
-                if random.random() < self.cx_prob:
-                    offspring[i - 1], offspring[i] = self.toolbox.mate(offspring[i - 1], offspring[i])
-                    del offspring[i - 1].fitness.values
-                    del offspring[i].fitness.values
-
-            # ---- Mutation ----
-            for i in range(len(offspring)):
-                if random.random() < self.mut_prob:
-                    offspring[i], = self.toolbox.mutate(offspring[i])
-                    del offspring[i].fitness.values
-
-            # ---- Phase 3: Diversity protection – replace duplicates ----
-            seen_exprs: Dict[str, int] = {}
-            n_duplicates = 0
-            for i, ind in enumerate(offspring):
-                expr_key = str(ind)
-                if expr_key in seen_exprs:
-                    # Replace duplicate with a fresh random individual
-                    new_ind = self.toolbox.individual()
-                    offspring[i] = new_ind
-                    n_duplicates += 1
-                else:
-                    seen_exprs[expr_key] = i
-
-            # ---- Re-evaluate invalid individuals ----
-            invalid = [ind for ind in offspring if not ind.fitness.valid]
-            fitnesses = list(map(self.toolbox.evaluate, invalid))
-            for ind, fit in zip(invalid, fitnesses):
-                ind.fitness.values = fit
-
-            # ---- Replace population: offspring + elites ----
-            population[:] = offspring + elites
-
-            # Update Z-Score normalization stats from this generation's evaluations
-            self._update_zscore_stats()
-
-            halloffame.update(population)
-
-            record = self.stats.compile(population)
-            logbook.record(gen=gen, **record)
-
-            # Stats now only track the primary objective (IC fitness),
-            # so record["max"]/["avg"] are already scalar IC values.
-            best_fit = float(record.get("max", 0.0))
-            avg_fit = float(record.get("avg", 0.0))
-
-            if self.progress_callback:
-                self.progress_callback(gen, self.n_generations, best_fit, avg_fit)
-
-            logger.info(
-                f"Generation {gen}/{self.n_generations} - Best: {best_fit:.4f}, "
-                f"Avg: {avg_fit:.4f}, Elite: {self.elite_size}"
-            )
+        # 委托通用进化循环
+        self._evolutionary_loop(
+            population, self.n_generations, halloffame,
+            logbook=logbook, use_nsga2=self.use_nsga2,
+            diversity_protection=True, progress=True,
+        )
 
         # Build result
         best_factors = []
@@ -794,6 +719,117 @@ class GeneticFactorMiningService(BaseMiningService):
     # Evolve from seed
     # ------------------------------------------------------------------
 
+    def _evolutionary_loop(
+        self,
+        population,
+        n_generations: int,
+        halloffame,
+        logbook=None,
+        use_nsga2: bool = False,
+        diversity_protection: bool = True,
+        progress: bool = True,
+    ):
+        """通用进化循环 — mine_factors 和 evolve_factor 共享的核心逻辑。
+
+        Parameters
+        ----------
+        population : list
+            初始种群（已评估）
+        n_generations : int
+            迭代代数
+        halloffame : tools.HallOfFame
+            精英保留容器
+        logbook : tools.Logbook or None
+            日志记录器（evolve_factor 不需要）
+        use_nsga2 : bool
+            是否使用 NSGA-II 选择
+        diversity_protection : bool
+            是否启用 Phase 3 去重替换
+        progress : bool
+            是否记录进度日志和回调
+        """
+        for gen in range(1, n_generations + 1):
+            # 取消检查
+            if self._cancel_flag:
+                logger.info(f"挖掘任务在第 {gen} 代被用户取消")
+                break
+
+            self._current_generation = gen
+            self._refresh_stock_sample()
+
+            # Phase 4: clear factor value cache at generation boundary
+            self._cache_clear()
+
+            # ---- Elitism: copy top elite_size individuals unchanged ----
+            if use_nsga2:
+                elites = tools.selNSGA2(population, self.elite_size)
+            else:
+                elites = tools.selBest(population, self.elite_size)
+            elites = list(map(self.toolbox.clone, elites))
+
+            # ---- Selection ----
+            offspring = self.toolbox.select(population, len(population) - self.elite_size)
+            offspring = list(map(self.toolbox.clone, offspring))
+
+            # ---- Crossover ----
+            for i in range(1, len(offspring), 2):
+                if random.random() < self.cx_prob:
+                    offspring[i - 1], offspring[i] = self.toolbox.mate(offspring[i - 1], offspring[i])
+                    del offspring[i - 1].fitness.values
+                    del offspring[i].fitness.values
+
+            # ---- Mutation ----
+            for i in range(len(offspring)):
+                if random.random() < self.mut_prob:
+                    offspring[i], = self.toolbox.mutate(offspring[i])
+                    del offspring[i].fitness.values
+
+            # ---- Phase 3: Diversity protection – replace duplicates ----
+            if diversity_protection:
+                seen_exprs: Dict[str, int] = {}
+                n_duplicates = 0
+                for i, ind in enumerate(offspring):
+                    expr_key = str(ind)
+                    if expr_key in seen_exprs:
+                        new_ind = self.toolbox.individual()
+                        offspring[i] = new_ind
+                        n_duplicates += 1
+                    else:
+                        seen_exprs[expr_key] = i
+
+            # ---- Re-evaluate invalid individuals ----
+            invalid = [ind for ind in offspring if not ind.fitness.valid]
+            fitnesses = list(map(self.toolbox.evaluate, invalid))
+            for ind, fit in zip(invalid, fitnesses):
+                ind.fitness.values = fit
+
+            # ---- Replace population: offspring + elites ----
+            population[:] = offspring + elites
+
+            # Update Z-Score normalization stats from this generation's evaluations
+            self._update_zscore_stats()
+
+            halloffame.update(population)
+
+            if logbook is not None:
+                record = self.stats.compile(population)
+                logbook.record(gen=gen, **record)
+
+            if progress:
+                record = self.stats.compile(population) if logbook is None else logbook[-1]
+                best_fit = float(record.get("max", 0.0))
+                avg_fit = float(record.get("avg", 0.0))
+
+                if self.progress_callback:
+                    self.progress_callback(gen, n_generations, best_fit, avg_fit)
+
+                logger.info(
+                    f"Generation {gen}/{n_generations} - Best: {best_fit:.4f}, "
+                    f"Avg: {avg_fit:.4f}, Elite: {self.elite_size}"
+                )
+
+        return population
+
     def evolve_factor(self, initial_expression: str, n_generations: int = 10) -> Dict:
         """Evolve a population seeded with a user-provided expression.
 
@@ -822,35 +858,12 @@ class GeneticFactorMiningService(BaseMiningService):
         halloffame.update(population)
         self._halloffame = halloffame
 
-        for gen in range(1, n_generations + 1):
-            # Elitism
-            elites = list(map(self.toolbox.clone, tools.selBest(population, self.elite_size)))
-
-            offspring = self.toolbox.select(population, len(population) - self.elite_size)
-            offspring = list(map(self.toolbox.clone, offspring))
-
-            for i in range(1, len(offspring), 2):
-                if random.random() < self.cx_prob:
-                    offspring[i - 1], offspring[i] = self.toolbox.mate(offspring[i - 1], offspring[i])
-                    del offspring[i - 1].fitness.values
-                    del offspring[i].fitness.values
-
-            for i in range(len(offspring)):
-                if random.random() < self.mut_prob:
-                    offspring[i], = self.toolbox.mutate(offspring[i])
-                    del offspring[i].fitness.values
-
-            invalid = [ind for ind in offspring if not ind.fitness.valid]
-            fitnesses = list(map(self.toolbox.evaluate, invalid))
-            for ind, fit in zip(invalid, fitnesses):
-                ind.fitness.values = fit
-
-            population[:] = offspring + elites
-
-            # Update Z-Score normalization stats from this generation's evaluations
-            self._update_zscore_stats()
-
-            halloffame.update(population)
+        # 委托通用进化循环（简化版：无日志、无NSGA2、无去重保护）
+        self._evolutionary_loop(
+            population, n_generations, halloffame,
+            logbook=None, use_nsga2=False,
+            diversity_protection=False, progress=False,
+        )
 
         best = halloffame[0]
         original_fitness = float(best.fitness.values[0])

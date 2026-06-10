@@ -16,6 +16,7 @@ from typing import List, Dict, Optional, Tuple
 
 import pandas as pd
 import numpy as np
+from scipy.stats import spearmanr
 
 logger = logging.getLogger(__name__)
 
@@ -231,7 +232,6 @@ class BaseMiningService(ABC):
                 end = start + fold_size if k < self.cv_folds - 1 else n
                 segment = aligned.iloc[start:end]
                 if len(segment) >= 10:
-                    from scipy.stats import spearmanr
                     ic_result = spearmanr(segment["factor"], segment["return"])
                     ic = ic_result[0]
                     if not np.isnan(ic):

@@ -107,7 +107,7 @@ class FactorExposureService:
         latest_std = rolling_std.iloc[-1]
 
         # 变异系数
-        cv = safe_divide(float(latest_std), float(latest_mean), default=None)
+        cv = safe_divide(float(latest_std), abs(float(latest_mean)), default=None)
 
         # 合并所有股票的所有因子值（用于整体分布统计）
         all_factor_values = []

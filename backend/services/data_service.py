@@ -540,7 +540,7 @@ class DataService:
                 n_sigma = settings.DATA_OUTLIER_N_SIGMA
                 rolling_median = df[volume_col].rolling(window=window, min_periods=1).median()
                 mad = (df[volume_col] - rolling_median).abs().rolling(window=window, min_periods=1).median() * 1.4826
-                mad = mad.replace(0, float("nan")).ffill()
+                mad = mad.where(mad > 1e-10, np.nan).ffill()
                 # 注意：不对MAD做bfill，避免引入前视偏差
                 lower_bound = rolling_median - n_sigma * mad
                 upper_bound = rolling_median + n_sigma * mad
@@ -651,6 +651,9 @@ class DataService:
             更新后的数据框
         """
         # 获取现有数据的最后日期
+        if existing_df.empty:
+            return self.get_stock_data(stock_code, end_date, end_date)
+
         last_date = existing_df.index.max()
         start_date = (last_date + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
 
@@ -668,7 +671,7 @@ class DataService:
 
         # 增量合并
         combined_df = self.preprocessing.incremental_update(
-            existing_df=existing_df,
+            existing_df=existing_df.copy(),
             new_df=new_df,
         )
 

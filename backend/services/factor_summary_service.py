@@ -6,6 +6,17 @@ import numpy as np
 from typing import Dict, List, Optional, Any
 
 
+def _safe_float(val, default=0.0):
+    """Convert value to float, returning default for None/NaN"""
+    if val is None:
+        return default
+    try:
+        f = float(val)
+        return default if np.isnan(f) else f
+    except (TypeError, ValueError):
+        return default
+
+
 class FactorSummaryService:
     """因子摘要统计服务类"""
 
@@ -80,11 +91,11 @@ class FactorSummaryService:
         for factor_name, stats in ic_stats.items():
             if isinstance(stats, dict) and "IC均值" in stats:
                 summary[factor_name] = {
-                    "ic_mean": float(stats.get("IC均值", 0)),
-                    "ic_std": float(stats.get("IC标准差", 0)),
-                    "ir": float(stats.get("IR", 0)),
-                    "ic_positive_ratio": float(stats.get("IC>0占比", 0)),
-                    "ic_abs_mean": float(stats.get("IC绝对值均值", 0)),
+                    "ic_mean": _safe_float(stats.get("IC均值")),
+                    "ic_std": _safe_float(stats.get("IC标准差")),
+                    "ir": _safe_float(stats.get("IR"), default=None),
+                    "ic_positive_ratio": _safe_float(stats.get("IC>0占比")),
+                    "ic_abs_mean": _safe_float(stats.get("IC绝对值均值")),
                 }
 
         return summary
@@ -144,7 +155,7 @@ class FactorSummaryService:
             ir = first_factor.get("ir", 0)
             if isinstance(ir, float) and np.isnan(ir):
                 ir = 0.0
-            score += min(ir * 10, 30)  # IR=3时得30分满分
+            score += max(min(ir * 10, 30), 0)  # IR=3时得30分满分
 
         # 稳定性得分（0-20分）
         stability_summary = summary.get("stability_summary")
@@ -162,7 +173,7 @@ class FactorSummaryService:
                 positive_ratio = 0.0
             score += positive_ratio * 10
 
-        return round(score, 2)
+        return max(0.0, min(round(score, 2), 100.0))
 
     def _get_grade(self, score: float) -> str:
         """根据得分返回评级"""

@@ -117,7 +117,7 @@ class WeightOptimizer:
                 ic_values[factor_name] = 0.0
 
         total_ic = sum(ic_values.values())
-        if total_ic == 0:
+        if total_ic < 1e-10:
             return self._equal_weight(factor_names)
 
         weights = {k: safe_divide(v, total_ic, default=1.0/len(factor_names)) for k, v in ic_values.items()}
@@ -170,7 +170,7 @@ class WeightOptimizer:
                 ir_values[factor_name] = 0.0
 
         total_ir = sum(ir_values.values())
-        if total_ir == 0:
+        if total_ir < 1e-10:
             return self._equal_weight(factor_names)
 
         weights = {k: safe_divide(v, total_ir, default=1.0/len(factor_names)) for k, v in ir_values.items()}

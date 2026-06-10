@@ -23,6 +23,7 @@ import logging
 import os
 import json
 import time
+import threading
 from typing import Dict, List, Optional, Any, Tuple
 from dataclasses import dataclass
 from enum import Enum
@@ -109,35 +110,41 @@ MAX_LOADED_MODELS = 10
 
 
 class _LRUModelCache:
-    """LRU缓存，用于限制内存中加载的模型数量"""
+    """LRU缓存，用于限制内存中加载的模型数量（线程安全）"""
 
     def __init__(self, max_size=MAX_LOADED_MODELS):
         self._cache: OrderedDict[str, Any] = OrderedDict()
         self._max_size = max_size
+        self._lock = threading.Lock()
 
     def get(self, model_id: str):
-        if model_id in self._cache:
-            self._cache.move_to_end(model_id)
-            return self._cache[model_id]
-        return None
+        with self._lock:
+            if model_id in self._cache:
+                self._cache.move_to_end(model_id)
+                return self._cache[model_id]
+            return None
 
     def put(self, model_id: str, model):
-        if model_id in self._cache:
-            self._cache.move_to_end(model_id)
-        else:
-            if len(self._cache) >= self._max_size:
-                self._cache.popitem(last=False)
-        self._cache[model_id] = model
+        with self._lock:
+            if model_id in self._cache:
+                self._cache.move_to_end(model_id)
+            else:
+                if len(self._cache) >= self._max_size:
+                    self._cache.popitem(last=False)
+            self._cache[model_id] = model
 
     def remove(self, model_id: str):
-        if model_id in self._cache:
-            del self._cache[model_id]
+        with self._lock:
+            if model_id in self._cache:
+                del self._cache[model_id]
 
     def __contains__(self, model_id: str):
-        return model_id in self._cache
+        with self._lock:
+            return model_id in self._cache
 
     def __len__(self):
-        return len(self._cache)
+        with self._lock:
+            return len(self._cache)
 
 
 class StockRankerService:
@@ -494,7 +501,7 @@ class StockRankerService:
             "bottom_score": float(np.min(scores)),
             "score_range": float(np.max(scores) - np.min(scores)),
             "n_predicted": len(features),
-            "score_cv": safe_divide(float(np.std(scores, ddof=1)), float(np.abs(np.mean(scores))), default=0.0),  # 变异系数，衡量分数区分度
+            "score_cv": safe_divide(float(np.std(scores, ddof=1)), float(np.abs(np.mean(scores))), default=None),  # 变异系数，衡量分数区分度
         }
 
         return RankPredictionResult(

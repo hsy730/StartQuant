@@ -9,6 +9,7 @@ from scipy.fft import fft, fftfreq
 from scipy.signal import find_peaks
 
 from backend.utils.factor_data_utils import find_longest_stock as _find_longest_stock_util
+from backend.utils.safe_math import safe_divide
 
 logger = logging.getLogger(__name__)
 
@@ -181,8 +182,8 @@ class FactorMonitoringService:
         # 归一化为概率
         for i in range(effective_bins):
             row_sum = transition_counts[i].sum()
-            if row_sum > 0:
-                transition_matrix[i] = transition_counts[i] / row_sum
+            if row_sum > 1e-10:
+                transition_matrix[i] = safe_divide(transition_counts[i], row_sum, default=0.0)
 
         # 调整标签数量以匹配实际 bin 数量
         actual_labels = bin_labels[:effective_bins] if effective_bins <= len(bin_labels) else bin_labels
@@ -308,7 +309,9 @@ class FactorMonitoringService:
         for peak in peaks[:5]:  # 只取前5个主要周期
             freq = positive_freqs[peak]
             if freq > 0:
-                period_days = 1.0 / freq
+                period_days = safe_divide(1.0, freq, default=None)
+                if period_days is None:
+                    continue
                 dominant_periods.append({
                     "period_days": float(period_days),
                     "frequency": float(freq),

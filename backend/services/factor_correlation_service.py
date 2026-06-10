@@ -15,7 +15,7 @@ import numpy as np
 import pandas as pd
 from typing import Dict, List, Tuple, Any
 from scipy import stats as scipy_stats
-
+from scipy.stats import median_abs_deviation
 from backend.utils.safe_math import safe_divide
 
 logger = logging.getLogger(__name__)
@@ -197,7 +197,9 @@ class FactorCorrelationService:
         
         for col in factor_cols:
             median = df[col].median()
-            mad = (df[col] - median).abs().median() * 1.4826
+            mad = median_abs_deviation(df[col], scale='normal')  # scale='normal' 等价于 * 1.4826
+            if mad < 1e-10:
+                continue  # 近似常数列，无需去极值
             lower, upper = median - n_sigma * mad, median + n_sigma * mad
             n_clip = ((df[col] < lower) | (df[col] > upper)).sum()
             df[col] = df[col].clip(lower, upper)

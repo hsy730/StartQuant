@@ -96,7 +96,8 @@ class BacktestService:
     def calculate_drawdown(self, equity_curve: pd.Series) -> pd.Series:
         """计算回撤序列（返回负值，与empyrical约定一致）"""
         peak = equity_curve.cummax()
-        return (equity_curve - peak) / peak.replace(0, np.nan)
+        from backend.utils.safe_math import safe_series_divide
+        return safe_series_divide(equity_curve - peak, peak, fill_value=np.nan)
 
     # ==================== 信号生成 ====================
 

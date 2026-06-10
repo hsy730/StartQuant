@@ -187,7 +187,7 @@ class SmartSlippageDetector:
             if len(valid_mc) > 0:
                 avg_mc = valid_mc.mean()
                 median_mc = valid_mc.median()
-                mc_cv = safe_divide(float(valid_mc.std()), float(avg_mc), default=0.0)
+                mc_cv = safe_divide(float(valid_mc.std()), abs(float(avg_mc)), default=None)
             
             if "volume" in market_data.columns:
                 avg_volume = market_data["volume"].dropna().mean()
@@ -456,7 +456,7 @@ class SmartSlippageDetector:
             # 简化的滑点成本模型：cost = slippage * turnover * 2（买入+卖出）
             annual_slippage_cost = slip * turnover * 2
             net_return = assumed_annual_return - annual_slippage_cost
-            return_decay = (annual_slippage_cost / assumed_annual_return * 100) if assumed_annual_return > 0 else 0
+            return_decay = safe_divide(annual_slippage_cost, assumed_annual_return, default=float('inf')) * 100
             
             results[f"{slip*100:.2f}%"] = {
                 "slippage_rate": slip,
@@ -482,10 +482,12 @@ class SmartSlippageDetector:
 
     def _classify_sensitivity(self, annual_cost: float, annual_return: float) -> str:
         """分类敏感性水平"""
-        if annual_return == 0:
+        if abs(annual_return) < 1e-10:
             return "unknown"
-        
-        cost_ratio = abs(annual_cost) / abs(annual_return)
+
+        cost_ratio = safe_divide(abs(annual_cost), abs(annual_return), default=None)
+        if cost_ratio is None:
+            return "unknown"
         
         if cost_ratio < 0.1:
             return "low"           # 低敏感：<10%收益被侵蚀

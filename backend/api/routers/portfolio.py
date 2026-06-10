@@ -7,7 +7,9 @@ from pydantic import BaseModel
 from typing import List
 
 from backend.utils.serialization import safe_numeric_value, sanitize_dict
-from backend.utils.safe_math import safe_divide, safe_ir
+from backend.utils.safe_math import safe_divide, safe_ir, safe_series_divide
+from backend.utils.ic_calculator import calculate_rolling_ic
+from scipy.stats import spearmanr
 from backend.utils.return_calculator import calculate_future_return
 from backend.services.portfolio_analysis_service import portfolio_analysis_service
 from backend.services.weight_optimizer_service import WeightOptimizer
@@ -120,7 +122,6 @@ async def optimize_weights(request: OptimizeWeightsRequest):
             factor_df[factor_name] = values
 
         # 计算加权组合因子（NaN不填充为0，符合规则7.7）
-        from backend.utils.safe_math import safe_series_divide
         weighted_sum = pd.Series(0.0, index=factor_df.index)
         weight_sum = pd.Series(0.0, index=factor_df.index)
         for factor_name, weight in weights.items():
@@ -148,7 +149,6 @@ async def optimize_weights(request: OptimizeWeightsRequest):
 
         if len(aligned_factor) > 3:
             # 计算组合IC（使用Spearman，符合规则7.1）
-            from scipy.stats import spearmanr
             portfolio_ic_result = spearmanr(aligned_factor, aligned_returns)
             portfolio_ic = float(portfolio_ic_result[0]) if not np.isnan(portfolio_ic_result[0]) else None
 
@@ -156,7 +156,6 @@ async def optimize_weights(request: OptimizeWeightsRequest):
             portfolio_return = aligned_returns.mean()
 
             # 计算组合IR (IC均值 / IC标准差)（使用Spearman，符合规则7.1/7.30）
-            from backend.utils.ic_calculator import calculate_rolling_ic
             ic_series = calculate_rolling_ic(aligned_factor, aligned_returns, window=20, method='spearman')
             ic_mean = ic_series.mean()
             ic_std = ic_series.std()
@@ -398,7 +397,6 @@ async def compare_weight_methods(request: CompareMethodsRequest):
 
                 if len(aligned) >= 20:
                     # 计算IC时间序列（使用Spearman，符合规则7.1/7.30）
-                    from backend.utils.ic_calculator import calculate_rolling_ic
                     ic_series = calculate_rolling_ic(
                         aligned['factor'], aligned['returns'],
                         window=20, method='spearman'

@@ -998,6 +998,102 @@ cv = safe_divide(std, abs(mean), default=None)  # cv=0.667
 
 **原则**：CV = std/|mean| 衡量的是"标准差相对于均值的比例"，与均值符号无关。负均值不意味着低离散度，负 CV 无语义。
 
+### 规则7.36：`float(None)` 崩溃 — 上游返回 None 时禁止直接 float() 转换
+
+**来源**：`factor_summary_service.py`、`factor_orchestrator_service.py` 中 `float(stats.get("IR", 0))` 当 IR=None 时崩溃
+
+```python
+# ❌ 错误：dict.get("IR", 0) 在键存在但值为None时返回None，float(None)崩溃
+ir = float(stats.get("IR", 0))  # IR=None → TypeError!
+
+# ❌ 错误：同上
+ic_mean = float(factor_ic.get("IC均值", 0))  # IC均值=None → TypeError!
+
+# ✅ 正确：先检查None再转换
+def _safe_float(val, default=0.0):
+    if val is None:
+        return default
+    try:
+        f = float(val)
+        return default if np.isnan(f) else f
+    except (TypeError, ValueError):
+        return default
+
+ir = _safe_float(stats.get("IR"), default=None)  # None→None
+ic_mean = _safe_float(stats.get("IC均值"))  # None→0.0
+```
+
+**原则**：`dict.get(key, default)` 的 default 仅在键不存在时生效。当键存在但值为 None（如 IR 不可计算），`.get()` 返回 None 而非 default。`float(None)` 抛出 TypeError 导致整个流水线崩溃。这是 Rule 7.10（IR 返回 None）的下游影响——所有消费 None 值的代码都必须安全处理。
+
+### 规则7.37：公式编译器生成的代码必须使用 `safe_series_divide`，禁止裸除法
+
+**来源**：`formula_compiler_service.py` 中编译除法和 zscore 生成裸 `/` 运算符
+
+```python
+# ❌ 错误：编译后的公式使用裸除法，运行时除零崩溃
+if operator == "/":
+    return f"({left} / {right})"  # 分母为零 → ZeroDivisionError 或 inf
+
+# ❌ 错误：zscore 使用裸除法，恒定序列 std=0 → inf
+return f'(({x} - {x}.rolling({w}).mean()) / {x}.rolling({w}).std())'
+
+# ✅ 正确：使用 safe_series_divide 保护
+if operator == "/":
+    return f"safe_series_divide({left}, {right})"
+
+return f'safe_series_divide({x} - {x}.rolling({w}).mean(), {x}.rolling({w}).std())'
+```
+
+**原则**：公式编译器生成的代码在运行时执行，无法被静态分析捕获除零风险。所有生成的除法运算必须使用 `safe_series_divide`，且该函数必须在执行命名空间中可用。
+
+### 规则7.38：评分函数总分必须截断到 [0, 100]，禁止负分或超100分
+
+**来源**：`factor_summary_service.py` 中 `_calculate_quality_score` 无上下界截断
+
+```python
+# ❌ 错误：负 IR 产生负分，拖累总分
+score += min(ir * 10, 30)  # ir=-2 → score=-20
+return round(score, 2)  # 可能返回负分或超100
+
+# ✅ 正确：每个维度截断到非负，总分截断到 [0, 100]
+score += max(min(ir * 10, 30), 0)
+return max(0.0, min(round(score, 2), 100.0))
+```
+
+**原则**：与规则7.23一致，评分系统的每个维度和总分都应在 [0, 100] 范围内。负分会误导用户对因子质量的判断。
+
+### 规则7.39：衰减率在年化收益为零时必须返回无穷大，禁止返回 0%
+
+**来源**：`smart_slippage_detector.py` 中 `return_decay` 在 `assumed_annual_return > 0` 为 False 时返回 0
+
+```python
+# ❌ 错误：年化收益为零时衰减率=0%，实际应为无穷
+return_decay = (annual_slippage_cost / assumed_annual_return * 100) if assumed_annual_return > 0 else 0
+
+# ✅ 正确：年化收益为零时，成本完全吞噬收益，衰减为无穷
+return_decay = safe_divide(annual_slippage_cost, assumed_annual_return, default=float('inf')) * 100
+```
+
+**原则**：与规则7.8一致。衰减率 = 成本/收益。收益为零时衰减率应为无穷大（100%或更多），而非 0%（暗示滑点对收益无影响）。
+
+### 规则7.40：`== 0` 数值比较必须统一使用 `< 1e-10`，适用于所有浮点场景
+
+**来源**：`weight_optimizer_service.py`、`data_preprocessing_service.py`、`vectorbt_backtest_service.py`、`smart_slippage_detector.py` 中多处 `== 0` 比较
+
+```python
+# ❌ 错误：浮点值几乎为零但不精确为零时漏检
+if total_ic == 0:  # total_ic=1e-15 → False，后续除法产生极大值
+if std == 0:  # std=7e-18 → False，后续 zscore 产生 inf
+if annual_return == 0:  # annual_return=1e-16 → False，后续除法崩溃
+
+# ✅ 正确：使用阈值
+if total_ic < 1e-10:
+if std < 1e-10:
+if abs(annual_return) < 1e-10:
+```
+
+**原则**：规则7.6 的扩展。`== 0` 对浮点数不可靠，适用于所有数值比较场景——包括权重和、标准差、收益率、IC 权重和等。`len(x) == 0`（容器长度）不受此规则约束。
+
 ---
 
 ## 代码审查 Checklist
@@ -1071,6 +1167,11 @@ cv = safe_divide(std, abs(mean), default=None)  # cv=0.667
 - [ ] IC加权是否使用股票收益率而非因子收益率均值？（规则7.33）
 - [ ] `safe_divide` 在 se < min_threshold 时是否吞掉了有效 t 统计量？（规则7.34）
 - [ ] CV 计算分母是否使用 `abs(mean)`？（规则7.35）
+- [ ] 上游返回 None 时是否安全处理，禁止 `float(None)`？（规则7.36）
+- [ ] 公式编译器生成的除法是否使用 `safe_series_divide`？（规则7.37）
+- [ ] 评分函数总分是否截断到 [0, 100]？（规则7.38）
+- [ ] 衰减率在收益为零时是否返回无穷大而非 0%？（规则7.39）
+- [ ] 浮点数值 `== 0` 是否统一改为 `< 1e-10`？（规则7.40）
 
 ---
 

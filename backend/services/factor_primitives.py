@@ -29,6 +29,7 @@ import logging
 from deap import gp
 from typing import Optional
 from functools import partial
+from scipy.stats import spearmanr
 
 logger = logging.getLogger(__name__)
 
@@ -103,14 +104,30 @@ def ts_delta(a, n=1):
     return a - a.shift(int(n))
 
 
+def _rolling_spearman(x, y_series, min_periods):
+    """Rolling Spearman rank correlation helper."""
+    y_aligned = y_series.loc[x.index]
+    valid = x.notna() & y_aligned.notna()
+    if valid.sum() < min_periods:
+        return np.nan
+    return spearmanr(x[valid], y_aligned[valid])[0]
+
+
 def ts_corr(a, b, n=5):
-    """Rolling Pearson correlation between *a* and *b* over *n* periods.
+    """Rolling Spearman rank correlation between *a* and *b* over *n* periods.
+
+    Uses Spearman rank correlation instead of Pearson to capture nonlinear
+    monotonic relationships, consistent with project IC calculation standards.
 
     ⚠️ Warning: This version does NOT filter limit-up/down days.
        IC may be inflated by ~18% in A-share market!
     """
     logger.debug("ts_corr() called without tradable_mask - IC may be inflated by 18%")
-    return a.rolling(window=int(n), min_periods=2).corr(b)
+    window = int(n)
+    min_periods = max(2, int(window * 0.6))
+    return a.rolling(window=window, min_periods=min_periods).apply(
+        lambda x: _rolling_spearman(x, b, min_periods), raw=False
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -216,12 +233,14 @@ def ts_corr_masked(
     # 双方都应用掩码
     a_masked = a.where(mask)
     b_masked = b.where(mask)
-    
+
     window = int(n)
     min_periods = max(2, int(window * min_valid_ratio))
-    
-    result = a_masked.rolling(window=window, min_periods=min_periods).corr(b_masked)
-    
+
+    result = a_masked.rolling(window=window, min_periods=min_periods).apply(
+        lambda x: _rolling_spearman(x, b_masked, min_periods), raw=False
+    )
+
     return result
 
 

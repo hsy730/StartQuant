@@ -6,6 +6,7 @@ import pandas as pd
 import numpy as np
 import random
 from itertools import combinations
+from scipy.stats import spearmanr
 
 from backend.utils.safe_math import safe_ir, safe_divide
 
@@ -652,28 +653,43 @@ def calculate_factor(df):
                 if valid_ratio < min_valid_ratio:
                     continue
 
-                # 计算IC
-                ic = aligned_data["factor"].corr(aligned_data["return"])
+                # 计算IC（Spearman秩相关，与业界标准一致）
+                valid = aligned_data["factor"].notna() & aligned_data["return"].notna()
+                if valid.sum() < 5:
+                    continue
+                ic, _ = spearmanr(aligned_data["factor"][valid], aligned_data["return"][valid])
+                if pd.isna(ic):
+                    ic = 0.0
 
                 if pd.isna(ic) or abs(ic) < ic_threshold:
                     continue
 
-                # 计算IR（IC均值/IC标准差）- 使用向量化滚动相关系数
+                # 计算IR（IC均值/IC标准差）- 使用滚动Spearman IC
                 window = 20
                 min_periods = 10
-                rolling_ic_series = aligned_data["factor"].rolling(
+                factor_vals = aligned_data["factor"]
+                return_vals = aligned_data["return"]
+
+                def _rolling_spearman(x):
+                    y_aligned = return_vals.loc[x.index]
+                    valid = x.notna() & y_aligned.notna()
+                    if valid.sum() < min_periods:
+                        return np.nan
+                    r, _ = spearmanr(x[valid], y_aligned[valid])
+                    return r
+
+                rolling_ic_series = factor_vals.rolling(
                     window=window, min_periods=min_periods
-                ).corr(aligned_data["return"])
+                ).apply(_rolling_spearman, raw=False)
                 rolling_ic_values = rolling_ic_series.tolist()
 
                 if rolling_ic_values:
                     ic_mean = np.nanmean(rolling_ic_values)
                     ic_std = np.nanstd(rolling_ic_values)
 
-                    if pd.isna(ic_std) or ic_std == 0:
+                    ir = safe_ir(float(ic_mean), float(ic_std), default=None)
+                    if ir is None:
                         ir = 0
-                    else:
-                        ir = safe_ir(float(ic_mean), float(ic_std), default=0.0)
                 else:
                     ir = 0
 
@@ -716,21 +732,40 @@ def calculate_factor(df):
                 "message": "数据不足"
             }
 
-        # 计算IC
-        ic = aligned_data["factor"].corr(aligned_data["return"])
+        # 计算IC（Spearman秩相关，与业界标准一致）
+        valid = aligned_data["factor"].notna() & aligned_data["return"].notna()
+        if valid.sum() < 5:
+            return {
+                "valid": False,
+                "message": "有效数据不足"
+            }
+        ic, _ = spearmanr(aligned_data["factor"][valid], aligned_data["return"][valid])
+        if pd.isna(ic):
+            ic = 0.0
 
-        # 计算滚动IR - 使用向量化滚动相关系数
+        # 计算滚动IR - 使用滚动Spearman IC
         window = 20
         min_periods = 10
-        rolling_ic_series = aligned_data["factor"].rolling(
+        factor_vals = aligned_data["factor"]
+        return_vals = aligned_data["return"]
+
+        def _rolling_spearman(x):
+            y_aligned = return_vals.loc[x.index]
+            v = x.notna() & y_aligned.notna()
+            if v.sum() < min_periods:
+                return np.nan
+            r, _ = spearmanr(x[v], y_aligned[v])
+            return r
+
+        rolling_ic_series = factor_vals.rolling(
             window=window, min_periods=min_periods
-        ).corr(aligned_data["return"])
+        ).apply(_rolling_spearman, raw=False)
 
         rolling_ic = rolling_ic_series
 
         ic_mean = rolling_ic.mean()
         ic_std = rolling_ic.std()
-        ir = safe_ir(float(ic_mean), float(ic_std), default=0.0)
+        ir = safe_ir(float(ic_mean), float(ic_std), default=None)
 
         # 计算胜率
         ic_win_rate = (rolling_ic > 0).sum() / rolling_ic.count() if rolling_ic.count() > 0 else 0
@@ -746,7 +781,7 @@ def calculate_factor(df):
         return {
             "valid": True,
             "ic": float(ic),
-            "ir": float(ir),
+            "ir": float(ir) if ir is not None else None,
             "ic_mean": float(ic_mean),
             "ic_std": float(ic_std),
             "ic_win_rate": float(ic_win_rate),

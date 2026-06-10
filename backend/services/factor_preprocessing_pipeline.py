@@ -484,7 +484,7 @@ class FactorPreprocessingPipeline:
             # σ_hat = 1.4826 * MAD（正态分布下 1.4826*MAD ≈ σ）
             sigma_hat = 1.4826 * (series - median).abs().median()
 
-            if sigma_hat == 0 or np.isnan(sigma_hat):
+            if sigma_hat < 1e-10 or np.isnan(sigma_hat):
                 # MAD=0时（如数据过于集中），用标准差作为σ_hat的估计
                 # σ_hat ≈ std()，因此fallback直接使用std()而非std()*0.6745
                 sigma_hat = series.std()
@@ -719,7 +719,7 @@ class FactorPreprocessingPipeline:
                 if len(valid) > 1:
                     median = valid.median()
                     mad = 1.4826 * (valid - median).abs().median()
-                    if mad > 0 and not np.isnan(mad):
+                    if mad > 1e-10 and not np.isnan(mad):
                         factor_vals[valid.index] = (valid - median) / mad
 
             return factor_vals

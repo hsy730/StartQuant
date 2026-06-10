@@ -15,6 +15,7 @@ from backend.services.risk_metrics import calculate_risk_metrics, calculate_vola
 from backend.services.smart_slippage_detector import smart_slippage_detector, SlippageRecommendation
 from backend.utils.return_calculator import calculate_future_return
 from backend.utils.safe_math import safe_divide, safe_series_divide
+from backend.utils.ic_calculator import calculate_rolling_ic
 from scipy.stats import spearmanr
 
 logger = logging.getLogger(__name__)
@@ -856,14 +857,6 @@ class VectorBTBacktestService:
             df["forward_return"] = calculate_future_return(df)
             ic_window = min(60, max(10, len(df) // 4))
 
-            def _rolling_spearman_ic(x, y_series):
-                """滚动窗口内计算Spearman秩相关（规则7.1）"""
-                y_aligned = y_series.loc[x.index]
-                valid = x.notna() & y_aligned.notna()
-                if valid.sum() < 10:
-                    return np.nan
-                return spearmanr(x[valid], y_aligned[valid])[0]
-
             # 使用滚动Spearman IC作为时变权重，每个时间点仅使用截至前一天的信息
             ic_weight_frames = []
             forward_return_shifted = df["forward_return"].shift(1)
@@ -872,11 +865,10 @@ class VectorBTBacktestService:
                 # 滚动Spearman IC：因子值（滞后1期，避免前视偏差）与未来收益的相关系数
                 # 使用历史窗口内的数据，确保t日的IC权重只用到t-1日及之前的信息
                 # forward_return 也需 shift(1)，确保 t 日窗口只用到 t-1→t 的已知收益
-                rolling_ic = (
-                    df[norm_factor]
-                    .shift(1)
-                    .rolling(ic_window, min_periods=10)
-                    .apply(lambda x: _rolling_spearman_ic(x, forward_return_shifted), raw=False)
+                shifted_factor = df[norm_factor].shift(1)
+                rolling_ic = calculate_rolling_ic(
+                    shifted_factor, forward_return_shifted,
+                    window=ic_window, method='spearman', min_periods=10
                 )
                 ic_abs = rolling_ic.abs()
                 ic_weight_frames.append(ic_abs)
@@ -886,7 +878,7 @@ class VectorBTBacktestService:
             # 除零+NaN保护：权重和为0或NaN时回退到等权
             equal_w = 1.0 / len(normalized_factors)
             # 标记权重和无效的行（0或NaN）
-            invalid_mask = (ic_weight_sum == 0) | ic_weight_sum.isna()
+            invalid_mask = (ic_weight_sum.abs() < 1e-10) | ic_weight_sum.isna()
             # 有效行：用 ic_wf / ic_weight_sum 归一化；无效行：直接用等权
             safe_ic_weight_sum = ic_weight_sum.copy()
             safe_ic_weight_sum[invalid_mask] = np.nan  # 无效行标记为NaN，后续fillna处理

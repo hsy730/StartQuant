@@ -278,9 +278,13 @@ class FactorAttributionService:
             return {"error": "基准数据缺少close列"}
 
         # 对齐基准日期
+        # 注意：不使用 benchmark_data.reindex(common_index) 再 pct_change 的方式，
+        # 因为 reindex 插入 NaN 后 pct_change 会在缺失日附近产生额外 NaN，丢失有效数据点。
+        # 当前方式：先计算所有有效的基准收益率，再通过 DataFrame.dropna() 取交集，
+        # 保留更多有效数据点，且 aligned_data 中组合与基准日期完全匹配。
         benchmark_returns = benchmark_data["close"].pct_change(1).dropna()
 
-        # 再次对齐组合和基准
+        # 通过 dropna 对齐组合和基准，只保留两者都有数据的日期
         aligned_data = pd.DataFrame({
             'portfolio': portfolio_returns,
             'benchmark': benchmark_returns
@@ -405,7 +409,7 @@ class FactorAttributionService:
         return {
             "overall_stats": {
                 "avg_daily_return": overall_avg,
-                "annual_return": float((1 + overall_avg) ** 252 - 1) if overall_avg is not None else None,
+                "annual_return": float(empyrical.annual_return(returns, period='daily')) if overall_avg is not None and len(returns) > 0 else None,
                 "cumulative_return": overall_cum,
                 "volatility_annual": overall_vol_annual,
                 "daily_volatility": overall_daily_vol,

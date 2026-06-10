@@ -3,6 +3,7 @@
 """
 import pandas as pd
 import numpy as np
+from scipy.stats import zscore
 from typing import Tuple, Optional
 
 
@@ -32,12 +33,12 @@ class DataPreprocessingService:
             raise ValueError(f"列 '{column}' 不存在于数据框中")
 
         if method == "std":
-            # 3σ原则检测
-            mean = df[column].mean()
-            std = df[column].std()
-            lower_bound = mean - n_sigma * std
-            upper_bound = mean + n_sigma * std
-            outliers = (df[column] < lower_bound) | (df[column] > upper_bound)
+            # 3σ原则检测 — 使用 scipy.stats.zscore
+            z = zscore(df[column].dropna(), nan_policy='omit')
+            # zscore 返回的数组对应 dropna 后的数据，需要映射回原始索引
+            valid_idx = df[column].dropna().index
+            outliers = pd.Series(False, index=df.index)
+            outliers.loc[valid_idx] = np.abs(z) > n_sigma
             return outliers
 
         elif method == "iqr":
@@ -94,7 +95,7 @@ class DataPreprocessingService:
             else:  # std
                 mean = df[column].mean()
                 std = df[column].std()
-                if std == 0 or pd.isna(std):
+                if std < 1e-10 or pd.isna(std):
                     # 常数列无异常值，直接返回原数据
                     return df
                 lower_bound = mean - n_sigma * std

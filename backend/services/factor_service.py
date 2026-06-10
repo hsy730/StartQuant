@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import talib
 from typing import Dict, List, Optional
-from backend.utils.safe_math import safe_divide
+from backend.utils.safe_math import safe_divide, safe_series_divide
 import yaml
 import logging
 
@@ -339,13 +339,13 @@ class FactorCalculator:
                 series = pd.Series(series)
             if n is None:
                 abs_sum = series.abs().sum()
-                if abs_sum == 0 or np.isnan(abs_sum):
+                if abs_sum < 1e-10 or np.isnan(abs_sum):
                     return series * 0
                 return series / abs_sum
 
             def scale_window(x):
                 abs_sum = np.abs(x).sum()
-                if abs_sum == 0:
+                if abs_sum < 1e-10:
                     return x[-1] * 0
                 return x[-1] / abs_sum
 
@@ -437,6 +437,7 @@ class FactorCalculator:
                 "pd": pd,
                 "np": np,
                 "safe_divide": safe_divide,
+                "safe_series_divide": safe_series_divide,
                 **self.talib_funcs,
                 **self.mylanguage_funcs,
             }
@@ -507,6 +508,7 @@ class FactorCalculator:
                 "np": np,
                 "pd": pd,
                 "safe_divide": safe_divide,
+                "safe_series_divide": safe_series_divide,
                 **self.talib_funcs,
                 **self.mylanguage_funcs,
             }

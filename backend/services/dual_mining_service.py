@@ -136,7 +136,7 @@ class DualMiningService:
         deep_early_stopping_patience: int = 5,
     ):
         self.base_factor_codes = base_factors
-        self.data = data
+        self.data = data.copy() if data is not None else None
         self.return_column = return_column
         self.factor_calculator = factor_calculator
         self.max_eval_stocks = max_eval_stocks
