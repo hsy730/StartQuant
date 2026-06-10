@@ -834,6 +834,91 @@ rolling_ic = factor.rolling(20).apply(
 
 **原则**：`None or 0.0` = `0.0`，`0.0 or 0.0` = `0.0`。这两种情况无法区分。正确做法是让 None 传播到序列化层，由 `sanitize_dict` 统一转为 JSON null。
 
+### 规则7.27：零标准差时必须返回可计算指标，禁止全部返回 None
+
+**来源**：`risk_metrics.py` 中 `np.std(returns) < 1e-10` 时返回 `_empty_metrics()`，导致 `total_return`、`annual_return`、`win_rate` 等不依赖标准差的指标也被设为 None
+
+```python
+# ❌ 错误：零标准差时所有指标都返回 None，包括不依赖标准差的指标
+if np.std(returns_arr) < 1e-10:
+    return _empty_metrics()  # total_return=None, annual_return=None, win_rate=None
+
+# ✅ 正确：只将依赖波动率的指标设为 None，可计算的指标正常返回
+if np.std(returns_arr) < 1e-10:
+    return {
+        "total_return": float(empyrical.cum_returns_final(returns_arr)),
+        "annual_return": float(empyrical.annual_return(returns_arr)),
+        "volatility": None,
+        "sharpe_ratio": None,
+        "sortino_ratio": None,
+        "max_drawdown": None,
+        "calmar_ratio": None,
+        "win_rate": float((returns_arr > 0).mean()),
+        "var_95": None,
+        "cvar_95": None,
+    }
+```
+
+**原则**：`total_return`、`annual_return`、`win_rate` 不依赖标准差，即使波动率为零也可计算。全部返回 None 会使稳定盈利策略看起来毫无收益。
+
+### 规则7.28：Bootstrap 重采样必须保持横截面结构，禁止逐行独立重采样
+
+**来源**：`factor_return_analysis_service.py` 中 `_bootstrap_quantile_returns` 使用 `df.sample(replace=True)` 逐行重采样
+
+```python
+# ❌ 错误：逐行独立重采样破坏横截面结构
+sample_df = df.sample(n=len(df), replace=True)
+# 某些日期被过度代表，某些日期缺失，不再构成有效横截面
+
+# ✅ 正确：按日期聚类重采样，同一日期所有股票观测值保持在一起
+unique_dates = df.index.unique()
+sampled_dates = np.random.choice(unique_dates, size=len(unique_dates), replace=True)
+sample_df = pd.concat([df.loc[d] for d in sampled_dates])
+```
+
+**原则**：横截面数据分析中，同一日期的不同股票观测值不独立。Bootstrap 必须以日期为聚类单位，否则重采样后的数据不再代表任何有效的横截面，置信区间统计无效。
+
+### 规则7.29：Alpha/Beta 分解必须通过 `calculate_relative_metrics` 统一入口
+
+**来源**：`factor_attribution_service.py` 中手动用 `np.cov` 计算 alpha/beta，绕过统一入口
+
+```python
+# ❌ 错误：手动计算 alpha/beta，绕过 empyrical 和统一入口
+cov_matrix = np.cov(y, X.flatten())
+beta = safe_divide(cov_matrix[0, 1], cov_matrix[1, 1], default=None)
+alpha = y.mean() - beta * X.mean()
+
+# ✅ 正确：通过 risk_metrics.py 统一入口，底层委托 empyrical
+from backend.services.risk_metrics import calculate_relative_metrics
+relative = calculate_relative_metrics(portfolio_returns, benchmark_returns, risk_free_rate=0.03)
+alpha_annual = relative.get("alpha")
+beta = relative.get("beta")
+```
+
+**原则**：与规则2一致，风险/收益指标必须通过统一入口。手动计算 alpha/beta 与 empyrical 的年化方式不一致，且边界条件处理不同。
+
+### 规则7.30：滚动 Spearman IC 必须使用 `ic_calculator.calculate_rolling_ic`，禁止各服务自行实现
+
+**来源**：`lookahead_bias_detector.py`、`analysis_service.py` 等多处自行实现滚动 Spearman IC
+
+```python
+# ❌ 错误：每个服务自行实现滚动 Spearman
+def _rolling_spearman(x):
+    y_aligned = returns.loc[x.index]
+    valid = x.notna() & y_aligned.notna()
+    if valid.sum() < 5:
+        return np.nan
+    return spearmanr(x[valid], y_aligned[valid])[0]
+
+rolling_ic = factor.rolling(20).apply(_rolling_spearman, raw=False)
+
+# ✅ 正确：使用统一工具函数
+from backend.utils.ic_calculator import calculate_rolling_ic
+rolling_ic = calculate_rolling_ic(factor, returns, window=20, method='spearman')
+```
+
+**原则**：与规则5一致，相同逻辑出现 ≥ 2 次必须提取为公共方法。`ic_calculator.calculate_rolling_ic` 已处理 NaN 清理、最小样本数等边界条件，各服务不应重复实现。
+
 ---
 
 ## 代码审查 Checklist
@@ -898,6 +983,10 @@ rolling_ic = factor.rolling(20).apply(
 - [ ] API 调用签名是否与实际匹配？（规则7.24）
 - [ ] 前视偏差检测器是否使用 Spearman IC？（规则7.25）
 - [ ] 是否存在 `or 0.0` 将 None 转为 0.0？（规则7.26）
+- [ ] 零标准差时是否仍返回可计算指标（total_return, annual_return, win_rate）？（规则7.27）
+- [ ] Bootstrap 重采样是否保持横截面结构（按日期聚类）？（规则7.28）
+- [ ] Alpha/Beta 分解是否通过 `calculate_relative_metrics` 统一入口？（规则7.29）
+- [ ] 滚动 Spearman IC 是否使用 `ic_calculator.calculate_rolling_ic`？（规则7.30）
 
 ---
 

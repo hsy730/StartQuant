@@ -185,7 +185,7 @@ class PortfolioAnalysisService:
         sorted_values = np.sort(values)
         n = len(values)
         cumsum = np.cumsum(sorted_values)
-        if cumsum[-1] == 0:
+        if abs(cumsum[-1]) < 1e-10:
             return 0.0
         return (n + 1 - 2 * np.sum(cumsum) / cumsum[-1]) / n
 
@@ -411,7 +411,7 @@ class PortfolioAnalysisService:
 
         # 确保权重归一化（和为1），避免收益被错误缩放
         weight_sum = weights.sum()
-        if weight_sum == 0:
+        if abs(weight_sum) < 1e-10:
             return {"weights": {}, "method": method, "error": "权重总和为0，无法计算组合指标"}
         if abs(weight_sum - 1.0) > 1e-6:
             weights = normalize_weights(weights)
@@ -480,7 +480,7 @@ class PortfolioAnalysisService:
                 aligned_factor = factor_series.reindex(common_index)
                 mean = aligned_factor.mean()
                 std = aligned_factor.std()
-                if std > 0:
+                if std > 1e-10:
                     normalized_factors[factor_name] = safe_divide(aligned_factor - mean, std, default=0.0)
                 else:
                     normalized_factors[factor_name] = aligned_factor - mean

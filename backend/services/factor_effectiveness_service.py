@@ -86,13 +86,51 @@ class FactorEffectivenessService:
         if len(factor_values) < 2:
             return {"error": "数据不足以计算相关性"}
 
-        correlation, p_value = spearmanr(factor_values, returns)
+        # 多股票时使用横截面IC（规则7.1），单股票时池化是唯一选择
+        if len(factor_data) >= 2:
+            cross_sectional_ics = []
+            for stock_code, df in factor_data.items():
+                if factor_name in df.columns and "close" in df.columns:
+                    df_copy = calculate_future_returns(df[[factor_name, "close"]], periods=[1])
+                    df_copy["_stock_code"] = stock_code
+                    # 仅保留有效数据
+                    df_copy = df_copy[[factor_name, "future_return_1", "_stock_code"]].dropna()
+
+            # 合并所有股票数据，按日期分组计算横截面IC
+            panel_frames = []
+            for stock_code, df in factor_data.items():
+                if factor_name in df.columns and "close" in df.columns:
+                    df_copy = calculate_future_returns(df[[factor_name, "close"]], periods=[1])
+                    df_copy = df_copy[[factor_name, "future_return_1"]].dropna()
+                    if len(df_copy) > 0:
+                        df_copy = df_copy.copy()
+                        df_copy["_stock_code"] = stock_code
+                        panel_frames.append(df_copy)
+
+            if panel_frames:
+                panel_df = pd.concat(panel_frames)
+                for date, group in panel_df.groupby(panel_df.index):
+                    if len(group) < 3:
+                        continue
+                    ic_val, p_val = spearmanr(group[factor_name], group["future_return_1"])
+                    if not np.isnan(ic_val):
+                        cross_sectional_ics.append(ic_val)
+
+                if cross_sectional_ics:
+                    correlation = float(np.mean(cross_sectional_ics))
+                    p_value = None  # 横截面IC均值无单一p值
+                else:
+                    correlation, p_value = spearmanr(factor_values, returns)
+            else:
+                correlation, p_value = spearmanr(factor_values, returns)
+        else:
+            correlation, p_value = spearmanr(factor_values, returns)
 
         return {
             "x": [float(v) for v in factor_values],
             "y": [float(v) for v in returns],
             "correlation": float(correlation),
-            "correlation_pvalue": float(p_value),
+            "correlation_pvalue": float(p_value) if p_value is not None else None,
             "count": len(factor_values)
         }
 
@@ -298,32 +336,79 @@ class FactorEffectivenessService:
 
         merged_df = pd.concat(all_data, ignore_index=False)
         factor_values = merged_df[factor_name].dropna()
-        threshold_value = float(factor_values.quantile(threshold_percentile))
 
-        high_returns = {p: [] for p in holding_periods}
-        low_returns = {p: [] for p in holding_periods}
-        low_threshold = float(factor_values.quantile(1 - threshold_percentile))
+        # 多股票时使用横截面分位数阈值（规则7.17），单股票时全局阈值是唯一选择
+        if len(factor_data) >= 2:
+            # 按日期计算横截面分位数阈值
+            high_returns = {p: [] for p in holding_periods}
+            low_returns = {p: [] for p in holding_periods}
 
-        for stock_code, df in factor_data.items():
-            df = calculate_future_returns(df[[factor_name, "close"]], periods=holding_periods)
-            if factor_name not in df.columns or "close" not in df.columns:
-                continue
+            for stock_code, df in factor_data.items():
+                df = calculate_future_returns(df[[factor_name, "close"]], periods=holding_periods)
+                if factor_name not in df.columns or "close" not in df.columns:
+                    continue
 
-            high_events = df[df[factor_name] > threshold_value].index
-            for event_date in high_events:
-                for period in holding_periods:
-                    if event_date in df.index:
-                        future_ret = df.loc[event_date, f"future_return_{period}"]
+                # 按日期计算该股票的横截面分位数阈值
+                for date in df.index:
+                    # 获取该日期所有股票的因子值
+                    date_factor_vals = merged_df.loc[
+                        merged_df.index == date, factor_name
+                    ].dropna() if date in merged_df.index else None
+
+                    if date_factor_vals is None or len(date_factor_vals) < 3:
+                        continue
+
+                    high_threshold = float(date_factor_vals.quantile(threshold_percentile))
+                    low_threshold = float(date_factor_vals.quantile(1 - threshold_percentile))
+
+                    row = df.loc[[date]] if date in df.index else None
+                    if row is None or len(row) == 0:
+                        continue
+
+                    factor_val = row[factor_name].iloc[0]
+                    if pd.isna(factor_val):
+                        continue
+
+                    for period in holding_periods:
+                        future_ret_col = f"future_return_{period}"
+                        if future_ret_col not in df.columns:
+                            continue
+                        future_ret = row[future_ret_col].iloc[0]
                         if pd.notna(future_ret) and not np.isinf(future_ret):
-                            high_returns[period].append(future_ret)
+                            if factor_val > high_threshold:
+                                high_returns[period].append(future_ret)
+                            if factor_val < low_threshold:
+                                low_returns[period].append(future_ret)
 
-            low_events = df[df[factor_name] < low_threshold].index
-            for event_date in low_events:
-                for period in holding_periods:
-                    if event_date in df.index:
-                        future_ret = df.loc[event_date, f"future_return_{period}"]
-                        if pd.notna(future_ret) and not np.isinf(future_ret):
-                            low_returns[period].append(future_ret)
+            threshold_value = float(factor_values.quantile(threshold_percentile))
+        else:
+            # 单股票：全局阈值是唯一选择
+            threshold_value = float(factor_values.quantile(threshold_percentile))
+            low_threshold = float(factor_values.quantile(1 - threshold_percentile))
+
+            high_returns = {p: [] for p in holding_periods}
+            low_returns = {p: [] for p in holding_periods}
+
+            for stock_code, df in factor_data.items():
+                df = calculate_future_returns(df[[factor_name, "close"]], periods=holding_periods)
+                if factor_name not in df.columns or "close" not in df.columns:
+                    continue
+
+                high_events = df[df[factor_name] > threshold_value].index
+                for event_date in high_events:
+                    for period in holding_periods:
+                        if event_date in df.index:
+                            future_ret = df.loc[event_date, f"future_return_{period}"]
+                            if pd.notna(future_ret) and not np.isinf(future_ret):
+                                high_returns[period].append(future_ret)
+
+                low_events = df[df[factor_name] < low_threshold].index
+                for event_date in low_events:
+                    for period in holding_periods:
+                        if event_date in df.index:
+                            future_ret = df.loc[event_date, f"future_return_{period}"]
+                            if pd.notna(future_ret) and not np.isinf(future_ret):
+                                low_returns[period].append(future_ret)
 
         high_avg = {}
         low_avg = {}

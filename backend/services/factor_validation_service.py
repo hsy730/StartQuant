@@ -189,8 +189,13 @@ class FactorValidationService:
                         t_stat = safe_divide(ic, ic_std / np.sqrt(n), default=0.0)
                         p_value = float(2 * (1 - stats.t.cdf(abs(t_stat), df=n - 1)))
                     else:
-                        t_stat = 0.0
-                        p_value = 1.0
+                        # 规则7.15：ic_std≈0 且 ic_mean≠0 → t_stat=inf
+                        if abs(ic) > 1e-10:
+                            t_stat = float('inf')
+                            p_value = 0.0
+                        else:
+                            t_stat = 0.0
+                            p_value = 1.0
 
                     is_significant = p_value < 0.05
                     passed = abs(ic) >= self.ic_threshold and is_significant
@@ -346,8 +351,13 @@ class FactorValidationService:
                             t_stat = safe_divide(ic_mean, ic_std / np.sqrt(n), default=0.0)
                             p_value = float(2 * (1 - stats.t.cdf(abs(t_stat), df=n - 1)))
                         else:
-                            t_stat = 0.0
-                            p_value = 1.0
+                            # 规则7.15：ic_std≈0 且 ic_mean≠0 → t_stat=inf
+                            if abs(ic_mean) > 1e-10:
+                                t_stat = float('inf')
+                                p_value = 0.0
+                            else:
+                                t_stat = 0.0
+                                p_value = 1.0
 
                         passed = ir is not None and ir >= self.ir_threshold
 

@@ -294,20 +294,20 @@ class TestSharpeZeroProtection:
         assert metrics["sharpe_ratio"] is None
 
     def test_factor_return_sharpe_zero_std(self):
-        """FactorReturnAnalysisService 对零标准差返回 0"""
+        """FactorReturnAnalysisService 对零标准差返回 None（规则6）"""
         from backend.services.factor_return_analysis_service import FactorReturnAnalysisService
 
         svc = FactorReturnAnalysisService()
         result = svc._calculate_sharpe_ratio(pd.Series([0.0] * 100), risk_free_rate=0.03)
-        assert result == 0.0
+        assert result is None  # 规则6：不可计算返回None
 
     def test_factor_return_sharpe_single_value(self):
-        """单值序列应返回 0"""
+        """单值序列应返回 None（规则6）"""
         from backend.services.factor_return_analysis_service import FactorReturnAnalysisService
 
         svc = FactorReturnAnalysisService()
         result = svc._calculate_sharpe_ratio(pd.Series([0.01]), risk_free_rate=0.03)
-        assert result == 0.0
+        assert result is None  # 规则6：不可计算返回None
 
     def test_empty_metrics_all_zero(self):
         """空指标字典所有值应为None（不可计算）"""

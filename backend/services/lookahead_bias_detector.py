@@ -31,6 +31,7 @@ import logging
 from scipy.stats import spearmanr
 
 from backend.utils.safe_math import safe_divide, safe_ir
+from backend.utils.ic_calculator import calculate_rolling_ic
 
 logger = logging.getLogger(__name__)
 
@@ -288,8 +289,9 @@ class LookaheadBiasDetector:
                 continue
 
             try:
-                ic = fv_valid.corr(ret_valid)
-                rank_ic = fv_valid.rank().corr(ret_valid.rank())
+                ic_result = spearmanr(fv_valid, ret_valid)
+                ic = ic_result[0] if not np.isnan(ic_result[0]) else np.nan
+                rank_ic = ic  # Spearman IS rank correlation（规则7.25）
             except Exception as e:
                 logger.debug(f"IC计算异常: {e}")
                 continue
@@ -446,21 +448,11 @@ class LookaheadBiasDetector:
             return self._skip_result("ir_magnitude", "数据量不足(<40)")
 
         window = min(20, len(aligned) // 2)
-        min_periods = max(3, window // 2)
 
-        def _rolling_spearman(x):
-            if len(x) < min_periods:
-                return np.nan
-            y_vals = aligned["r"].loc[x.index]
-            valid = x.notna() & y_vals.notna()
-            if valid.sum() < min_periods:
-                return np.nan
-            return spearmanr(x[valid], y_vals[valid])[0]
-
-        rolling_ic = (
-            aligned["f"]
-            .rolling(window=window, min_periods=min_periods)
-            .apply(_rolling_spearman, raw=False)
+        # 使用统一入口计算滚动Spearman IC（符合规则0和规则5）
+        rolling_ic = calculate_rolling_ic(
+            aligned["f"], aligned["r"],
+            window=window, method="spearman",
         )
         rolling_ic = rolling_ic.replace([np.inf, -np.inf], np.nan).dropna()
 
@@ -497,21 +489,11 @@ class LookaheadBiasDetector:
             return self._skip_result("ic_positive_ratio", "数据量不足")
 
         window = min(20, len(aligned) // 2)
-        min_periods = max(3, window // 2)
 
-        def _rolling_spearman(x):
-            if len(x) < min_periods:
-                return np.nan
-            y_vals = aligned["r"].loc[x.index]
-            valid = x.notna() & y_vals.notna()
-            if valid.sum() < min_periods:
-                return np.nan
-            return spearmanr(x[valid], y_vals[valid])[0]
-
-        rolling_ic = (
-            aligned["f"]
-            .rolling(window=window, min_periods=min_periods)
-            .apply(_rolling_spearman, raw=False)
+        # 使用统一入口计算滚动Spearman IC（符合规则0和规则5）
+        rolling_ic = calculate_rolling_ic(
+            aligned["f"], aligned["r"],
+            window=window, method="spearman",
         )
         rolling_ic = rolling_ic.replace([np.inf, -np.inf], np.nan).dropna()
 
@@ -571,20 +553,11 @@ class LookaheadBiasDetector:
             return self._skip_result("rank_ic_magnitude", "数据量不足")
 
         window = min(20, len(aligned) // 2)
-        # 窗口内Spearman秩相关（非全局rank后rolling corr）
-        from scipy.stats import spearmanr
-        def _window_spearman(x):
-            if len(x) < 3:
-                return np.nan
-            y_vals = aligned["r"].loc[x.index]
-            if len(y_vals) < 3:
-                return np.nan
-            return spearmanr(x, y_vals)[0]
 
-        rolling_rank_ic = (
-            aligned["f"]
-            .rolling(window=window, min_periods=max(3, window // 2))
-            .apply(_window_spearman, raw=False)
+        # 使用统一入口计算滚动Spearman IC（符合规则0和规则5）
+        rolling_rank_ic = calculate_rolling_ic(
+            aligned["f"], aligned["r"],
+            window=window, method="spearman",
         )
         rolling_rank_ic = rolling_rank_ic.replace([np.inf, -np.inf], np.nan).dropna()
 

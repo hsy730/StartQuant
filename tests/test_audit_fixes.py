@@ -125,10 +125,10 @@ class TestSharpeRatioWithRiskFreeRate:
 
         svc = FactorReturnAnalysisService()
         r = svc._calculate_sharpe_ratio(pd.Series([0.01]), risk_free_rate=0.03)
-        assert r == 0.0
+        assert r is None  # 规则6：不可计算返回None
 
     def test_factor_return_sharpe_zero_std(self):
-        """零标准差应返回0"""
+        """零标准差应返回None（规则6）"""
         try:
             from backend.services.factor_return_analysis_service import (
                 FactorReturnAnalysisService,
@@ -141,7 +141,7 @@ class TestSharpeRatioWithRiskFreeRate:
         r = svc._calculate_sharpe_ratio(
             pd.Series([0.0] * 100), risk_free_rate=0.03
         )
-        assert r == 0.0
+        assert r is None  # 规则6：不可计算返回None
 
     # --- 1c. PortfolioAnalysisService.optimize_weights (max_sharpe) ---
 

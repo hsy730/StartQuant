@@ -223,10 +223,10 @@ class FactorReturnAnalysisService:
                 quantile_returns.append({
                     "group": f"Q{q+1}",
                     "avg_return": float(avg_return),
-                    "std_return": float(std_return) if not np.isnan(std_return) else 0.0,
+                    "std_return": float(std_return) if not np.isnan(std_return) else None,
                     "n_observations": n_obs,
-                    "t_statistic": float(t_stat) if not np.isnan(t_stat) else 0.0,
-                    "p_value": float(p_value) if not np.isnan(p_value) else 1.0,
+                    "t_statistic": float(t_stat) if not np.isnan(t_stat) else None,
+                    "p_value": float(p_value) if not np.isnan(p_value) else None,
                     "is_significant": p_value < 0.05 if not np.isnan(p_value) else False,
                 })
                 
@@ -408,7 +408,7 @@ class FactorReturnAnalysisService:
                     result["summary_statistics"] = {
                         "final_cumulative_return": float(final_return),
                         "max_drawdown": float(max_drawdown),
-                        "sharpe_ratio": float(sharpe_ratio) if not np.isnan(sharpe_ratio) else 0.0,
+                        "sharpe_ratio": float(sharpe_ratio) if sharpe_ratio is not None and not np.isnan(sharpe_ratio) else None,
                         "total_periods": len(valid_returns),
                     }
             
@@ -603,8 +603,8 @@ class FactorReturnAnalysisService:
             "is_monotonic": is_monotonic,
             "direction": direction,
             "monotonicity_ratio": float(monotonicity_ratio),
-            "spearman_correlation": float(spearman_corr) if not np.isnan(spearman_corr) else 0.0,
-            "spearman_p_value": float(spearman_p) if not np.isnan(spearman_p) else 1.0,
+            "spearman_correlation": float(spearman_corr) if not np.isnan(spearman_corr) else None,
+            "spearman_p_value": float(spearman_p) if not np.isnan(spearman_p) else None,
             "n_increasing_pairs": increasing_count,
             "n_decreasing_pairs": decreasing_count,
             "interpretation": self._interpret_monotonicity(is_monotonic, direction, monotonicity_ratio),
@@ -618,42 +618,73 @@ class FactorReturnAnalysisService:
     ) -> Dict[str, Any]:
         """
         Bootstrap置信区间估计
-        
-        通过重抽样评估分组收益的稳健性
+
+        通过重抽样评估分组收益的稳健性。
+        多股票时按日期聚类重抽样（cluster bootstrap），保持横截面结构；
+        单股票时按行重抽样。
         """
         rng = np.random.default_rng(42)
-        
+
         bootstrapped_spreads = []
         bootstrapped_returns = {f"Q{i+1}": [] for i in range(self.config.n_quantiles)}
-        
+
+        # 判断是否为多股票面板数据（有date列且多个日期）
+        has_cross_section = "date" in df.columns and df["date"].notna().any() and df["date"].nunique() > 1
+
         for _ in range(self.config.bootstrap_n):
-            sample_df = df.sample(n=len(df), replace=True, random_state=rng)
-            
+            if has_cross_section:
+                # Cluster bootstrap：按日期重抽样，保持横截面结构
+                unique_dates = df["date"].dropna().unique()
+                sampled_dates = rng.choice(unique_dates, size=len(unique_dates), replace=True)
+                sample_frames = []
+                for d in sampled_dates:
+                    date_rows = df[df["date"] == d]
+                    sample_frames.append(date_rows)
+                sample_df = pd.concat(sample_frames, ignore_index=True)
+            else:
+                # 单股票：按行重抽样
+                sample_df = df.sample(n=len(df), replace=True, random_state=rng)
+
             try:
-                sample_df["quantile"] = pd.qcut(
-                    sample_df[factor_col],
-                    q=self.config.n_quantiles,
-                    labels=False,
-                    duplicates="drop",
-                )
+                sample_df["quantile"] = np.nan
+                if has_cross_section:
+                    for date, group in sample_df.groupby("date"):
+                        if len(group) >= self.config.n_quantiles:
+                            try:
+                                sample_df.loc[group.index, "quantile"] = pd.qcut(
+                                    group[factor_col],
+                                    q=self.config.n_quantiles,
+                                    labels=False,
+                                    duplicates="drop",
+                                )
+                            except ValueError:
+                                pass
+                else:
+                    sample_df["quantile"] = pd.qcut(
+                        sample_df[factor_col],
+                        q=self.config.n_quantiles,
+                        labels=False,
+                        duplicates="drop",
+                    )
+                sample_df = sample_df.dropna(subset=["quantile"])
             except ValueError:
                 continue
-            
+
             for q in range(self.config.n_quantiles):
                 group = sample_df[sample_df["quantile"] == q]
                 if len(group) > 0:
                     bootstrapped_returns[f"Q{q+1}"].append(group[return_col].mean())
-            
+
             if f"Q{self.config.n_quantiles}" in bootstrapped_returns and \
                "Q1" in bootstrapped_returns and \
                len(bootstrapped_returns[f"Q{self.config.n_quantiles}"]) > 0 and \
                len(bootstrapped_returns["Q1"]) > 0:
-                spread = (bootstrapped_returns[f"Q{self.config.n_quantiles}"][-1] - 
+                spread = (bootstrapped_returns[f"Q{self.config.n_quantiles}"][-1] -
                          bootstrapped_returns["Q1"][-1])
                 bootstrapped_spreads.append(spread)
-        
+
         result = {}
-        
+
         for q in range(self.config.n_quantiles):
             key = f"Q{q+1}"
             if key in bootstrapped_returns and len(bootstrapped_returns[key]) > 0:
@@ -666,7 +697,7 @@ class FactorReturnAnalysisService:
                     "mean": float(np.mean(values)),
                     "std": float(np.std(values)),
                 }
-        
+
         if bootstrapped_spreads:
             spreads_sorted = sorted(bootstrapped_spreads)
             result["spread_ci"] = {
@@ -675,7 +706,7 @@ class FactorReturnAnalysisService:
                 "mean": float(np.mean(bootstrapped_spreads)),
                 "std": float(np.std(bootstrapped_spreads)),
             }
-        
+
         return result
 
     def _calculate_max_drawdown(self, returns: List[float]) -> float:
@@ -706,7 +737,7 @@ class FactorReturnAnalysisService:
         需要先转换为日收益率再计算Sharpe，否则年化因子错误。
         """
         if len(returns) < 2:
-            return 0.0
+            return None
 
         # 将forward_period日收益率转换为日收益率
         # (1 + r_period)^(1/forward_period) - 1 ≈ r_period / forward_period（小收益率时）
@@ -720,7 +751,7 @@ class FactorReturnAnalysisService:
             daily_returns = returns
 
         sharpe = calculate_sharpe(daily_returns, risk_free_rate=risk_free_rate)
-        return sharpe if sharpe is not None else 0.0
+        return sharpe  # None表示不可计算，符合规则6
 
     def _interpret_turnover(self, turnover: float) -> str:
         """解读换手率"""

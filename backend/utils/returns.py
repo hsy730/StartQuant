@@ -88,15 +88,21 @@ def calculate_ic_stats(
     mean_ic = float(ic_clean.mean())
     std_ic = float(ic_clean.std())
 
-    # 常数IC序列：std接近0时，IR/t统计量/p值/置信区间无意义，返回None
+    # 常数IC序列：std接近0时（规则7.15）
     if std_ic < 1e-10:
         positive_ratio = float((ic_clean > 0).mean())
+        if abs(mean_ic) > 1e-10:
+            t_statistic = float('inf')
+            p_value = 0.0
+        else:
+            t_statistic = 0.0
+            p_value = 1.0
         return {
             "mean_ic": mean_ic,
             "std_ic": std_ic,
             "ir": None,
-            "t_statistic": None,
-            "p_value": None,
+            "t_statistic": t_statistic,
+            "p_value": p_value,
             "ci_lower": None,
             "ci_upper": None,
             "n_samples": n,

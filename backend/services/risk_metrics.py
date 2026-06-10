@@ -37,9 +37,22 @@ def calculate_risk_metrics(
 
     returns_arr = returns_clean.values
 
-    # 标准差为零或近零时直接返回空指标，避免 empyrical 产生极大值
+    # 标准差为零或近零时，波动率依赖指标不可计算，但收益/胜率仍可计算
     if np.std(returns_arr) < 1e-10:
-        return _empty_metrics()
+        return {
+            "total_return": float(empyrical.cum_returns_final(returns_arr)),
+            "annual_return": float(empyrical.annual_return(
+                returns_arr, period='daily', annualization=annual_trading_days
+            )),
+            "volatility": None,
+            "sharpe_ratio": None,
+            "sortino_ratio": None,
+            "max_drawdown": None,
+            "calmar_ratio": None,
+            "win_rate": float((returns_arr > 0).mean()),
+            "var_95": None,
+            "cvar_95": None,
+        }
 
     result = {
         "total_return": float(empyrical.cum_returns_final(returns_arr)),

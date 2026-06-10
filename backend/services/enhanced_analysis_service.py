@@ -146,6 +146,11 @@ class EnhancedAnalysisService:
         按日期分组，每个截面独立计算spearmanr，再取均值。
         如果无日期信息，返回None（池化相关违反独立性假设）。
 
+        注意：此方法与 ic_calculator.calculate_ic 功能不同。
+        calculate_ic 计算单期IC（两个Series之间的相关系数），
+        而此方法按日期截面逐个计算IC再取均值（面板数据专用）。
+        单期场景应优先使用 ic_calculator.calculate_ic。
+
         Args:
             factor_values: 因子值序列
             return_values: 收益率序列
@@ -270,10 +275,15 @@ class EnhancedAnalysisService:
                         p_value = 2 * (1 - stats.t.cdf(abs(t_stat), df=n_days - 1))
                         is_significant = p_value < 0.05
                     else:
-                        # IC标准差接近0时，t检验不可计算（规则7.10）
-                        t_stat = None
-                        p_value = None
-                        is_significant = None
+                        # IC标准差接近0时（规则7.10/7.15）
+                        if abs(mean_ic) > 1e-10:
+                            t_stat = float('inf')
+                            p_value = 0.0
+                            is_significant = True
+                        else:
+                            t_stat = 0.0
+                            p_value = 1.0
+                            is_significant = False
                     ic_significance = {
                         "ic": mean_ic,
                         "ic_std": ic_std,

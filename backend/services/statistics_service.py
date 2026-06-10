@@ -6,7 +6,6 @@ import numpy as np
 from typing import Dict, List
 from contextlib import contextmanager
 from scipy import stats
-from scipy.stats import spearmanr
 from sklearn.preprocessing import PolynomialFeatures
 import warnings
 import logging
@@ -14,6 +13,7 @@ import math
 
 from backend.utils.returns import calculate_future_returns
 from backend.utils.safe_math import safe_divide
+from backend.utils.ic_calculator import calculate_ic
 from backend.services.risk_metrics import calculate_risk_metrics
 
 # 配置日志
@@ -57,14 +57,23 @@ class StatisticsService:
                 "confidence_interval": (None, None),
             }
 
-        # 常数IC序列（std≈0）：ttest返回NaN，t.interval退化
+        # 常数IC序列（std≈0）：ttest返回NaN，t.interval退化（规则7.15）
         if ic_clean.std() < 1e-10:
+            mean_val = float(ic_clean.mean())
+            if abs(mean_val) > 1e-10:
+                t_stat = float('inf')
+                p_value = 0.0
+                is_sig = True
+            else:
+                t_stat = 0.0
+                p_value = 1.0
+                is_sig = False
             return {
-                "t_statistic": None,
-                "p_value": None,
+                "t_statistic": t_stat,
+                "p_value": p_value,
                 "confidence_interval": (None, None),
-                "is_significant": False,
-                "mean_ic": float(ic_clean.mean()),
+                "is_significant": is_sig,
+                "mean_ic": mean_val,
                 "std_ic": 0.0,
             }
 
@@ -153,21 +162,16 @@ class StatisticsService:
         periods = list(range(1, max_periods + 1))
         df = calculate_future_returns(df, periods=periods, price_col="close")
 
-        # 计算IC
+        # 计算IC（使用统一入口 ic_calculator.calculate_ic，符合规则0和规则5）
         decay_results = {}
         for period in periods:
             col = f"future_return_{period}"
-            factor_clean = df[factor_name].dropna()
-            return_clean = df[col].dropna()
-
-            # 对齐数据
-            aligned_idx = factor_clean.index.intersection(return_clean.index)
-            if len(aligned_idx) > 10:  # 至少需要10个样本
-                ic, _ = spearmanr(factor_clean.loc[aligned_idx], return_clean.loc[aligned_idx])
-                ic = ic if not np.isnan(ic) else np.nan
-                decay_results[f"period_{period}"] = ic
-            else:
-                decay_results[f"period_{period}"] = np.nan
+            ic = calculate_ic(
+                df[factor_name], df[col],
+                method="spearman",
+                min_samples=10,
+            )
+            decay_results[f"period_{period}"] = ic if ic is not None else np.nan
 
         return decay_results
 
@@ -207,19 +211,18 @@ class StatisticsService:
             return_mask = (return_data.index >= start_idx) & (return_data.index <= end_idx)
             return_group = return_data[return_mask]
 
-            # 对齐并计算IC
+            # 对齐并计算IC（使用统一入口，符合规则0和规则5）
             if len(factor_group) > 0 and len(return_group) > 0:
                 aligned_idx = factor_group.index.intersection(return_group.index)
                 if len(aligned_idx) > 10:
-                    f_vals = factor_group.loc[aligned_idx]
-                    r_vals = return_group.loc[aligned_idx]
-                    valid_mask = f_vals.notna() & r_vals.notna()
-                    if valid_mask.sum() >= 10:
-                        ic, _ = spearmanr(f_vals[valid_mask], r_vals[valid_mask])
-                    else:
-                        ic = np.nan
-                    ic = ic if not np.isnan(ic) else np.nan
-                    periodic_ic[str(period_name.date())] = ic
+                    ic = calculate_ic(
+                        factor_group.loc[aligned_idx], return_group.loc[aligned_idx],
+                        method="spearman", min_samples=10,
+                    )
+                    ic = ic if ic is not None else np.nan
+                else:
+                    ic = np.nan
+                periodic_ic[str(period_name.date())] = ic
 
         return periodic_ic
 
@@ -272,14 +275,17 @@ class StatisticsService:
             return_df = return_data.get(regime)
 
             if return_df is not None:
-                # 计算IC
+                # 计算IC（使用统一入口，符合规则0和规则5）
                 aligned_idx = factor_df.index.intersection(return_df.index)
                 if len(aligned_idx) > 10:
-                    ic, _ = spearmanr(factor_df.loc[aligned_idx], return_df.loc[aligned_idx])
-                    ic = ic if not np.isnan(ic) else np.nan
-                    results[regime] = ic
+                    ic = calculate_ic(
+                        factor_df.loc[aligned_idx], return_df.loc[aligned_idx],
+                        method="spearman", min_samples=10,
+                    )
+                    ic = ic if ic is not None else np.nan
                 else:
-                    results[regime] = np.nan
+                    ic = np.nan
+                results[regime] = ic
 
         return results
 

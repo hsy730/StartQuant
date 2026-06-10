@@ -8,7 +8,7 @@ from typing import Dict, Optional, Any
 from scipy.stats import ttest_1samp
 import akshare as ak
 
-from backend.services.risk_metrics import calculate_sharpe, calculate_volatility
+from backend.services.risk_metrics import calculate_sharpe, calculate_volatility, calculate_relative_metrics
 from backend.utils.safe_math import safe_divide
 
 logger = logging.getLogger(__name__)
@@ -289,14 +289,16 @@ class FactorAttributionService:
         if len(aligned_data) < 10:
             return {"error": "对齐后数据不足"}
 
-        # 线性回归：Portfolio Return = Alpha + Beta * Benchmark Return
-        X = aligned_data[['benchmark']].values
-        y = aligned_data['portfolio'].values
+        # 使用统一入口计算 Alpha/Beta（委托 empyrical，符合规则0和规则2）
+        relative_metrics = calculate_relative_metrics(
+            strategy_returns=aligned_data['portfolio'],
+            benchmark_returns=aligned_data['benchmark'],
+            risk_free_rate=0.03,
+        )
 
-        # 计算Beta (协方差 / 基准方差)
-        # 当基准方差为0时（基准不波动），beta无意义，返回None
-        cov_matrix = np.cov(y, X.flatten())
-        beta = safe_divide(float(cov_matrix[0, 1]), float(cov_matrix[1, 1]), default=None)
+        alpha_annual = relative_metrics.get("alpha")
+        beta = relative_metrics.get("beta")
+        correlation = relative_metrics.get("correlation")
 
         if beta is None:
             return {
@@ -308,20 +310,14 @@ class FactorAttributionService:
                 "interpretation": "基准方差为0，无法计算Beta和Alpha"
             }
 
-        # 计算Alpha (组合收益 - Beta * 基准收益)
-        alpha = y.mean() - beta * X.mean()
+        # 计算日频 alpha（年化 alpha / 252）
+        daily_alpha = safe_divide(alpha_annual, 252, default=None) if alpha_annual is not None else None
 
-        # 年化
-        alpha_annual = alpha * 252
-
-        # 计算R²
-        y_pred = alpha + beta * X.flatten()
-        ss_tot = np.sum((y - y.mean()) ** 2)
-        ss_res = np.sum((y - y_pred) ** 2)
-        if ss_tot < 1e-10:
-            r_squared = None
+        # R² = correlation²（规则7.18：ss_tot=0 时 correlation 为 None，R² 返回 None）
+        if correlation is not None:
+            r_squared = correlation ** 2
         else:
-            r_squared = 1.0 - safe_divide(float(ss_res), float(ss_tot), default=None)
+            r_squared = None
 
         interpretation = (
             f"相对于基准的年化Alpha: {alpha_annual:.4f}, "
@@ -334,10 +330,10 @@ class FactorAttributionService:
 
         return {
             "has_benchmark": True,
-            "alpha": float(alpha_annual),
-            "beta": float(beta),
-            "r_squared": float(r_squared),
-            "daily_alpha": float(alpha),
+            "alpha": float(alpha_annual) if alpha_annual is not None else None,
+            "beta": float(beta) if beta is not None else None,
+            "r_squared": float(r_squared) if r_squared is not None else None,
+            "daily_alpha": float(daily_alpha) if daily_alpha is not None else None,
             "interpretation": interpretation
         }
 
@@ -397,11 +393,11 @@ class FactorAttributionService:
             per_stock_win_rates.append(stats["win_rate"])
             per_stock_avg_returns.append(stats["avg_daily_return"])
 
-        overall_avg = float(np.mean([v for v in per_stock_avg_returns if v is not None])) if per_stock_avg_returns else 0.0
-        overall_vol_annual = float(np.mean([v for v in per_stock_vols if v is not None])) if per_stock_vols else 0.0
-        overall_daily_vol = float(np.mean([v for v in per_stock_daily_vols if v is not None])) if per_stock_daily_vols else 0.0
+        overall_avg = float(np.mean([v for v in per_stock_avg_returns if v is not None])) if any(v is not None for v in per_stock_avg_returns) else None
+        overall_vol_annual = float(np.mean([v for v in per_stock_vols if v is not None])) if any(v is not None for v in per_stock_vols) else None
+        overall_daily_vol = float(np.mean([v for v in per_stock_daily_vols if v is not None])) if any(v is not None for v in per_stock_daily_vols) else None
         overall_sharpe = float(np.mean([v for v in per_stock_sharpes if v is not None])) if any(v is not None for v in per_stock_sharpes) else None
-        overall_win_rate = float(np.mean([v for v in per_stock_win_rates if v is not None])) if per_stock_win_rates else 0.0
+        overall_win_rate = float(np.mean([v for v in per_stock_win_rates if v is not None])) if any(v is not None for v in per_stock_win_rates) else None
         # 先计算每只股票的累计收益再取均值，而非跨股票连乘
         stock_cum_returns = [v["cumulative_return"] for v in returns_by_stock.values()]
         overall_cum = float(np.mean(stock_cum_returns)) if stock_cum_returns else 0.0

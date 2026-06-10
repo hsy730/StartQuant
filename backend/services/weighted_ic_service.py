@@ -173,7 +173,7 @@ class WeightedICService:
                 "weighted_ic": {
                     "mean": float(valid_weighted_ic.mean()) if len(valid_weighted_ic) > 0 else 0.0,
                     "std": float(valid_weighted_ic.std()) if len(valid_weighted_ic) > 1 else 0.0,
-                    "ir": safe_ir(float(valid_weighted_ic.mean()), float(valid_weighted_ic.std()), default=0.0) if len(valid_weighted_ic) > 1 else 0.0,
+                    "ir": safe_ir(float(valid_weighted_ic.mean()), float(valid_weighted_ic.std()), default=None) if len(valid_weighted_ic) > 1 else None,
                     "positive_ratio": float((valid_weighted_ic > 0).mean()) if len(valid_weighted_ic) > 0 else 0.0,
                     "n_observations": len(valid_weighted_ic),
                     "series_dates": [str(d) for d in valid_weighted_ic.index],
@@ -234,7 +234,7 @@ class WeightedICService:
                 
                 mean_ic = abs(valid_ic.mean())
                 std_ic = valid_ic.std()
-                ir = safe_ir(mean_ic, std_ic, default=0.0)
+                ir = safe_ir(mean_ic, std_ic, default=None)
                 positive_ratio = (valid_ic > 0).mean()
 
                 recent_ic = valid_ic.tail(self.config.lookback_window // 4)
@@ -249,8 +249,9 @@ class WeightedICService:
                 
                 stability_score = self._calculate_stability_score(valid_ic)
                 
+                ir_for_score = ir if ir is not None else 0.0
                 raw_score = (
-                    ir * 30 +
+                    ir_for_score * 30 +
                     mean_ic * 100 +
                     (positive_ratio - 0.5) * 20 +
                     stability_score * 20 +
@@ -260,7 +261,7 @@ class WeightedICService:
                 importance_scores[name] = {
                     "raw_score": float(raw_score),
                     "components": {
-                        "ir": float(ir),
+                        "ir": float(ir) if ir is not None else None,
                         "mean_abs_ic": float(mean_ic),
                         "positive_ratio": float(positive_ratio),
                         "stability": float(stability_score),
@@ -333,7 +334,7 @@ class WeightedICService:
                 if name in ic_stats:
                     stats = ic_stats[name]
                     ir = stats["ir"]
-                    raw_weights[name] = max(ir, 0)
+                    raw_weights[name] = max(ir, 0) if ir is not None else 0
 
             # 当所有因子IR均为负时，raw_weights全为0，静默退化为空权重
             if all(v == 0 for v in raw_weights.values()):
@@ -572,10 +573,11 @@ class WeightedICService:
         ]
         
         for r in ranking[:5]:
+            ir_str = f"IR={r['ir']:.3f}" if r.get('ir') is not None else "IR=N/A"
             interpretation_parts.append(
                 f"  {r['rank']}. {r['factor_name']}: "
                 f"综合得分={r['total_score']:.2f}, "
-                f"IR={r.get('ir', 0):.3f}\n"
+                f"{ir_str}\n"
             )
         
         if n_factors > 5:
