@@ -375,7 +375,7 @@ class FactorValidationService:
         if len(aligned_data) < 20:
             return {
                 "passed": False,
-                "ir": 0.0,
+                "ir": None,
                 "message": "数据量不足",
             }
 

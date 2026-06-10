@@ -122,7 +122,7 @@ class WeightedICService:
                 ic_stats[name] = {
                     "mean_ic": float(valid_ic.mean()),
                     "std_ic": float(valid_ic.std()) if abs(valid_ic.std()) > 1e-10 else None,
-                    "ir": safe_ir(float(valid_ic.mean()), float(valid_ic.std()), default=0.0),
+                    "ir": safe_ir(float(valid_ic.mean()), float(valid_ic.std()), default=None),
                     "ic_positive_ratio": float((valid_ic > 0).mean()),
                     "n_observations": len(valid_ic),
                     "ic_series": valid_ic,

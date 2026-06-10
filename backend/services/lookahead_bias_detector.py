@@ -28,6 +28,7 @@ from typing import Dict, List, Optional, Any
 from dataclasses import dataclass, field
 from enum import Enum
 import logging
+from scipy.stats import spearmanr
 
 from backend.utils.safe_math import safe_divide, safe_ir
 
@@ -307,7 +308,7 @@ class LookaheadBiasDetector:
             except Exception as e:
                 logger.debug(f"计算分层收益差失败: {e}")
 
-        ic_series = pd.Series(daily_ics) if daily_ics else pd.Series()
+        ic_series = pd.Series(daily_rank_ics) if daily_rank_ics else pd.Series(daily_ics) if daily_ics else pd.Series()
 
         # 检测 1: 横截面 IC 均值过高
         if len(ic_series) > 0:
@@ -412,12 +413,13 @@ class LookaheadBiasDetector:
     def _check_ic_magnitude(
         self, factor: pd.Series, returns: pd.Series
     ) -> BiasCheckResult:
-        """检测 1a: IC 绝对值是否异常偏高"""
+        """检测 1a: IC 绝对值是否异常偏高（使用Spearman秩相关）"""
         aligned = pd.DataFrame({"f": factor, "r": returns}).dropna()
         if len(aligned) < 10:
             return self._skip_result("ic_magnitude", "数据量不足")
 
-        ic = aligned["f"].corr(aligned["r"])
+        ic_result = spearmanr(aligned["f"], aligned["r"])
+        ic = ic_result[0] if not np.isnan(ic_result[0]) else 0.0
         abs_ic = abs(ic) if pd.notna(ic) else 0.0
         threshold = self.thresholds["ic_abs_max"]
 
@@ -438,13 +440,28 @@ class LookaheadBiasDetector:
     def _check_ir_magnitude(
         self, factor: pd.Series, returns: pd.Series
     ) -> BiasCheckResult:
-        """检测 1b: IR 是否异常偏高（基于滚动IC）"""
+        """检测 1b: IR 是否异常偏高（基于滚动Spearman IC）"""
         aligned = pd.DataFrame({"f": factor, "r": returns}).dropna()
         if len(aligned) < 40:
             return self._skip_result("ir_magnitude", "数据量不足(<40)")
 
         window = min(20, len(aligned) // 2)
-        rolling_ic = aligned["f"].rolling(window=window, min_periods=max(2, window // 2)).corr(aligned["r"])
+        min_periods = max(3, window // 2)
+
+        def _rolling_spearman(x):
+            if len(x) < min_periods:
+                return np.nan
+            y_vals = aligned["r"].loc[x.index]
+            valid = x.notna() & y_vals.notna()
+            if valid.sum() < min_periods:
+                return np.nan
+            return spearmanr(x[valid], y_vals[valid])[0]
+
+        rolling_ic = (
+            aligned["f"]
+            .rolling(window=window, min_periods=min_periods)
+            .apply(_rolling_spearman, raw=False)
+        )
         rolling_ic = rolling_ic.replace([np.inf, -np.inf], np.nan).dropna()
 
         if len(rolling_ic) < 10:
@@ -474,13 +491,28 @@ class LookaheadBiasDetector:
     def _check_ic_positive_ratio(
         self, factor: pd.Series, returns: pd.Series
     ) -> BiasCheckResult:
-        """检测 1c: IC 正向比例是否异常（接近 100% 或 0%）"""
+        """检测 1c: IC 正向比例是否异常（接近 100% 或 0%，使用Spearman IC）"""
         aligned = pd.DataFrame({"f": factor, "r": returns}).dropna()
         if len(aligned) < 20:
             return self._skip_result("ic_positive_ratio", "数据量不足")
 
         window = min(20, len(aligned) // 2)
-        rolling_ic = aligned["f"].rolling(window=window, min_periods=max(2, window // 2)).corr(aligned["r"])
+        min_periods = max(3, window // 2)
+
+        def _rolling_spearman(x):
+            if len(x) < min_periods:
+                return np.nan
+            y_vals = aligned["r"].loc[x.index]
+            valid = x.notna() & y_vals.notna()
+            if valid.sum() < min_periods:
+                return np.nan
+            return spearmanr(x[valid], y_vals[valid])[0]
+
+        rolling_ic = (
+            aligned["f"]
+            .rolling(window=window, min_periods=min_periods)
+            .apply(_rolling_spearman, raw=False)
+        )
         rolling_ic = rolling_ic.replace([np.inf, -np.inf], np.nan).dropna()
 
         if len(rolling_ic) < 5:
@@ -811,7 +843,7 @@ class LookaheadBiasDetector:
     def _check_temporal_consistency(
         self, factor: pd.Series, returns: pd.Series
     ) -> BiasCheckResult:
-        """检测 7: 时段一致性检验（前后半段 IC 对比）"""
+        """检测 7: 时段一致性检验（前后半段 IC 对比，使用Spearman）"""
         aligned = pd.DataFrame({"f": factor, "r": returns}).dropna()
         if len(aligned) < 40:
             return self._skip_result("temporal_consistency", "数据量不足")
@@ -820,8 +852,10 @@ class LookaheadBiasDetector:
         first_half = aligned.iloc[:mid]
         second_half = aligned.iloc[mid:]
 
-        ic_first = first_half["f"].corr(first_half["r"])
-        ic_second = second_half["f"].corr(second_half["r"])
+        ic_first_result = spearmanr(first_half["f"], first_half["r"])
+        ic_second_result = spearmanr(second_half["f"], second_half["r"])
+        ic_first = ic_first_result[0]
+        ic_second = ic_second_result[0]
 
         if pd.isna(ic_first) or pd.isna(ic_second):
             return self._skip_result("temporal_consistency", "IC计算无效")

@@ -601,6 +601,239 @@ ic = float(rolling_ic.dropna().mean())
 
 **原则**：IC 加权直接影响多因子组合的权重分配。池化相关违反独立性假设，可能产生虚假的高/低 IC 值，导致权重偏离真实因子预测能力。
 
+### 规则7.14：IC 计算器默认方法必须是 Spearman，禁止 Pearson
+
+**来源**：`ic_calculator.py` 中 `calculate_ic` 和 `calculate_rolling_ic` 默认 `method="pearson"`
+
+```python
+# ❌ 错误：默认 Pearson，调用方省略 method 参数时静默使用错误方法
+def calculate_ic(factor, returns, method: str = "pearson", ...):
+    ...
+
+# ✅ 正确：默认 Spearman，与项目规范和业界标准一致
+def calculate_ic(factor, returns, method: str = "spearman", ...):
+    ...
+```
+
+**原则**：IC 计算是因子分析的基础设施。默认值决定了大多数调用方的行为，必须与项目规范（规则7.1/7.12）一致。任何需要 Pearson IC 的场景应显式指定 `method="pearson"`。
+
+### 规则7.15：IC 标准差为零但均值非零时，t 统计量应为无穷大，禁止设为 0
+
+**来源**：`analysis_service.py`、`alphalens_analysis_service.py` 中 ic_std≈0 时 t_stat=0, p_value=1.0
+
+```python
+# ❌ 错误：IC 恒正（如所有截面IC=0.05）但 t_stat=0, p_value=1.0 → 因子被判为不显著
+if ic_std <= 0:
+    t_stat = 0.0
+    p_value = 1.0
+
+# ✅ 正确：IC_std≈0 且 IC_mean≠0 → 因子极其稳定，高度显著
+if ic_std < 1e-10:
+    if abs(ic_mean) > 1e-10:
+        t_stat = float('inf')
+        p_value = 0.0
+    else:
+        t_stat = 0.0
+        p_value = 1.0
+```
+
+**原则**：t = mean / (std / sqrt(n))。当 std→0 且 mean≠0 时，t→∞（因子信号极其稳定）。设为 0 恰好得出相反结论——因子无效。
+
+### 规则7.16：Welch's t 检验公式禁止混入交叉项
+
+**来源**：`factor_return_analysis_service.py` 中多空价差 t 统计量公式错误
+
+```python
+# ❌ 错误：分母包含交叉项 std_top²/n_bottom + std_bottom²/n_top
+spread_std = np.sqrt(std_top**2 + std_bottom**2)
+t_stat = spread / (spread_std * np.sqrt(1/n_top + 1/n_bottom))
+# 展开 = spread / sqrt(std_top²/n_top + std_top²/n_bottom + std_bottom²/n_top + std_bottom²/n_bottom)
+
+# ✅ 正确：Welch's t 检验
+se = np.sqrt(std_top**2 / n_top + std_bottom**2 / n_bottom)
+t_stat = spread / se if se > 0 else 0.0
+```
+
+**原则**：Welch's t 检验的标准误只包含各组方差除以各自样本量，不含交叉项。交叉项使分母系统性偏大，导致 t 统计量偏小，检验过于保守（假阴性）。
+
+### 规则7.17：因子归因的高/低暴露收益必须横截面计算，禁止池化分位数
+
+**来源**：`factor_attribution_service.py` 中高/低暴露组收益使用全局分位数阈值
+
+```python
+# ❌ 错误：池化所有股票-日期观测值，用全局分位数阈值分组
+all_factor_values = pd.Series(...)  # 所有股票所有日期
+high_threshold = all_factor_values.quantile(0.7)
+high_return = returns[all_factor_values >= high_threshold].mean()
+
+# ✅ 正确：每个日期独立计算横截面分位数阈值
+daily_high_returns = []
+for date, group in data.groupby("date"):
+    if len(group) < 5:
+        continue
+    high_threshold = group["factor"].quantile(0.7)
+    high_ret = group.loc[group["factor"] >= high_threshold, "return"].mean()
+    daily_high_returns.append(high_ret)
+high_return = np.mean(daily_high_returns)
+```
+
+**原则**：与 IC 计算同理（规则7.1），池化分组违反横截面独立性假设。一只持续高因子值的股票会主导高暴露组，使"高暴露收益"退化为该股票的平均收益。
+
+### 规则7.18：R² 在因变量方差为零时不可计算，禁止返回 1.0
+
+**来源**：`factor_attribution_service.py` 中 ss_tot=0 时 R²=1.0
+
+```python
+# ❌ 错误：ss_tot=0 → safe_divide(ss_res, ss_tot, default=0.0) → R²=1.0-0.0=1.0
+r_squared = 1.0 - safe_divide(float(ss_res), float(ss_tot), default=0.0)
+
+# ✅ 正确：因变量恒定时 R² 无定义
+if ss_tot < 1e-10:
+    r_squared = None
+else:
+    r_squared = 1.0 - safe_divide(float(ss_res), float(ss_tot), default=None)
+```
+
+**原则**：R²=1.0 意味着"模型完美解释数据"，但当因变量方差为零时，R² 无定义。返回 1.0 误导用户认为模型拟合完美。
+
+### 规则7.19：pyportfolioopt 输入必须尺度无关，禁止直接对原始因子值 diff()
+
+**来源**：`weight_optimizer_service.py` 中 `_max_sharpe`/`_min_variance`/`_risk_parity` 对原始因子值 diff()
+
+```python
+# ❌ 错误：原始因子值 diff() 不具尺度不变性
+factor_returns = factor_df[factor_names].diff().dropna()
+# 因子A范围[0,1000] → diff()量级~10，因子B范围[-3,3] → diff()量级~0.1
+# 优化被因子A主导
+
+# ✅ 正确：标准化后再 diff()
+factor_standardized = factor_df[factor_names].apply(
+    lambda x: (x - x.mean()) / x.std() if x.std() > 1e-10 else x - x.mean()
+)
+factor_returns = factor_standardized.diff().dropna()
+```
+
+**原则**：pyportfolioopt 的均值-方差优化对输入尺度敏感。不同因子的绝对值范围可能差几个数量级，直接 diff() 会使优化被高量级因子主导，与因子的实际预测能力无关。
+
+### 规则7.20：累计收益必须复利计算，禁止存储期间收益并标记为"累计"
+
+**来源**：`factor_return_analysis_service.py` 中 `group_cumreturns` 存储期间收益但标签为"累计"
+
+```python
+# ❌ 错误：存储期间收益但变量名和键名暗示累计
+group_cumreturns[f"Q{q+1}"].append(group_returns.get(q, 0.0))  # 这是期间收益！
+
+# ✅ 正确：复利累计
+group_cumulative = {q: 1.0 for q in range(n_quantiles)}
+for q in range(n_quantiles):
+    group_cumulative[q] *= (1 + group_returns.get(q, 0.0))
+    group_cumreturns[f"Q{q+1}"].append(group_cumulative[q] - 1)
+```
+
+**原则**：期间收益和累计收益是两个完全不同的概念。期间收益可直接加减，累计收益必须复利。前端图表如果按累计收益绘制，使用期间收益会产生错误的曲线。
+
+### 规则7.21：多期收益率的 Sharpe 年化必须调整频率，禁止直接 sqrt(252)
+
+**来源**：`factor_return_analysis_service.py` 中 forward_period>1 时 Sharpe 年化错误
+
+```python
+# ❌ 错误：5日收益率的 Sharpe 直接乘 sqrt(252)，高估约 2.24 倍
+sharpe = calculate_sharpe(returns_5day)  # 内部 * sqrt(252)
+
+# ✅ 正确：先将多期收益率转为日频等价
+daily_equivalent = (1 + period_returns) ** (1 / forward_period) - 1
+sharpe = calculate_sharpe(daily_equivalent)
+```
+
+**原则**：Sharpe 年化因子 = sqrt(252) 仅适用于日频收益率。5日收益率的波动率已是5日尺度，直接年化会高估 Sharpe 约 sqrt(forward_period) 倍。
+
+### 规则7.22：Duplicate DatetimeIndex 下 .loc 会膨胀样本量，必须用 .iloc
+
+**来源**：`enhanced_analysis_service.py` 中合并多股票 DataFrame 后 .loc 查找膨胀
+
+```python
+# ❌ 错误：合并后的 DatetimeIndex 有重复日期，.loc 返回所有匹配行
+for date, group_idx in date_series.groupby(date_series):
+    factor_group = factor_values.loc[group_idx.index]  # 3只股票×3次匹配=9行
+
+# ✅ 正确：用整数索引避免重复问题
+factor_values_reset = factor_values.reset_index(drop=True)
+return_values_reset = return_values.reset_index(drop=True)
+date_series_reset = date_series.reset_index(drop=True)
+for date, group_idx in date_series_reset.groupby(date_series_reset):
+    factor_group = factor_values_reset.iloc[group_idx.index]
+    return_group = return_values_reset.iloc[group_idx.index]
+```
+
+**原则**：`pd.concat([df1, df2])` 不加 `ignore_index=True` 时，DatetimeIndex 会包含重复值。`.loc[duplicate_dates]` 返回所有匹配行，导致样本量膨胀 N 倍（N=股票数）。
+
+### 规则7.23：评分函数必须有上下界截断，禁止负分
+
+**来源**：`comprehensive_scoring_service.py` 中 Sharpe 评分无下限截断
+
+```python
+# ❌ 错误：负 Sharpe 产生负分，拖累总分
+sharpe_score = min(sharpe_ratio / 2.0 * 100, 100)  # sharpe=-1 → score=-50
+
+# ✅ 正确：截断到 [0, 100]
+sharpe_score = max(min(sharpe_ratio / 2.0 * 100, 100), 0)
+```
+
+**原则**：评分系统的每个维度分数应在 [0, 100] 范围内。负分会使总分低于预期范围，误导用户对整体质量的判断。
+
+### 规则7.24：API 方法签名必须与实际参数匹配，禁止静默失败
+
+**来源**：`stock_ranker_service.py` 中 `process_single_factor` 调用传入不存在的 `factor_name` 参数
+
+```python
+# ❌ 错误：factor_name 不在方法签名中，TypeError 被 except 吞掉，预处理静默失败
+result = pipeline.process_single_factor(df[feat], factor_name=feat)
+
+# ✅ 正确：匹配实际签名，正确解包返回值
+processed_series, stats = pipeline.process_single_factor(df[feat])
+df[feat] = processed_series.values
+```
+
+**原则**：Python 的 `**kwargs` 和 broad `except Exception` 组合会导致参数错误被静默吞掉。调用外部 API 时必须核对方法签名，返回值类型也必须匹配（单个值 vs 元组）。
+
+### 规则7.25：前视偏差检测器自身必须使用 Spearman IC，禁止 Pearson
+
+**来源**：`lookahead_bias_detector.py` 中多个检测方法使用 Pearson IC
+
+```python
+# ❌ 错误：前视偏差检测用 Pearson，对非线性单调关系不敏感
+ic = aligned["f"].corr(aligned["r"])  # Pearson
+rolling_ic = aligned["f"].rolling(20).corr(aligned["r"])  # Pearson
+
+# ✅ 正确：使用 Spearman 检测前视偏差
+from scipy.stats import spearmanr
+ic, _ = spearmanr(aligned["f"], aligned["r"])
+# 滚动 Spearman
+rolling_ic = factor.rolling(20).apply(
+    lambda x: spearmanr(x, returns.loc[x.index].dropna())[0]
+    if (x.notna() & returns.loc[x.index].notna()).sum() >= 5 else np.nan,
+    raw=False
+)
+```
+
+**原则**：前视偏差可能表现为非线性单调关系（如因子值排名与未来收益排名高度一致但非线性相关）。Pearson 对此不敏感，可能漏检。检测器自身必须使用比被检测对象更严格的标准。
+
+### 规则7.26：`or 0.0` 模式将 None 转为 0.0，违反规则6
+
+**来源**：`factor_attribution_service.py` 中 `calculate_sharpe(...) or 0.0`
+
+```python
+# ❌ 错误：or 0.0 将 None（不可计算）转为 0.0（零值）
+"sharpe": calculate_sharpe(returns) or 0.0,
+"volatility": calculate_volatility(returns) or 0.0,
+
+# ✅ 正确：让 None 传播，由 sanitize_dict 统一处理
+"sharpe": calculate_sharpe(returns),
+"volatility": calculate_volatility(returns),
+```
+
+**原则**：`None or 0.0` = `0.0`，`0.0 or 0.0` = `0.0`。这两种情况无法区分。正确做法是让 None 传播到序列化层，由 `sanitize_dict` 统一转为 JSON null。
+
 ---
 
 ## 代码审查 Checklist
@@ -652,6 +885,19 @@ ic = float(rolling_ic.dropna().mean())
 - [ ] IC 加权是否使用横截面 IC 而非池化 Spearman？（规则7.13）
 - [ ] `safe_ir` 的 `default` 是否为 None 而非 0.0？（规则7.10）
 - [ ] 滚动 IR 是否使用 `safe_divide(default=None)` 而非 `default=np.nan`？（规则7.11）
+- [ ] IC 计算器默认方法是否为 Spearman？（规则7.14）
+- [ ] IC_std≈0 且 IC_mean≠0 时 t_stat 是否为 inf？（规则7.15）
+- [ ] Welch's t 检验是否不含交叉项？（规则7.16）
+- [ ] 因子归因暴露收益是否横截面计算？（规则7.17）
+- [ ] R² 在 ss_tot=0 时是否返回 None？（规则7.18）
+- [ ] pyportfolioopt 输入是否尺度无关？（规则7.19）
+- [ ] 累计收益是否复利计算？（规则7.20）
+- [ ] 多期收益率 Sharpe 是否调整年化频率？（规则7.21）
+- [ ] Duplicate DatetimeIndex 下是否用 .iloc？（规则7.22）
+- [ ] 评分函数是否有 [0, 100] 截断？（规则7.23）
+- [ ] API 调用签名是否与实际匹配？（规则7.24）
+- [ ] 前视偏差检测器是否使用 Spearman IC？（规则7.25）
+- [ ] 是否存在 `or 0.0` 将 None 转为 0.0？（规则7.26）
 
 ---
 

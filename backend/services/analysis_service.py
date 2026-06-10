@@ -527,8 +527,17 @@ class AnalysisService:
             ir = safe_ir(ic_mean, ic_std, default=None)
 
             n = len(ic_s)
-            t_stat = safe_divide(ic_mean * np.sqrt(n), ic_std, default=0.0) if n > 1 else 0.0
-            p_value = float(2 * (1 - scipy_stats.t.cdf(abs(t_stat), df=n - 1))) if n > 1 else 1.0
+            # 规则7.10：ic_std≈0但ic_mean显著非零时，因子极其稳定，t_stat→∞
+            if ic_std < 1e-10:
+                if abs(ic_mean) > 1e-10:
+                    t_stat = float('inf')
+                    p_value = 0.0
+                else:
+                    t_stat = 0.0
+                    p_value = 1.0
+            else:
+                t_stat = safe_divide(ic_mean * np.sqrt(n), ic_std, default=0.0) if n > 1 else 0.0
+                p_value = float(2 * (1 - scipy_stats.t.cdf(abs(t_stat), df=n - 1))) if n > 1 else 1.0
 
             ic_stats[factor_name] = {
                 "IC均值": ic_mean,
@@ -648,10 +657,14 @@ class AnalysisService:
             stats["Pearson_IR"] = safe_ir(pearson_ic_s.mean(), pearson_ic_s.std(), default=None)
             ic_stats[factor_name] = stats
 
+        # 优先使用Rank IC（Spearman）计算monthly_ic和rolling_ir
+        monthly_ic_source = rank_ic_series if rank_ic_series else ic_series
+        rolling_ir_source = rank_ic_series if rank_ic_series else ic_series
+
         result = {
             "ic_stats": ic_stats,
-            "monthly_ic": self._calculate_monthly_ic(ic_series),
-            "rolling_ir": self._calculate_rolling_ir(ic_series, window=20),
+            "monthly_ic": self._calculate_monthly_ic(monthly_ic_source),
+            "rolling_ir": self._calculate_rolling_ir(rolling_ir_source, window=20),
         }
         if mask_stats:
             result["mask_statistics"] = mask_stats
@@ -1114,7 +1127,7 @@ class AnalysisService:
                         w_sum += abs(w)
                         count += 1
             # 按日期归一化：使用总权重（而非平均权重），市值大的日期IC更可靠
-            date_weights[date] = w_sum if count > 0 else 1.0
+            date_weights[date] = w_sum if count > 0 else 0.0
 
         weights_series = pd.Series(date_weights)
         total_weight = weights_series.sum()
@@ -1294,7 +1307,9 @@ class AnalysisService:
             report += "|---------|--------|----------|-----|---------|-------------|\n"
 
             for factor_name, stats in ic_stats.items():
-                report += f"| {factor_name} | {stats['IC均值']:.4f} | {stats['IC标准差']:.4f} | {stats['IR']:.4f} | {stats['IC>0占比']:.2%} | {stats['IC绝对值均值']:.4f} |\n"
+                ir_display = f"{stats['IR']:.4f}" if stats['IR'] is not None else "N/A"
+                ic_std_display = f"{stats['IC标准差']:.4f}" if stats.get('IC标准差') is not None else "N/A"
+                report += f"| {factor_name} | {stats['IC均值']:.4f} | {ic_std_display} | {ir_display} | {stats['IC>0占比']:.2%} | {stats['IC绝对值均值']:.4f} |\n"
 
             report += "\n"
 

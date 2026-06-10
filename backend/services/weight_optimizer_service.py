@@ -272,9 +272,13 @@ class WeightOptimizer:
             # 构建因子收益矩阵
             # 因子值不是价格，不能对因子值求pct_change（如Z-score从-1到1，pct_change=-200%无意义）
             # 使用diff()（一阶差分）作为因子收益的代理指标
+            # 标准化后再diff，确保尺度不变性（避免大数值因子主导优化）
             aligned_values = self._align_factor_indices(factor_values)
             factor_df = pd.DataFrame(aligned_values)
-            factor_returns = factor_df[factor_names].diff().dropna()
+            factor_standardized = factor_df[factor_names].apply(
+                lambda x: (x - x.mean()) / x.std() if x.std() > 1e-10 else x - x.mean()
+            )
+            factor_returns = factor_standardized.diff().dropna()
             if len(factor_returns) < 20:
                 return self._equal_weight(factor_names)
 
@@ -297,9 +301,13 @@ class WeightOptimizer:
         """
         try:
             from pypfopt import EfficientFrontier, risk_models
+            # 标准化后再diff，确保尺度不变性（避免大数值因子主导优化）
             aligned_values = self._align_factor_indices(factor_values)
             factor_df = pd.DataFrame(aligned_values)
-            factor_returns = factor_df[factor_names].diff().dropna()
+            factor_standardized = factor_df[factor_names].apply(
+                lambda x: (x - x.mean()) / x.std() if x.std() > 1e-10 else x - x.mean()
+            )
+            factor_returns = factor_standardized.diff().dropna()
             if len(factor_returns) < 20:
                 return self._equal_weight(factor_names)
 
@@ -321,9 +329,13 @@ class WeightOptimizer:
         """
         try:
             from pypfopt import HRPOpt
+            # 标准化后再diff，确保尺度不变性（避免大数值因子主导优化）
             aligned_values = self._align_factor_indices(factor_values)
             factor_df = pd.DataFrame(aligned_values)
-            factor_returns = factor_df[factor_names].diff().dropna()
+            factor_standardized = factor_df[factor_names].apply(
+                lambda x: (x - x.mean()) / x.std() if x.std() > 1e-10 else x - x.mean()
+            )
+            factor_returns = factor_standardized.diff().dropna()
             if len(factor_returns) < 20:
                 return self._equal_weight(factor_names)
 

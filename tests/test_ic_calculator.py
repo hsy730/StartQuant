@@ -251,15 +251,15 @@ class TestCalculateRollingIC:
         assert len(valid_result) > 0
         assert (valid_result - 1.0).abs().max() < 1e-6
 
-    def test_calculate_rolling_ic_default_method_is_pearson(self):
-        """默认method应为pearson"""
+    def test_calculate_rolling_ic_default_method_is_spearman(self):
+        """默认method应为spearman（项目规范7.1/7.12）"""
         np.random.seed(42)
         n = 60
         factor = pd.Series(np.random.randn(n))
         returns = pd.Series(np.random.randn(n))
         result_default = calculate_rolling_ic(factor, returns, window=20)
-        result_pearson = calculate_rolling_ic(factor, returns, window=20, method="pearson")
-        pd.testing.assert_series_equal(result_default, result_pearson)
+        result_spearman = calculate_rolling_ic(factor, returns, window=20, method="spearman")
+        pd.testing.assert_series_equal(result_default, result_spearman)
 
     def test_calculate_rolling_ic_default_window_is_20(self):
         """默认window应为20"""

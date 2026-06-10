@@ -182,7 +182,26 @@ class FactorReturnAnalysisService:
             
             for q in range(self.config.n_quantiles):
                 group_data = merged_df[merged_df["quantile"] == q]
-                
+
+                if len(group_data) == 0:
+                    quantile_returns.append({
+                        "group": f"Q{q+1}",
+                        "avg_return": None,
+                        "std_return": None,
+                        "n_observations": 0,
+                        "t_statistic": None,
+                        "p_value": None,
+                        "is_significant": False,
+                    })
+                    quantile_stats.append({
+                        "group": f"Q{q+1}",
+                        "mean_factor": None,
+                        "min_factor": None,
+                        "max_factor": None,
+                        "n_stocks": 0,
+                    })
+                    continue
+
                 if self.config.weight_by_market_cap and "market_cap" in group_data.columns:
                     weights = group_data["market_cap"].fillna(group_data["market_cap"].median())
                     weight_sum = weights.sum()
@@ -312,14 +331,15 @@ class FactorReturnAnalysisService:
             sorted_dates = sorted(date_returns.keys())
             
             group_cumreturns = {f"Q{i+1}": [] for i in range(self.config.n_quantiles)}
+            group_cumulative = {f"Q{i+1}": 1.0 for i in range(self.config.n_quantiles)}
             long_short_returns = []
             all_dates = []
-            
+
             cumulative_ls = 1.0
-            
+
             for date_str in sorted_dates:
                 observations = date_returns[date_str]
-                
+
                 if len(observations) < self.config.n_quantiles * self.config.min_samples_per_group:
                     if long_short:
                         long_short_returns.append(cumulative_ls - 1)
@@ -327,9 +347,9 @@ class FactorReturnAnalysisService:
                         group_cumreturns[f"Q{i+1}"].append(None)
                     all_dates.append(date_str)
                     continue
-                
+
                 obs_df = pd.DataFrame(observations)
-                
+
                 try:
                     obs_df["quantile"] = pd.qcut(
                         obs_df["factor_value"],
@@ -344,7 +364,7 @@ class FactorReturnAnalysisService:
                         group_cumreturns[f"Q{i+1}"].append(None)
                     all_dates.append(date_str)
                     continue
-                
+
                 group_returns = {}
                 for q in range(self.config.n_quantiles):
                     group_data = obs_df[obs_df["quantile"] == q]
@@ -352,9 +372,11 @@ class FactorReturnAnalysisService:
                         group_returns[q] = group_data["return"].mean()
                     else:
                         group_returns[q] = 0.0
-                
+
                 for q in range(self.config.n_quantiles):
-                    group_cumreturns[f"Q{q+1}"].append(float(group_returns.get(q, 0.0)))
+                    period_return = group_returns.get(q, 0.0)
+                    group_cumulative[f"Q{q+1}"] *= (1 + period_return)
+                    group_cumreturns[f"Q{q+1}"].append(float(group_cumulative[f"Q{q+1}"] - 1))
                 
                 if long_short:
                     long_return = group_returns.get(self.config.n_quantiles - 1, 0.0)
@@ -521,20 +543,32 @@ class FactorReturnAnalysisService:
         bottom_group = quantile_returns[0]
         
         spread = top_group["avg_return"] - bottom_group["avg_return"]
-        spread_std = np.sqrt(
-            top_group["std_return"]**2 + bottom_group["std_return"]**2
-        )
-        
+
         n_top = top_group["n_observations"]
         n_bottom = bottom_group["n_observations"]
-        
-        t_stat = safe_divide(spread, spread_std * np.sqrt(safe_divide(1.0, n_top, default=0.0) + safe_divide(1.0, n_bottom, default=0.0)), default=0.0) if spread_std > 0 else 0
-        
-        p_value = 2 * (1 - scipy_stats.t.cdf(abs(t_stat), df=n_top + n_bottom - 2))
+
+        # Welch's t-test: t = spread / sqrt(std_top^2/n_top + std_bottom^2/n_bottom)
+        se = np.sqrt(
+            top_group["std_return"]**2 / n_top + bottom_group["std_return"]**2 / n_bottom
+        ) if n_top > 0 and n_bottom > 0 else 0.0
+
+        t_stat = safe_divide(spread, se, default=0.0) if se > 0 else 0.0
+
+        # Welch-Satterthwaite degrees of freedom
+        if se > 0 and n_top > 1 and n_bottom > 1:
+            var_top = top_group["std_return"]**2
+            var_bottom = bottom_group["std_return"]**2
+            numerator = (var_top / n_top + var_bottom / n_bottom) ** 2
+            denominator = (var_top / n_top) ** 2 / (n_top - 1) + (var_bottom / n_bottom) ** 2 / (n_bottom - 1)
+            df = safe_divide(numerator, denominator, default=n_top + n_bottom - 2)
+        else:
+            df = n_top + n_bottom - 2
+
+        p_value = 2 * (1 - scipy_stats.t.cdf(abs(t_stat), df=df))
         
         return {
             "long_short_spread": float(spread),
-            "spread_std": float(spread_std),
+            "spread_std": float(se),
             "t_statistic": float(t_stat),
             "p_value": float(p_value),
             "is_significant": p_value < 0.05,
@@ -665,8 +699,27 @@ class FactorReturnAnalysisService:
         return abs(float(drawdown.min())) if len(drawdown) > 0 else 0.0
 
     def _calculate_sharpe_ratio(self, returns: pd.Series, risk_free_rate: float = 0.03) -> float:
-        """计算夏普比率（年化，扣除无风险利率），委托risk_metrics统一入口"""
-        sharpe = calculate_sharpe(returns, risk_free_rate=risk_free_rate)
+        """
+        计算夏普比率（年化，扣除无风险利率），委托risk_metrics统一入口
+
+        当forward_period > 1时，returns是forward_period日收益率，
+        需要先转换为日收益率再计算Sharpe，否则年化因子错误。
+        """
+        if len(returns) < 2:
+            return 0.0
+
+        # 将forward_period日收益率转换为日收益率
+        # (1 + r_period)^(1/forward_period) - 1 ≈ r_period / forward_period（小收益率时）
+        # 使用几何转换更精确
+        forward_period = self.config.forward_period
+        if forward_period > 1:
+            # 几何转换：daily_return = (1 + period_return)^(1/forward_period) - 1
+            daily_returns = (1 + returns).pow(1.0 / forward_period) - 1
+            daily_returns = daily_returns.replace([np.inf, -np.inf], np.nan).dropna()
+        else:
+            daily_returns = returns
+
+        sharpe = calculate_sharpe(daily_returns, risk_free_rate=risk_free_rate)
         return sharpe if sharpe is not None else 0.0
 
     def _interpret_turnover(self, turnover: float) -> str:

@@ -158,7 +158,7 @@ def calculate_rolling_ir(
     # 由Jensen不等式 E[X/Y] ≠ E[X]/E[Y]，后者会产生偏差
     rolling_mean = ic_clean.rolling(window=window, min_periods=min_periods).mean()
     rolling_std = ic_clean.rolling(window=window, min_periods=min_periods).std()
-    rolling_ir = safe_divide(rolling_mean, rolling_std, default=np.nan)
+    rolling_ir = safe_divide(rolling_mean, rolling_std, default=None)
     rolling_ir_clean = rolling_ir.dropna()
 
     if len(rolling_ir_clean) == 0:

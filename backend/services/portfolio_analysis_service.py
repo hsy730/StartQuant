@@ -330,12 +330,16 @@ class PortfolioAnalysisService:
             else:
                 fv_dict = {col: pd.Series(dtype=float) for col in factor_returns.columns}
 
+            # 构建收益率序列：使用因子收益率的均值作为组合收益代理
+            # 用于IC计算（因子值与收益的相关性）
+            combined_returns = factor_returns.mean(axis=1)
+
             # 使用统一入口计算IC加权权重
             result = optimizer.calculate_weights(
                 factor_values=fv_dict,
                 factor_names=list(factor_returns.columns),
                 method="ic_weight",
-                returns=None,  # portfolio场景下使用因子收益率
+                returns=combined_returns,
                 factor_data_dict=factor_data_dict,
             )
             weights = pd.Series(result["weights"])

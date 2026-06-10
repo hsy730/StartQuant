@@ -15,6 +15,7 @@ from backend.services.risk_metrics import calculate_risk_metrics, calculate_vola
 from backend.services.smart_slippage_detector import smart_slippage_detector, SlippageRecommendation
 from backend.utils.return_calculator import calculate_future_return
 from backend.utils.safe_math import safe_divide, safe_series_divide
+from scipy.stats import spearmanr
 
 logger = logging.getLogger(__name__)
 
@@ -732,9 +733,9 @@ class VectorBTBacktestService:
 
         total_return = _safe_stat('Total Return [%]', divide_by_100=True)
 
-        # 年化收益率：如果VectorBT返回None/0/NaN，则手动计算
+        # 年化收益率：如果VectorBT返回None/NaN，则手动计算
         annual_return = _safe_stat('Annual Return [%]', divide_by_100=True)
-        if annual_return is None or annual_return == 0:
+        if annual_return is None:
             # 手动计算年化收益率 = (1 + 总收益率)^(年化bar数/交易bar数) - 1
             n_days = len(returns_clean)
             if n_days > 0 and total_return is not None and total_return > -1:
@@ -777,8 +778,8 @@ class VectorBTBacktestService:
             "calmar_ratio": float(calmar_ratio) if calmar_ratio is not None else None,
             "win_rate": float(win_rate) if win_rate is not None else None,
             "volatility": float(volatility) if volatility is not None else None,
-            "var_95": float(var_95),
-            "cvar_95": float(cvar_95),
+            "var_95": float(var_95) if var_95 is not None else None,
+            "cvar_95": float(cvar_95) if cvar_95 is not None else None,
             # 滑点信息
             "slippage_info": self.get_slippage_info(),
             # Mask-First统计
@@ -854,18 +855,28 @@ class VectorBTBacktestService:
             # 对每个因子，用过去数据计算因子值与未来收益的滚动IC
             df["forward_return"] = calculate_future_return(df)
             ic_window = min(60, max(10, len(df) // 4))
-            # 使用滚动IC作为时变权重，每个时间点仅使用截至前一天的信息
+
+            def _rolling_spearman_ic(x, y_series):
+                """滚动窗口内计算Spearman秩相关（规则7.1）"""
+                y_aligned = y_series.loc[x.index]
+                valid = x.notna() & y_aligned.notna()
+                if valid.sum() < 10:
+                    return np.nan
+                return spearmanr(x[valid], y_aligned[valid])[0]
+
+            # 使用滚动Spearman IC作为时变权重，每个时间点仅使用截至前一天的信息
             ic_weight_frames = []
+            forward_return_shifted = df["forward_return"].shift(1)
             for factor_name in factor_names:
                 norm_factor = f"{factor_name}_normalized"
-                # 滚动IC：因子值（滞后1期，避免前视偏差）与未来收益的相关系数
+                # 滚动Spearman IC：因子值（滞后1期，避免前视偏差）与未来收益的相关系数
                 # 使用历史窗口内的数据，确保t日的IC权重只用到t-1日及之前的信息
                 # forward_return 也需 shift(1)，确保 t 日窗口只用到 t-1→t 的已知收益
                 rolling_ic = (
                     df[norm_factor]
                     .shift(1)
                     .rolling(ic_window, min_periods=10)
-                    .corr(df["forward_return"].shift(1))
+                    .apply(lambda x: _rolling_spearman_ic(x, forward_return_shifted), raw=False)
                 )
                 ic_abs = rolling_ic.abs()
                 ic_weight_frames.append(ic_abs)
@@ -1056,9 +1067,9 @@ class VectorBTBacktestService:
 
         total_return = _safe_stat('Total Return [%]', divide_by_100=True)
 
-        # 年化收益率：如果VectorBT返回None/0/NaN，则手动计算
+        # 年化收益率：如果VectorBT返回None/NaN，则手动计算
         annual_return = _safe_stat('Annual Return [%]', divide_by_100=True)
-        if annual_return is None or annual_return == 0:
+        if annual_return is None:
             # 手动计算年化收益率 = (1 + 总收益率)^(年化bar数/交易bar数) - 1
             n_days = len(returns_clean)
             if n_days > 0 and total_return is not None and total_return > -1:
@@ -1210,10 +1221,9 @@ class VectorBTBacktestService:
 
         return calculate_risk_metrics(returns_clean, risk_free_rate, annual_trading_days)
 
-    def _calculate_volatility(self, returns: pd.Series, annual_trading_days: int = 252) -> float:
+    def _calculate_volatility(self, returns: pd.Series, annual_trading_days: int = 252) -> Optional[float]:
         """计算年化波动率（委托risk_metrics统一入口，符合规则2）"""
-        vol = _calc_volatility(returns, annual_trading_days=annual_trading_days)
-        return vol if vol is not None else 0.0
+        return _calc_volatility(returns, annual_trading_days=annual_trading_days)
 
     def _format_trades_df(self, pf) -> Optional[pd.DataFrame]:
         """从VectorBT Portfolio提取并格式化交易记录为中文可读格式
@@ -1311,12 +1321,9 @@ class VectorBTBacktestService:
         """计算VaR和CVaR（委托risk_metrics统一入口，符合规则2）"""
         returns_clean = returns.dropna()
         if len(returns_clean) < 2:
-            return 0.0, 0.0
+            return None, None
         metrics = calculate_risk_metrics(returns_clean)
-        var_95 = metrics.get("var_95")
-        cvar_95 = metrics.get("cvar_95")
-        return (var_95 if var_95 is not None else 0.0,
-                cvar_95 if cvar_95 is not None else 0.0)
+        return metrics.get("var_95"), metrics.get("cvar_95")
 
     def _empty_metrics(self) -> Dict:
         """返回空的性能指标字典"""

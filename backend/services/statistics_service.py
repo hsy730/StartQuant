@@ -6,6 +6,7 @@ import numpy as np
 from typing import Dict, List
 from contextlib import contextmanager
 from scipy import stats
+from scipy.stats import spearmanr
 from sklearn.preprocessing import PolynomialFeatures
 import warnings
 import logging
@@ -162,7 +163,8 @@ class StatisticsService:
             # 对齐数据
             aligned_idx = factor_clean.index.intersection(return_clean.index)
             if len(aligned_idx) > 10:  # 至少需要10个样本
-                ic = factor_clean.loc[aligned_idx].corr(return_clean.loc[aligned_idx])
+                ic, _ = spearmanr(factor_clean.loc[aligned_idx], return_clean.loc[aligned_idx])
+                ic = ic if not np.isnan(ic) else np.nan
                 decay_results[f"period_{period}"] = ic
             else:
                 decay_results[f"period_{period}"] = np.nan
@@ -209,7 +211,14 @@ class StatisticsService:
             if len(factor_group) > 0 and len(return_group) > 0:
                 aligned_idx = factor_group.index.intersection(return_group.index)
                 if len(aligned_idx) > 10:
-                    ic = factor_group.loc[aligned_idx].corr(return_group.loc[aligned_idx])
+                    f_vals = factor_group.loc[aligned_idx]
+                    r_vals = return_group.loc[aligned_idx]
+                    valid_mask = f_vals.notna() & r_vals.notna()
+                    if valid_mask.sum() >= 10:
+                        ic, _ = spearmanr(f_vals[valid_mask], r_vals[valid_mask])
+                    else:
+                        ic = np.nan
+                    ic = ic if not np.isnan(ic) else np.nan
                     periodic_ic[str(period_name.date())] = ic
 
         return periodic_ic
@@ -233,7 +242,7 @@ class StatisticsService:
             min_periods = max(1, window // 4)
             rolling_mean = ic_series.rolling(window=window, min_periods=min_periods).mean()
             rolling_std = ic_series.rolling(window=window, min_periods=min_periods).std()
-            rolling_ir = safe_divide(rolling_mean, rolling_std, default=np.nan)
+            rolling_ir = safe_divide(rolling_mean, rolling_std, default=None)
 
             results[f"window_{window}"] = {
                 "mean_ic": rolling_mean.iloc[-1] if len(rolling_mean) > 0 else np.nan,
@@ -266,7 +275,8 @@ class StatisticsService:
                 # 计算IC
                 aligned_idx = factor_df.index.intersection(return_df.index)
                 if len(aligned_idx) > 10:
-                    ic = factor_df.loc[aligned_idx].corr(return_df.loc[aligned_idx])
+                    ic, _ = spearmanr(factor_df.loc[aligned_idx], return_df.loc[aligned_idx])
+                    ic = ic if not np.isnan(ic) else np.nan
                     results[regime] = ic
                 else:
                     results[regime] = np.nan

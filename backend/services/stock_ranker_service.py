@@ -270,8 +270,8 @@ class StockRankerService:
                 pp_config = preprocessing_config or PreprocessingConfig()
                 pipeline = FactorPreprocessingPipeline(pp_config)
                 for feat in feature_cols:
-                    result = pipeline.process_single_factor(df[feat], factor_name=feat)
-                    df[feat] = result.values
+                    processed_series, stats = pipeline.process_single_factor(df[feat])
+                    df[feat] = processed_series.values
                 preprocessing_stats = {"applied": True, "config": str(pp_config)}
                 logger.info(f"[StockRanker] 因子预处理已完成: {len(feature_cols)}个特征")
             except ImportError:

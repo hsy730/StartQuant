@@ -62,24 +62,24 @@ class TestTTestIC:
         assert isinstance(result["p_value"], float)
 
     def test_empty_series_should_return_defaults(self):
-        """空IC序列应返回默认值"""
+        """空IC序列应返回None（不可计算）"""
         ic = pd.Series([], dtype=float)
         result = self.svc.t_test_ic(ic)
 
-        assert result["t_statistic"] == 0.0
-        assert result["p_value"] == 1.0
+        assert result["t_statistic"] is None
+        assert result["p_value"] is None
         assert result["is_significant"] is False
-        assert result["mean_ic"] == 0.0
-        assert result["std_ic"] == 0.0
-        assert result["confidence_interval"] == (0.0, 0.0)
+        assert result["mean_ic"] is None
+        assert result["std_ic"] is None
+        assert result["confidence_interval"] == (None, None)
 
     def test_all_nan_series_should_return_defaults(self):
-        """全NaN序列应返回默认值"""
+        """全NaN序列应返回None（不可计算）"""
         ic = pd.Series([np.nan] * 50)
         result = self.svc.t_test_ic(ic)
 
-        assert result["t_statistic"] == 0.0
-        assert result["p_value"] == 1.0
+        assert result["t_statistic"] is None
+        assert result["p_value"] is None
         assert result["is_significant"] is False
 
     def test_single_value_should_not_crash(self):
@@ -421,23 +421,23 @@ class TestAnalyzeQuantileReturns:
         assert result["Q5"]["mean"] > result["Q1"]["mean"]
 
     def test_empty_quantile_should_return_defaults(self):
-        """空分层收益应返回默认值"""
+        """空分层收益应返回None（不可计算）"""
         quantile_returns = {
             "Q1": pd.Series([], dtype=float),
         }
         result = self.svc.analyze_quantile_returns(quantile_returns)
-        assert result["Q1"]["mean"] == 0.0
-        assert result["Q1"]["std"] == 0.0
-        assert result["Q1"]["sharpe"] == 0.0
-        assert result["Q1"]["win_rate"] == 0.0
+        assert result["Q1"]["mean"] is None
+        assert result["Q1"]["std"] is None
+        assert result["Q1"]["sharpe"] is None
+        assert result["Q1"]["win_rate"] is None
 
     def test_all_nan_quantile_should_return_defaults(self):
-        """全NaN分层收益应返回默认值"""
+        """全NaN分层收益应返回None（不可计算）"""
         quantile_returns = {
             "Q1": pd.Series([np.nan] * 100),
         }
         result = self.svc.analyze_quantile_returns(quantile_returns)
-        assert result["Q1"]["mean"] == 0.0
+        assert result["Q1"]["mean"] is None
 
     def test_win_rate_should_be_between_zero_and_one(self):
         """胜率应在[0, 1]之间"""

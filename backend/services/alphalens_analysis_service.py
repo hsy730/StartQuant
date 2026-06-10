@@ -223,9 +223,13 @@ class AlphalensAnalysisService:
             ic_std = float(ic_series.std()) if n > 1 else 0.0
             ir = safe_ir(float(ic_mean), float(ic_std), default=None)
 
-            if n > 1 and ic_std > 0:
+            if n > 1 and ic_std > 1e-10:
                 t_stat = safe_divide(float(ic_mean), float(ic_std / np.sqrt(n)), default=0.0)
                 p_value = float(2 * (1 - scipy_stats.t.cdf(abs(t_stat), df=n - 1)))
+            elif n > 1 and ic_std <= 1e-10 and abs(ic_mean) > 1e-10:
+                # 规则7.10：ic_std≈0但ic_mean显著非零时，因子极其稳定，t_stat→∞
+                t_stat = float('inf')
+                p_value = 0.0
             else:
                 t_stat = 0.0
                 p_value = 1.0

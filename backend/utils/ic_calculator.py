@@ -13,7 +13,7 @@ from scipy.stats import spearmanr
 def calculate_ic(
     factor: pd.Series,
     returns: pd.Series,
-    method: str = "pearson",
+    method: str = "spearman",
     min_samples: int = 10,
 ) -> Optional[float]:
     """
@@ -22,7 +22,7 @@ def calculate_ic(
     Args:
         factor: 因子值Series
         returns: 收益率Series
-        method: "pearson" 或 "spearman"
+        method: "pearson" 或 "spearman"（默认spearman，符合业界标准）
         min_samples: 最小有效样本量
 
     Returns:
@@ -54,7 +54,7 @@ def calculate_rolling_ic(
     factor: pd.Series,
     returns: pd.Series,
     window: int = 20,
-    method: str = "pearson",
+    method: str = "spearman",
 ) -> pd.Series:
     """
     计算滚动IC
@@ -63,7 +63,7 @@ def calculate_rolling_ic(
         factor: 因子值Series
         returns: 收益率Series
         window: 滚动窗口大小
-        method: "pearson" 或 "spearman"
+        method: "pearson" 或 "spearman"（默认spearman，符合业界标准）
 
     Returns:
         滚动IC Series

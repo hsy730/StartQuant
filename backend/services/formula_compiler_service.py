@@ -181,7 +181,7 @@ class FormulaCompilerService:
             elif func_name == "zscore":
                 # 使用滚动窗口zscore避免前视偏差，默认窗口20
                 window = compiled_args[1] if len(compiled_args) > 1 else 20
-                return f'backend.utils.safe_math.safe_divide({compiled_args[0]} - {compiled_args[0]}.rolling({window}).mean(), {compiled_args[0]}.rolling({window}).std(), default=np.nan)'
+                return f'(({compiled_args[0]} - {compiled_args[0]}.rolling({window}).mean()) / {compiled_args[0]}.rolling({window}).std())'
             else:
                 return f"{func_name}({', '.join(compiled_args)})"
 
@@ -192,7 +192,7 @@ class FormulaCompilerService:
             right = self._compile_node(node["right"])
 
             if operator == "/":
-                return f"backend.utils.safe_math.safe_divide({left}, {right}, default=np.nan)"
+                return f"({left} / {right})"
             else:
                 return f"({left} {operator} {right})"
 

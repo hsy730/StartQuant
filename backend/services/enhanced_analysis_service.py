@@ -4,12 +4,17 @@
 import pandas as pd
 import numpy as np
 from typing import Dict, List, Any
+import logging
+
 from scipy import stats
+from scipy.stats import spearmanr
 
 from backend.services.factor_neutralization_service import factor_neutralization_service
 from backend.services.factor_stability_service import factor_stability_service
 from backend.services.factor_summary_service import factor_summary_service
 from backend.utils.safe_math import safe_ir
+
+logger = logging.getLogger(__name__)
 
 
 class EnhancedAnalysisService:
@@ -65,7 +70,6 @@ class EnhancedAnalysisService:
             for date, group in valid_data.groupby(date_col):
                 if len(group) < 5:
                     continue
-                from scipy.stats import spearmanr
                 ic_val, _ = spearmanr(group["factor"], group["return"])
                 if not np.isnan(ic_val):
                     ic_list.append(ic_val)
@@ -115,42 +119,65 @@ class EnhancedAnalysisService:
                 ),
             }
 
-        # 无日期信息时回退到单次Spearman相关（并标注局限性）
-        ic = valid_data["factor"].corr(valid_data["return"], method="spearman")
-
-        n = len(valid_data)
-        ic_clipped = np.clip(ic, -0.9999, 0.9999)
-        t_statistic = ic_clipped * np.sqrt(n - 2) / np.sqrt(1 - ic_clipped**2)
-        p_value = 2 * (1 - stats.t.cdf(abs(t_statistic), df=n - 2))
-
-        alpha = 1 - confidence_level
-        t_critical = stats.t.ppf(1 - alpha / 2, df=n - 2)
-        se = np.sqrt((1 - ic_clipped**2) / (n - 2))
-        ci_lower = ic - t_critical * se
-        ci_upper = ic + t_critical * se
-
+        # 无日期信息时无法计算横截面IC，池化Spearman违反独立性假设（规则7.1）
+        logger.warning("无日期信息，无法计算横截面IC，池化Spearman违反独立性假设")
         return {
-            "ic": float(ic),
-            "t_statistic": float(t_statistic),
-            "p_value": float(p_value),
-            "is_significant": p_value < 0.05,
-            "significance_level": (
-                "极高显著性 (p<0.01)" if p_value < 0.01 else
-                "显著性 (p<0.05)" if p_value < 0.05 else
-                "不显著 (p>=0.05)"
-            ),
-            "confidence_interval": {
-                "lower": float(ci_lower),
-                "upper": float(ci_upper),
-                "level": confidence_level,
-            },
-            "n_samples": n,
-            "method": "spearman_pooled",
-            "warning": "无日期信息，使用池化Spearman相关（可能违反独立性假设）",
-            "interpretation": (
-                f"IC在{confidence_level*100:.0f}%置信区间为[{ci_lower:.4f}, {ci_upper:.4f}]"
-            ),
+            "ic": None,
+            "t_statistic": None,
+            "p_value": None,
+            "is_significant": None,
+            "significance_level": "不可计算（无日期信息）",
+            "confidence_interval": None,
+            "n_samples": len(valid_data),
+            "method": "spearman_pooled_unavailable",
+            "warning": "无日期信息，无法计算横截面IC，池化Spearman违反独立性假设",
+            "interpretation": "数据缺少日期维度，无法进行横截面IC检验",
         }
+
+    def _calculate_cross_sectional_ic(
+        self,
+        factor_values: pd.Series,
+        return_values: pd.Series,
+        date_series=None,
+    ):
+        """
+        计算横截面Spearman IC（规则7.1：禁止池化Spearman）
+
+        按日期分组，每个截面独立计算spearmanr，再取均值。
+        如果无日期信息，返回None（池化相关违反独立性假设）。
+
+        Args:
+            factor_values: 因子值序列
+            return_values: 收益率序列
+            date_series: 日期序列，用于横截面分组
+
+        Returns:
+            横截面IC均值（float），或None（无日期信息或截面不足）
+        """
+        if date_series is None or (isinstance(date_series, pd.Series) and date_series.isna().all()):
+            logger.warning("无日期信息，无法计算横截面IC")
+            return None
+
+        ic_list = []
+        # Reset to integer index to avoid .loc inflating sample size with duplicate DatetimeIndex
+        factor_values_reset = factor_values.reset_index(drop=True)
+        return_values_reset = return_values.reset_index(drop=True)
+        date_series_reset = date_series.reset_index(drop=True)
+
+        for date, group_idx in date_series_reset.groupby(date_series_reset):
+            factor_group = factor_values_reset.iloc[group_idx.index]
+            return_group = return_values_reset.iloc[group_idx.index]
+            valid = factor_group.notna() & return_group.notna()
+            if valid.sum() < 5:
+                continue
+            ic_val, _ = spearmanr(factor_group[valid], return_group[valid])
+            if not np.isnan(ic_val):
+                ic_list.append(ic_val)
+
+        if len(ic_list) < 1:
+            return None
+
+        return float(np.mean(ic_list))
 
     def analyze_enhanced(
         self,
@@ -241,16 +268,19 @@ class EnhancedAnalysisService:
                     if ic_std > 1e-10:
                         t_stat = mean_ic / (ic_std / np.sqrt(n_days))
                         p_value = 2 * (1 - stats.t.cdf(abs(t_stat), df=n_days - 1))
+                        is_significant = p_value < 0.05
                     else:
-                        t_stat = 0.0
-                        p_value = 1.0
+                        # IC标准差接近0时，t检验不可计算（规则7.10）
+                        t_stat = None
+                        p_value = None
+                        is_significant = None
                     ic_significance = {
                         "ic": mean_ic,
                         "ic_std": ic_std,
                         "ir": safe_ir(float(mean_ic), float(ic_std), default=None),
-                        "t_statistic": float(t_stat),
-                        "p_value": float(p_value),
-                        "is_significant": p_value < 0.05,
+                        "t_statistic": float(t_stat) if t_stat is not None else None,
+                        "p_value": float(p_value) if p_value is not None else None,
+                        "is_significant": is_significant,
                         "n_samples": n_days,
                     }
                 else:
@@ -278,7 +308,14 @@ class EnhancedAnalysisService:
                             all_stock_dfs.append(df)
 
                     if all_stock_dfs:
-                        combined_df = pd.concat(all_stock_dfs, ignore_index=True)
+                        combined_df = pd.concat(all_stock_dfs)
+                        # 保留日期信息用于横截面IC计算
+                        if isinstance(combined_df.index, pd.DatetimeIndex):
+                            combined_df["_date"] = combined_df.index
+                        elif isinstance(combined_df.index, pd.MultiIndex):
+                            combined_df["_date"] = combined_df.index.get_level_values(0)
+                        else:
+                            combined_df["_date"] = None
 
                         # 市值中性化
                         if "market_cap" in combined_df.columns:
@@ -287,12 +324,15 @@ class EnhancedAnalysisService:
                             )
 
                             if "future_return" in combined_df.columns:
-                                ic_after_mc = mc_neutralized.corr(combined_df["future_return"], method="spearman")
+                                ic_after_mc = self._calculate_cross_sectional_ic(
+                                    mc_neutralized, combined_df["future_return"], combined_df.get("_date")
+                                )
+                                ic_before = results["factors"][factor_name]["ic_significance"]["ic"]
                                 results["neutralization"][f"{factor_name}_mc"] = {
                                     "method": "市值中性化",
-                                    "ic_before": results["factors"][factor_name]["ic_significance"]["ic"],
-                                    "ic_after": float(ic_after_mc),
-                                    "improvement": float(ic_after_mc - results["factors"][factor_name]["ic_significance"]["ic"]),
+                                    "ic_before": ic_before,
+                                    "ic_after": ic_after_mc,
+                                    "improvement": (ic_after_mc - ic_before) if ic_after_mc is not None and ic_before is not None else None,
                                 }
 
                         # 行业中性化
@@ -302,12 +342,15 @@ class EnhancedAnalysisService:
                             )
 
                             if "future_return" in combined_df.columns:
-                                ic_after_ind = industry_neutralized.corr(combined_df["future_return"], method="spearman")
+                                ic_after_ind = self._calculate_cross_sectional_ic(
+                                    industry_neutralized, combined_df["future_return"], combined_df.get("_date")
+                                )
+                                ic_before = results["factors"][factor_name]["ic_significance"]["ic"]
                                 results["neutralization"][f"{factor_name}_ind"] = {
                                     "method": "行业中性化",
-                                    "ic_before": results["factors"][factor_name]["ic_significance"]["ic"],
-                                    "ic_after": float(ic_after_ind),
-                                    "improvement": float(ic_after_ind - results["factors"][factor_name]["ic_significance"]["ic"]),
+                                    "ic_before": ic_before,
+                                    "ic_after": ic_after_ind,
+                                    "improvement": (ic_after_ind - ic_before) if ic_after_ind is not None and ic_before is not None else None,
                                 }
 
                 except Exception as e:

@@ -163,46 +163,46 @@ class FactorAttributionService:
         _, ic_pvalue = ttest_1samp(daily_ics, 0) if len(daily_ics) > 1 else (0, 1.0)
         ic_pvalue = float(ic_pvalue)
 
-        # 收集所有数据用于分组收益计算
-        all_factor_values = []
-        all_returns = []
-        for stock_code, df in factor_data.items():
-            if factor_name in df.columns and "close" in df.columns:
-                df_copy = df.copy()
-                df_copy["future_return"] = df_copy["close"].shift(-1) / df_copy["close"] - 1
-                valid_data = df_copy[[factor_name, "future_return"]].dropna()
-                valid_data = valid_data[~np.isinf(valid_data["future_return"])]
-                all_factor_values.extend(valid_data[factor_name].tolist())
-                all_returns.extend(valid_data["future_return"].tolist())
+        # 横截面分组收益计算（每日期独立计算分位数阈值，避免池化违反独立性）
+        daily_high_returns = []
+        daily_low_returns = []
+        for date in sorted(factor_panel.keys()):
+            fv = pd.Series(factor_panel[date])
+            rv = pd.Series(return_panel[date])
+            if len(fv) < 5:
+                continue
+            high_threshold = fv.quantile(0.7)
+            low_threshold = fv.quantile(0.3)
+            high_mask = fv >= high_threshold
+            low_mask = fv <= low_threshold
+            if high_mask.sum() > 0:
+                daily_high_returns.append(rv[high_mask].mean())
+            if low_mask.sum() > 0:
+                daily_low_returns.append(rv[low_mask].mean())
 
-        # 计算因子暴露度分组收益
-        factor_series = pd.Series(all_factor_values)
-        return_series = pd.Series(all_returns)
-
-        # 高暴露组（前30%）
-        high_threshold = factor_series.quantile(0.7)
-        high_mask = factor_series >= high_threshold
-        high_return = float(return_series[high_mask].mean()) if high_mask.sum() > 0 else 0.0
-
-        # 低暴露组（后30%）
-        low_threshold = factor_series.quantile(0.3)
-        low_mask = factor_series <= low_threshold
-        low_return = float(return_series[low_mask].mean()) if low_mask.sum() > 0 else 0.0
+        high_return = float(np.mean(daily_high_returns)) if daily_high_returns else None
+        low_return = float(np.mean(daily_low_returns)) if daily_low_returns else None
 
         # 多空收益
-        long_short_return = high_return - low_return
+        if high_return is not None and low_return is not None:
+            long_short_return = high_return - low_return
+        else:
+            long_short_return = None
 
         # 因子贡献比例（IC解释的方差比例）
-        contribution_ratio = ic ** 2 if not np.isnan(ic) else 0.0
+        contribution_ratio = ic ** 2 if not np.isnan(ic) else None
+
+        # 总样本量
+        total_samples = sum(len(v) for v in factor_panel.values())
 
         return {
-            "ic": float(ic) if not np.isnan(ic) else 0.0,
+            "ic": float(ic) if not np.isnan(ic) else None,
             "ic_pvalue": float(ic_pvalue),
             "high_exposure_return": high_return,
             "low_exposure_return": low_return,
             "long_short_return": long_short_return,
-            "contribution_ratio": float(contribution_ratio),
-            "sample_size": len(all_factor_values)
+            "contribution_ratio": float(contribution_ratio) if contribution_ratio is not None else None,
+            "sample_size": total_samples
         }
 
     def _decompose_alpha_beta(
@@ -267,8 +267,8 @@ class FactorAttributionService:
                 "portfolio_return": {
                     "daily_mean": float(portfolio_returns.mean()),
                     "annual_return": float((1 + portfolio_returns.mean()) ** 252 - 1),
-                    "volatility": calculate_volatility(portfolio_returns) or 0.0,
-                    "sharpe": calculate_sharpe(portfolio_returns, risk_free_rate=0.03) or 0.0
+                    "volatility": calculate_volatility(portfolio_returns),
+                    "sharpe": calculate_sharpe(portfolio_returns, risk_free_rate=0.03)
                 }
             }
 
@@ -318,12 +318,18 @@ class FactorAttributionService:
         y_pred = alpha + beta * X.flatten()
         ss_tot = np.sum((y - y.mean()) ** 2)
         ss_res = np.sum((y - y_pred) ** 2)
-        r_squared = 1.0 - safe_divide(float(ss_res), float(ss_tot), default=0.0)
+        if ss_tot < 1e-10:
+            r_squared = None
+        else:
+            r_squared = 1.0 - safe_divide(float(ss_res), float(ss_tot), default=None)
 
         interpretation = (
             f"相对于基准的年化Alpha: {alpha_annual:.4f}, "
             f"Beta: {beta:.4f}, "
-            f"拟合度(R²): {r_squared:.4f}"
+            f"拟合度(R²): {r_squared:.4f}" if r_squared is not None else
+            f"相对于基准的年化Alpha: {alpha_annual:.4f}, "
+            f"Beta: {beta:.4f}, "
+            f"拟合度(R²): 不可计算（组合收益恒定）"
         )
 
         return {
@@ -361,7 +367,7 @@ class FactorAttributionService:
                 if len(returns) > 0:
                     avg_return = float(returns.mean())
                     cum_return = float((1 + returns).prod() - 1)
-                    vol_annual = calculate_volatility(returns) or 0.0
+                    vol_annual = calculate_volatility(returns)
 
                     returns_by_stock[stock_code] = {
                         "avg_daily_return": avg_return,
@@ -369,7 +375,7 @@ class FactorAttributionService:
                         "cumulative_return": cum_return,
                         "volatility": vol_annual,
                         "daily_volatility": float(returns.std()),
-                        "sharpe": calculate_sharpe(returns, risk_free_rate=0.03) or 0.0,
+                        "sharpe": calculate_sharpe(returns, risk_free_rate=0.03),
                         "win_rate": float((returns > 0).mean()),
                         "count": len(returns)
                     }
@@ -391,11 +397,11 @@ class FactorAttributionService:
             per_stock_win_rates.append(stats["win_rate"])
             per_stock_avg_returns.append(stats["avg_daily_return"])
 
-        overall_avg = float(np.mean(per_stock_avg_returns)) if per_stock_avg_returns else 0.0
-        overall_vol_annual = float(np.mean(per_stock_vols)) if per_stock_vols else 0.0
-        overall_daily_vol = float(np.mean(per_stock_daily_vols)) if per_stock_daily_vols else 0.0
-        overall_sharpe = float(np.mean(per_stock_sharpes)) if per_stock_sharpes else 0.0
-        overall_win_rate = float(np.mean(per_stock_win_rates)) if per_stock_win_rates else 0.0
+        overall_avg = float(np.mean([v for v in per_stock_avg_returns if v is not None])) if per_stock_avg_returns else 0.0
+        overall_vol_annual = float(np.mean([v for v in per_stock_vols if v is not None])) if per_stock_vols else 0.0
+        overall_daily_vol = float(np.mean([v for v in per_stock_daily_vols if v is not None])) if per_stock_daily_vols else 0.0
+        overall_sharpe = float(np.mean([v for v in per_stock_sharpes if v is not None])) if any(v is not None for v in per_stock_sharpes) else None
+        overall_win_rate = float(np.mean([v for v in per_stock_win_rates if v is not None])) if per_stock_win_rates else 0.0
         # 先计算每只股票的累计收益再取均值，而非跨股票连乘
         stock_cum_returns = [v["cumulative_return"] for v in returns_by_stock.values()]
         overall_cum = float(np.mean(stock_cum_returns)) if stock_cum_returns else 0.0

@@ -58,14 +58,16 @@ class TestSharpeRatioWithRiskFreeRate:
         """收益低于无风险利率时，Sharpe应为负"""
         svc = StatisticsService()
         # 构造日均收益0.0001(年化2.5%)，rf=5%时Sharpe应为负
-        low_returns = pd.Series([0.0001] * 252)
+        # 必须使用非恒定序列（std>0），否则calculate_risk_metrics返回None
+        np.random.seed(42)
+        low_returns = pd.Series(np.random.randn(252) * 0.001 + 0.0001)
         quantile_returns = {"Q1": low_returns}
 
         r = svc.analyze_quantile_returns(
             quantile_returns, risk_free_rate=0.05
         )
-        assert r["Q1"]["sharpe"] < 0, \
-            f"日收益0.0001 vs rf=0.05，Sharpe应为负，实际={r['Q1']['sharpe']:.4f}"
+        assert r["Q1"]["sharpe"] is not None and r["Q1"]["sharpe"] < 0, \
+            f"日收益0.0001 vs rf=0.05，Sharpe应为负，实际={r['Q1']['sharpe']}"
 
     def test_quantile_sharpe_zero_rf_equals_old_behavior(self):
         """rf=0时，Sharpe = mean/std * sqrt(252)，与旧行为一致"""
@@ -81,13 +83,13 @@ class TestSharpeRatioWithRiskFreeRate:
         assert abs(r["Q1"]["sharpe"] - expected) < 1e-10, \
             f"rf=0时Sharpe应与mean/std*sqrt(252)一致：{r['Q1']['sharpe']:.6f} vs {expected:.6f}"
 
-    def test_quantile_empty_returns_returns_zero(self):
-        """空收益率序列应返回0"""
+    def test_quantile_empty_returns_returns_none(self):
+        """空收益率序列应返回None（不可计算）"""
         svc = StatisticsService()
         r = svc.analyze_quantile_returns(
             {"Q1": pd.Series([], dtype=float)}, risk_free_rate=0.03
         )
-        assert r["Q1"]["sharpe"] == 0.0
+        assert r["Q1"]["sharpe"] is None
 
     # --- 1b. FactorReturnAnalysisService._calculate_sharpe_ratio ---
 

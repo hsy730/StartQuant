@@ -240,11 +240,21 @@ class FactorStabilityService:
             if len(factor_data) < window * 2:
                 continue
 
-            # 计算滚动时间序列相关性（非横截面IC，见方法文档说明）
+            # 计算滚动时间序列Spearman相关性（非横截面IC，见方法文档说明）
             if factor_name in factor_data.columns and return_col in factor_data.columns:
+                from scipy.stats import spearmanr
+
+                def _rolling_spearman(x):
+                    y_aligned = factor_data[return_col].loc[x.index]
+                    valid = x.notna() & y_aligned.notna()
+                    if valid.sum() < 5:
+                        return np.nan
+                    result = spearmanr(x[valid], y_aligned[valid])[0]
+                    return result if not np.isnan(result) else np.nan
+
                 rolling_corr_series = factor_data[factor_name].rolling(
                     window=window, min_periods=window
-                ).corr(factor_data[return_col]).dropna()
+                ).apply(_rolling_spearman, raw=False).dropna()
                 rolling_ic = rolling_corr_series.tolist()
             else:
                 rolling_ic = []
@@ -320,7 +330,12 @@ class FactorStabilityService:
             regime_data = factor_data.iloc[start_idx:end_idx]
 
             if factor_name in regime_data.columns and return_col in regime_data.columns:
-                ic = regime_data[factor_name].corr(regime_data[return_col])
+                from scipy.stats import spearmanr
+                valid = regime_data[factor_name].notna() & regime_data[return_col].notna()
+                if valid.sum() >= 5:
+                    ic, _ = spearmanr(regime_data.loc[valid.index[valid], factor_name], regime_data.loc[valid.index[valid], return_col])
+                else:
+                    ic = np.nan
 
                 if regime not in regime_performance:
                     regime_performance[regime] = []

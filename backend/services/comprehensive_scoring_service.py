@@ -411,7 +411,7 @@ class ComprehensiveScoringService:
 
         # 4. 效率得分
         sharpe_ratio = portfolio_metrics.get("sharpe_ratio", 1.0)
-        sharpe_score = min(sharpe_ratio / 2.0 * 100, 100)
+        sharpe_score = max(min(sharpe_ratio / 2.0 * 100, 100), 0)
         total_score += weights["efficiency"] * sharpe_score
         details["efficiency_score"] = float(sharpe_score)
 

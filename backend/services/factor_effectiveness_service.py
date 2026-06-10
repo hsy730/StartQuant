@@ -5,7 +5,7 @@ import logging
 import numpy as np
 import pandas as pd
 from typing import Dict, List, Optional, Any
-from scipy.stats import spearmanr, pearsonr
+from scipy.stats import spearmanr
 
 from backend.utils.returns import calculate_future_returns
 from backend.utils.safe_math import safe_ir
@@ -86,7 +86,7 @@ class FactorEffectivenessService:
         if len(factor_values) < 2:
             return {"error": "数据不足以计算相关性"}
 
-        correlation, p_value = pearsonr(factor_values, returns)
+        correlation, p_value = spearmanr(factor_values, returns)
 
         return {
             "x": [float(v) for v in factor_values],
@@ -184,8 +184,8 @@ class FactorEffectivenessService:
                 "dates": dates,
                 "ic_values": valid_values,
                 "ic_mean": float(ic_s.mean()),
-                "ic_std": float(ic_s.std()) if len(ic_s) > 1 else 0.0,
-                "ir": safe_ir(float(ic_s.mean()), float(ic_s.std()), default=0.0) if len(ic_s) > 1 else 0.0,
+                "ic_std": float(ic_s.std()) if len(ic_s) > 1 else None,
+                "ir": safe_ir(float(ic_s.mean()), float(ic_s.std()), default=None) if len(ic_s) > 1 else None,
                 "ic_positive_ratio": float((ic_s > 0).mean()),
                 "source": "Alphalens"
             }
@@ -210,7 +210,14 @@ class FactorEffectivenessService:
         factor_aligned = factor_vals.loc[common_index]
         return_aligned = return_vals.loc[common_index]
 
-        rolling_ic = factor_aligned.rolling(window=window, min_periods=10).corr(return_aligned)
+        def _rolling_spearman(x):
+            y_aligned = return_aligned.loc[x.index]
+            valid = x.notna() & y_aligned.notna()
+            if valid.sum() < 10:
+                return np.nan
+            return spearmanr(x[valid], y_aligned[valid])[0]
+
+        rolling_ic = factor_aligned.rolling(window=window, min_periods=10).apply(_rolling_spearman, raw=False)
         valid_ic = rolling_ic.dropna()
         valid_ic = valid_ic[~np.isinf(valid_ic)]
 
@@ -227,7 +234,7 @@ class FactorEffectivenessService:
             "ic_values": [float(v) for v in ic_values],
             "ic_mean": float(ic_series.mean()),
             "ic_std": ic_std,
-            "ir": safe_ir(float(ic_series.mean()), ic_std, default=0.0),
+            "ir": safe_ir(float(ic_series.mean()), ic_std, default=None),
             "ic_positive_ratio": float((ic_series > 0).mean())
         }
 
@@ -267,7 +274,7 @@ class FactorEffectivenessService:
             "ic_values": [float(v) for v in ic_values],
             "ic_mean": float(ic_series.mean()),
             "ic_std": float(ic_series.std()),
-            "ir": safe_ir(float(ic_series.mean()), float(ic_series.std()), default=0.0),
+            "ir": safe_ir(float(ic_series.mean()), float(ic_series.std()), default=None),
             "ic_positive_ratio": float((ic_series > 0).mean())
         }
 
@@ -322,9 +329,9 @@ class FactorEffectivenessService:
         low_avg = {}
         excess = {}
         for period in holding_periods:
-            high_avg[period] = float(np.mean(high_returns[period])) if high_returns[period] else 0.0
-            low_avg[period] = float(np.mean(low_returns[period])) if low_returns[period] else 0.0
-            excess[period] = high_avg[period] - low_avg[period]
+            high_avg[period] = float(np.mean(high_returns[period])) if high_returns[period] else None
+            low_avg[period] = float(np.mean(low_returns[period])) if low_returns[period] else None
+            excess[period] = (high_avg[period] - low_avg[period]) if (high_avg[period] is not None and low_avg[period] is not None) else None
 
         return {
             "threshold_value": threshold_value,
@@ -382,7 +389,7 @@ class FactorEffectivenessService:
                         if not np.isnan(ic) and not np.isinf(ic):
                             daily_ics.append(ic)
 
-            mean_ic = np.mean(daily_ics) if daily_ics else 0
+            mean_ic = float(np.mean(daily_ics)) if daily_ics else None
 
             if len(daily_ics) >= 1:
                 try:

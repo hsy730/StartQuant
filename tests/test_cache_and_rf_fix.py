@@ -286,11 +286,12 @@ class TestSharpeZeroProtection:
         assert metrics["sharpe_ratio"] is None
 
     def test_sharpe_constant_returns(self):
-        """恒定收益率序列（std=0）应返回有限值"""
+        """恒定收益率序列（std=0）应返回None（不可计算）"""
         from backend.services.risk_metrics import calculate_risk_metrics
 
         metrics = calculate_risk_metrics(pd.Series([0.001] * 100), risk_free_rate=0.03)
-        assert np.isfinite(metrics["sharpe_ratio"]) or metrics["sharpe_ratio"] == 0.0
+        # std=0 → 不可计算，返回None（符合规则6/7.6）
+        assert metrics["sharpe_ratio"] is None
 
     def test_factor_return_sharpe_zero_std(self):
         """FactorReturnAnalysisService 对零标准差返回 0"""

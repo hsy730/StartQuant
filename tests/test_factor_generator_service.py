@@ -53,9 +53,12 @@ class TestGenerateBinaryCombinations:
         )
         # 2个因子取2组合 = 1对 × 6运算符 = 6个表达式
         assert len(result) == 6
-        # 验证每个运算符都出现
+        # 验证每个运算符都出现（/ 使用 safe_divide 格式）
         for op in self.service.operators.keys():
-            assert any(f" {op} " in expr for expr in result), f"缺少运算符 {op}"
+            if op == "/":
+                assert any("safe_divide" in expr for expr in result), f"缺少运算符 {op} (safe_divide)"
+            else:
+                assert any(f" {op} " in expr for expr in result), f"缺少运算符 {op}"
 
     def test_two_base_factors_expressions_should_contain_both_factors(self):
         """2个因子的表达式应包含两个因子名"""
@@ -335,9 +338,9 @@ class TestGenerateIndicatorCombinations:
         assert len(result) <= 5
 
     def test_sma_should_generate_division_and_subtraction(self):
-        """SMA 应同时生成除法和减法表达式"""
+        """SMA 应同时生成除法（safe_divide）和减法表达式"""
         result = self.service.generate_indicator_combinations(["momentum"])
-        sma_div = [e for e in result if "SMA" in e and "/" in e]
+        sma_div = [e for e in result if "SMA" in e and "safe_divide" in e]
         sma_sub = [e for e in result if "SMA" in e and "-" in e]
         assert len(sma_div) > 0
         assert len(sma_sub) > 0
