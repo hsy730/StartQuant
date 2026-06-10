@@ -26,6 +26,7 @@ class WeightOptimizer:
         factor_names: list,
         method: str = "equal_weight",
         returns: Optional[pd.Series] = None,
+        factor_data_dict: Optional[Dict[str, pd.DataFrame]] = None,
     ) -> Dict:
         """
         计算投资组合权重
@@ -35,6 +36,8 @@ class WeightOptimizer:
             factor_names: 因子名称列表
             method: 权重计算方法
             returns: 收益率序列（IC/IR加权需要）
+            factor_data_dict: alphalens格式的因子数据字典 {factor_name: factor_data}，
+                传入时IC/IR加权委托alphalens计算横截面IC（推荐）
 
         Returns:
             Dict: {"weights": {factor: weight}, "method": method}
@@ -49,9 +52,9 @@ class WeightOptimizer:
         if method == "equal_weight":
             return self._equal_weight(factor_names)
         elif method == "ic_weight":
-            return self._ic_weight(factor_values, factor_names, returns)
+            return self._ic_weight(factor_values, factor_names, returns, factor_data_dict)
         elif method == "ir_weight":
-            return self._ir_weight(factor_values, factor_names, returns)
+            return self._ir_weight(factor_values, factor_names, returns, factor_data_dict)
         elif method == "max_sharpe":
             return self._max_sharpe(factor_values, factor_names, returns)
         elif method == "min_variance":
@@ -68,8 +71,8 @@ class WeightOptimizer:
         weights = {name: weight for name in factor_names}
         return {"weights": weights, "method": "equal_weight"}
 
-    def _ic_weight(self, factor_values, factor_names, returns) -> Dict:
-        """IC加权 — 因子IC绝对值归一化"""
+    def _ic_weight(self, factor_values, factor_names, returns, factor_data_dict=None) -> Dict:
+        """IC加权 — 优先使用alphalens横截面Spearman IC，回退到自实现（规则7.1/7.13）"""
         if returns is None or len(returns.dropna()) < 20:
             logger.debug("IC加权数据不足，回退到等权")
             return self._equal_weight(factor_names)
@@ -78,13 +81,35 @@ class WeightOptimizer:
         for factor_name in factor_names:
             values = factor_values.get(factor_name)
             if values is not None and len(values.dropna()) > 0:
+                # 优先使用alphalens横截面IC（多股票场景）
+                alphalens_ic = self._get_alphalens_ic(factor_name, factor_data_dict)
+                if alphalens_ic is not None:
+                    ic_values[factor_name] = abs(alphalens_ic)
+                    continue
+
+                # 回退：自实现IC计算
                 aligned_data = pd.DataFrame({
                     'factor': values,
                     'returns': returns
                 }).dropna()
 
                 if len(aligned_data) > 10:
-                    ic, _ = spearmanr(aligned_data['factor'], aligned_data['returns'])
+                    if isinstance(aligned_data.index, pd.MultiIndex):
+                        daily_ics = []
+                        for date, group in aligned_data.groupby(level=0):
+                            if len(group) >= 5:
+                                ic_val, _ = spearmanr(group['factor'], group['returns'])
+                                if not np.isnan(ic_val):
+                                    daily_ics.append(ic_val)
+                        ic = float(np.mean(daily_ics)) if daily_ics else 0.0
+                    else:
+                        from backend.utils.ic_calculator import calculate_rolling_ic
+                        rolling_ic = calculate_rolling_ic(
+                            aligned_data['factor'], aligned_data['returns'],
+                            window=20, method='spearman'
+                        )
+                        ic = float(rolling_ic.dropna().mean()) if len(rolling_ic.dropna()) > 0 else 0.0
+
                     ic_values[factor_name] = abs(ic) if not np.isnan(ic) else 0.0
                 else:
                     ic_values[factor_name] = 0.0
@@ -98,8 +123,8 @@ class WeightOptimizer:
         weights = {k: safe_divide(v, total_ic, default=1.0/len(factor_names)) for k, v in ic_values.items()}
         return {"weights": weights, "method": "ic_weight"}
 
-    def _ir_weight(self, factor_values, factor_names, returns) -> Dict:
-        """IR加权 — 因子信息比率绝对值归一化"""
+    def _ir_weight(self, factor_values, factor_names, returns, factor_data_dict=None) -> Dict:
+        """IR加权 — 优先使用alphalens横截面IC序列计算IR，回退到自实现"""
         from backend.utils.safe_math import safe_ir
         if returns is None or len(returns.dropna()) < 20:
             logger.debug("IR加权数据不足，回退到等权")
@@ -109,18 +134,35 @@ class WeightOptimizer:
         for factor_name in factor_names:
             values = factor_values.get(factor_name)
             if values is not None and len(values.dropna()) > 0:
+                # 优先使用alphalens IC序列计算IR（多股票场景）
+                alphalens_ir = self._get_alphalens_ir(factor_name, factor_data_dict)
+                if alphalens_ir is not None:
+                    ir_values[factor_name] = abs(alphalens_ir)
+                    continue
+
+                # 回退：自实现滚动Spearman IC → IR
                 aligned_data = pd.DataFrame({
                     'factor': values,
                     'returns': returns
                 }).dropna()
 
                 if len(aligned_data) > 20:
+                    def _rolling_spearman_ic(window_factor, returns_series):
+                        y_aligned = returns_series.loc[window_factor.index]
+                        valid = window_factor.notna() & y_aligned.notna()
+                        if valid.sum() < 5:
+                            return np.nan
+                        return spearmanr(window_factor[valid], y_aligned[valid])[0]
+
                     ic_series = aligned_data['factor'].rolling(
                         window=20, min_periods=10
-                    ).corr(aligned_data['returns'])
+                    ).apply(
+                        lambda x: _rolling_spearman_ic(x, aligned_data['returns']),
+                        raw=False
+                    )
                     ic_mean = ic_series.mean()
                     ic_std = ic_series.std()
-                    ir = safe_ir(float(ic_mean), float(ic_std), default=0.0)
+                    ir = safe_ir(float(ic_mean), float(ic_std), default=None)
                     ir_values[factor_name] = abs(ir) if ir is not None else 0.0
                 else:
                     ir_values[factor_name] = 0.0
@@ -133,6 +175,70 @@ class WeightOptimizer:
 
         weights = {k: safe_divide(v, total_ir, default=1.0/len(factor_names)) for k, v in ir_values.items()}
         return {"weights": weights, "method": "ir_weight"}
+
+    @staticmethod
+    def _get_alphalens_ic(factor_name: str, factor_data_dict: Optional[Dict] = None) -> Optional[float]:
+        """从alphalens factor_data中获取横截面Spearman IC均值"""
+        if factor_data_dict is None:
+            return None
+        factor_data = factor_data_dict.get(factor_name)
+        if factor_data is None or not isinstance(factor_data, pd.DataFrame):
+            return None
+        if not isinstance(factor_data.index, pd.MultiIndex):
+            return None
+        num_assets = factor_data.index.get_level_values("asset").nunique()
+        if num_assets < 2:
+            return None
+        try:
+            import alphalens
+            import warnings
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                ic_df = alphalens.performance.factor_information_coefficient(factor_data)
+            ic_col = [c for c in ic_df.columns if "1" in str(c)]
+            if ic_col:
+                ic_series = ic_df[ic_col[0]].dropna()
+            else:
+                ic_series = ic_df.iloc[:, 0].dropna()
+            if len(ic_series) > 0:
+                return float(ic_series.mean())
+        except Exception as e:
+            logger.warning(f"alphalens IC计算失败(factor={factor_name}): {e}")
+        return None
+
+    @staticmethod
+    def _get_alphalens_ir(factor_name: str, factor_data_dict: Optional[Dict] = None) -> Optional[float]:
+        """从alphalens factor_data中获取横截面IC序列的IR"""
+        if factor_data_dict is None:
+            return None
+        factor_data = factor_data_dict.get(factor_name)
+        if factor_data is None or not isinstance(factor_data, pd.DataFrame):
+            return None
+        if not isinstance(factor_data.index, pd.MultiIndex):
+            return None
+        num_assets = factor_data.index.get_level_values("asset").nunique()
+        if num_assets < 2:
+            return None
+        try:
+            import alphalens
+            import warnings
+            from backend.utils.safe_math import safe_ir
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                ic_df = alphalens.performance.factor_information_coefficient(factor_data)
+            ic_col = [c for c in ic_df.columns if "1" in str(c)]
+            if ic_col:
+                ic_series = ic_df[ic_col[0]].dropna()
+            else:
+                ic_series = ic_df.iloc[:, 0].dropna()
+            if len(ic_series) >= 2:
+                ic_mean = float(ic_series.mean())
+                ic_std = float(ic_series.std())
+                ir = safe_ir(ic_mean, ic_std, default=None)
+                return ir
+        except Exception as e:
+            logger.warning(f"alphalens IR计算失败(factor={factor_name}): {e}")
+        return None
 
     def _align_factor_indices(self, factor_values):
         """对齐所有因子Series的索引，避免不同起止日期导致NaN填充"""

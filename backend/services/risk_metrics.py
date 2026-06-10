@@ -192,7 +192,7 @@ def calculate_sharpe(returns: pd.Series, risk_free_rate: float = 0.03, annual_tr
     if len(returns_clean) < 2:
         return None
     returns_arr = returns_clean.values
-    if np.std(returns_arr) == 0:
+    if np.std(returns_arr) < 1e-10:
         return None
     result = float(empyrical.sharpe_ratio(
         returns_arr, risk_free=risk_free_rate / annual_trading_days,

@@ -14,6 +14,7 @@ Tear Sheet 全貌报告生成器 - 专业因子分析报告系统
 - 符合量化研究的报告标准
 """
 import pandas as pd
+import math
 from typing import Dict, List, Optional, Any, Tuple
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -280,11 +281,13 @@ class TearSheetService:
             # 从alphalens结果中提取IC摘要
             ic_analysis = al_result.get("ic_analysis", {})
             spearman_data = ic_analysis.get("spearman_ic", {})
-            
+
+            # 优先选择1-day周期，回退到第一个可用周期
+            result = None
             for period_label, period_stats in spearman_data.items():
                 if not isinstance(period_stats, dict) or "error" in period_stats:
                     continue
-                return {
+                current = {
                     "mean_ic": period_stats.get("mean_ic", 0),
                     "std_ic": period_stats.get("std_ic", 0),
                     "ir": period_stats.get("ir", 0),
@@ -294,8 +297,10 @@ class TearSheetService:
                     "skewness": period_stats.get("skewness", 0),
                     "kurtosis": period_stats.get("kurtosis", 0),
                 }
-            
-            return None
+                if result is None or "1" in str(period_label):
+                    result = current
+
+            return result if result is not None else None
             
         except Exception as e:
             logger.warning(f"IC/IR摘要提取异常: {e}")
@@ -307,66 +312,75 @@ class TearSheetService:
     ) -> Tuple[float, Dict[str, float]]:
         """
         计算综合得分
-        
+
         基于各分析维度的加权评分。
         """
+        def _safe_val(val, default=0.0):
+            """Convert NaN/None/Inf to default value for scoring"""
+            if val is None:
+                return default
+            if isinstance(val, float) and (math.isnan(val) or math.isinf(val)):
+                return default
+            return val
+
         weights = self.config.scoring_weights
         scores = {}
-        
+
         if "ic_ir_analysis" in sections:
             ic_ir = sections["ic_ir_analysis"]
-            ir = abs(ic_ir.get("ir", 0))
-            positive_ratio = ic_ir.get("ic_positive_ratio", 0.5)
-            
+            ir = abs(_safe_val(ic_ir.get("ir", 0)))
+            positive_ratio = _safe_val(ic_ir.get("ic_positive_ratio", 0.5))
+
             ic_score = min(ir * 15 + (positive_ratio - 0.5) * 40, 100)
             scores["ic_strength"] = max(0, ic_score)
-            
+
             ir_score = min(ir * 25, 100)
             scores["ir_quality"] = max(0, ir_score)
         else:
             scores["ic_strength"] = 0
             scores["ir_quality"] = 0
-        
+
         if "quantile_returns" in sections:
             qr = sections["quantile_returns"]
             mono = qr.get("monotonicity_test", {})
             spread = qr.get("spread", {})
-            
-            mono_score = (
-                mono.get("monotonicity_ratio", 0) * 100 if 
-                isinstance(mono.get("monotonicity_ratio"), (int, float)) 
+
+            mono_ratio = _safe_val(
+                mono.get("monotonicity_ratio", 0)
+                if isinstance(mono.get("monotonicity_ratio"), (int, float))
                 else 0
             )
+            mono_score = mono_ratio * 100
             scores["quantile_monotonicity"] = max(0, min(mono_score, 100))
-            
+
             is_sig = spread.get("is_significant", False)
-            spread_val = abs(spread.get("long_short_spread", 0))
+            spread_val = abs(_safe_val(spread.get("long_short_spread", 0)))
             sig_score = (50 if is_sig else 20) + min(spread_val * 1000, 50)
             scores["significance"] = max(0, min(sig_score, 100))
         else:
             scores["quantile_monotonicity"] = 0
             scores["significance"] = 0
-        
+
         if "turnover_analysis" in sections:
             ta = sections["turnover_analysis"]
             stability = ta.get("stability_analysis", {})
-            stab_score = stability.get("stability_score", 0) * 100
-            
+            stab_score = _safe_val(stability.get("stability_score", 0)) * 100
+
             turnover_stats = ta.get("turnover_stats", {})
-            mean_turnover = turnover_stats.get("mean_turnover", 0.5)
+            mean_turnover = _safe_val(turnover_stats.get("mean_turnover", 0.5))
             eff_score = (1 - mean_turnover) * 100
-            
+
             scores["stability"] = max(0, min(stab_score, 100))
             scores["turnover_efficiency"] = max(0, min(eff_score, 100))
         else:
             scores["stability"] = 0
             scores["turnover_efficiency"] = 0
-        
+
         total_score = sum(
-            scores.get(key, 0) * weight / 100 
+            scores.get(key, 0) * weight / 100
             for key, weight in weights.items()
         )
-        
+
         return total_score, scores
 
     def _score_to_grade(self, score: float) -> str:

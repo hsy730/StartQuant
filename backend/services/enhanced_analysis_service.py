@@ -9,6 +9,7 @@ from scipy import stats
 from backend.services.factor_neutralization_service import factor_neutralization_service
 from backend.services.factor_stability_service import factor_stability_service
 from backend.services.factor_summary_service import factor_summary_service
+from backend.utils.safe_math import safe_ir
 
 
 class EnhancedAnalysisService:
@@ -26,8 +27,10 @@ class EnhancedAnalysisService:
         """
         计算IC的显著性t检验
 
+        按横截面（日期）计算IC，再对IC序列做t检验，避免池化相关违反独立性假设。
+
         Args:
-            factor_values: 因子值序列
+            factor_values: 因子值序列（MultiIndex或带日期列的面板数据）
             return_values: 收益率序列
             confidence_level: 置信水平（默认95%）
 
@@ -46,23 +49,82 @@ class EnhancedAnalysisService:
                 "n_samples": len(valid_data)
             }
 
-        # 计算IC（使用Spearman Rank IC，与Alphalens和业界标准一致）
+        # 尝试按横截面（日期）计算IC，再对IC序列做t检验
+        # 如果数据有日期索引（MultiIndex或DatetimeIndex），按日期分组
+        date_col = None
+        if isinstance(valid_data.index, pd.MultiIndex):
+            # MultiIndex: 第一层通常是日期
+            date_col = valid_data.index.get_level_values(0)
+        elif isinstance(valid_data.index, pd.DatetimeIndex):
+            date_col = valid_data.index
+        elif "date" in valid_data.columns:
+            date_col = valid_data["date"]
+
+        if date_col is not None:
+            ic_list = []
+            for date, group in valid_data.groupby(date_col):
+                if len(group) < 5:
+                    continue
+                from scipy.stats import spearmanr
+                ic_val, _ = spearmanr(group["factor"], group["return"])
+                if not np.isnan(ic_val):
+                    ic_list.append(ic_val)
+
+            if len(ic_list) < 2:
+                return {
+                    "ic": None,
+                    "p_value": None,
+                    "is_significant": False,
+                    "method": "spearman",
+                    "n_samples": len(valid_data),
+                    "n_cross_sections": len(ic_list),
+                    "error": "有效截面不足（至少需要2个截面）"
+                }
+
+            ic_series = pd.Series(ic_list)
+            mean_ic = float(ic_series.mean())
+            t_stat, p_value = stats.ttest_1samp(ic_series.dropna(), 0)
+
+            # 计算置信区间
+            alpha = 1 - confidence_level
+            t_critical = stats.t.ppf(1 - alpha / 2, df=len(ic_series) - 1)
+            se = ic_series.std(ddof=1) / np.sqrt(len(ic_series))
+            ci_lower = mean_ic - t_critical * se
+            ci_upper = mean_ic + t_critical * se
+
+            return {
+                "ic": mean_ic,
+                "t_statistic": float(t_stat),
+                "p_value": float(p_value),
+                "is_significant": p_value < 0.05,
+                "significance_level": (
+                    "极高显著性 (p<0.01)" if p_value < 0.01 else
+                    "显著性 (p<0.05)" if p_value < 0.05 else
+                    "不显著 (p>=0.05)"
+                ),
+                "confidence_interval": {
+                    "lower": float(ci_lower),
+                    "upper": float(ci_upper),
+                    "level": confidence_level,
+                },
+                "n_samples": len(valid_data),
+                "n_cross_sections": len(ic_list),
+                "method": "spearman_cross_sectional",
+                "interpretation": (
+                    f"横截面IC均值在{confidence_level*100:.0f}%置信区间为[{ci_lower:.4f}, {ci_upper:.4f}]"
+                ),
+            }
+
+        # 无日期信息时回退到单次Spearman相关（并标注局限性）
         ic = valid_data["factor"].corr(valid_data["return"], method="spearman")
 
-        # t检验：检验IC是否显著不为0
         n = len(valid_data)
-        # t统计量计算
-        # t = r * sqrt(n-2) / sqrt(1-r^2)
-        # 将 ic clip 到 [-0.9999, 0.9999] 避免数值问题
         ic_clipped = np.clip(ic, -0.9999, 0.9999)
         t_statistic = ic_clipped * np.sqrt(n - 2) / np.sqrt(1 - ic_clipped**2)
         p_value = 2 * (1 - stats.t.cdf(abs(t_statistic), df=n - 2))
 
-        # 计算置信区间
         alpha = 1 - confidence_level
         t_critical = stats.t.ppf(1 - alpha / 2, df=n - 2)
-
-        # 标准误差
         se = np.sqrt((1 - ic_clipped**2) / (n - 2))
         ci_lower = ic - t_critical * se
         ci_upper = ic + t_critical * se
@@ -83,6 +145,8 @@ class EnhancedAnalysisService:
                 "level": confidence_level,
             },
             "n_samples": n,
+            "method": "spearman_pooled",
+            "warning": "无日期信息，使用池化Spearman相关（可能违反独立性假设）",
             "interpretation": (
                 f"IC在{confidence_level*100:.0f}%置信区间为[{ci_lower:.4f}, {ci_upper:.4f}]"
             ),
@@ -183,7 +247,7 @@ class EnhancedAnalysisService:
                     ic_significance = {
                         "ic": mean_ic,
                         "ic_std": ic_std,
-                        "ir": mean_ic / ic_std if ic_std > 1e-10 else 0.0,
+                        "ir": safe_ir(float(mean_ic), float(ic_std), default=None),
                         "t_statistic": float(t_stat),
                         "p_value": float(p_value),
                         "is_significant": p_value < 0.05,
@@ -254,10 +318,31 @@ class EnhancedAnalysisService:
             # 稳定性分析
             if enable_stability:
                 try:
-                    # 使用合并的因子值进行稳定性分析
-                    dist_stability = factor_stability_service.calculate_distribution_stability(
-                        combined_factor
-                    )
+                    # 构建横截面因子值面板（date × stock_code），取横截面均值作为因子序列
+                    cross_section_frames = []
+                    for stock_code, df in factor_data.items():
+                        df_copy = df.copy()
+                        if factor_name in df_copy.columns:
+                            stock_series = df_copy[factor_name].dropna()
+                            stock_series.name = stock_code
+                            cross_section_frames.append(stock_series)
+
+                    if cross_section_frames:
+                        cross_section_panel = pd.concat(cross_section_frames, axis=1)
+                        combined_factor = cross_section_panel.mean(axis=1).dropna()
+                    else:
+                        combined_factor = pd.Series(dtype=float)
+
+                    if len(combined_factor) >= 504:
+                        dist_stability = factor_stability_service.calculate_distribution_stability(
+                            combined_factor
+                        )
+                    else:
+                        dist_stability = {
+                            "warning": f"数据不足504个点(当前{len(combined_factor)})，跳过分布稳定性检验",
+                            "data_points": len(combined_factor),
+                            "required": 504,
+                        }
 
                     # 时间序列稳定性（如果有IC序列）
                     ts_stability = None

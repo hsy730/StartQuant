@@ -7,7 +7,7 @@ import numpy as np
 import random
 from itertools import combinations
 
-from backend.utils.safe_math import safe_ir
+from backend.utils.safe_math import safe_ir, safe_divide
 
 
 class FactorGeneratorService:
@@ -83,7 +83,10 @@ class FactorGeneratorService:
         # 生成深度1的组合
         for factor1, factor2 in combinations(base_factors, 2):
             for op in self.operators.keys():
-                expr = f"({factor1} {op} {factor2})"
+                if op == "/":
+                    expr = f"safe_divide({factor1}, {factor2}, default=np.nan)"
+                else:
+                    expr = f"({factor1} {op} {factor2})"
                 expressions.append(expr)
 
         # 生成深度2的组合（如果需要）
@@ -168,8 +171,8 @@ class FactorGeneratorService:
                         expr = f"{special_functions[stat_func]}({factor})"
                         expressions.append(expr)
                     elif stat_func == "zscore":
-                        # zscore需要特殊处理: (x - mean) / std，std为0时结果为NaN
-                        expr = f"(({factor} - {factor}.rolling(252, min_periods=1).mean()) / {factor}.rolling(252, min_periods=1).std().replace(0, np.nan))"
+                        # zscore需要特殊处理: (x - mean) / std，使用safe_divide防止除零
+                        expr = f"safe_divide({factor} - {factor}.rolling(252, min_periods=1).mean(), {factor}.rolling(252, min_periods=1).std(), default=np.nan)"
                         expressions.append(expr)
                 elif stat_func in no_window_functions:
                     # 直接调用方法
@@ -207,13 +210,13 @@ class FactorGeneratorService:
             for indicator in self.indicators.keys():
                 if indicator == "SMA":
                     for window in [5, 10, 20, 60]:
-                        expr = f"({factor} / SMA({price_column}, {window}))"
+                        expr = f"safe_divide({factor}, SMA({price_column}, {window}), default=np.nan)"
                         expressions.append(expr)
                         expr = f"({factor} - SMA({price_column}, {window}))"
                         expressions.append(expr)
                 elif indicator == "EMA":
                     for window in [5, 10, 20, 60]:
-                        expr = f"({factor} / EMA({price_column}, {window}))"
+                        expr = f"safe_divide({factor}, EMA({price_column}, {window}), default=np.nan)"
                         expressions.append(expr)
                 elif indicator == "RSI":
                     expr = f"({factor} * RSI({price_column}, 14))"
@@ -494,8 +497,8 @@ class FactorGeneratorService:
         if expression.strip().startswith("zscore("):
             inner = expression.strip()[len("zscore("):-1]
             parsed_inner = parse_and_replace(inner)
-            # zscore: (x - mean) / std，std为0时结果为NaN
-            code = f"({parsed_inner} - ({parsed_inner}).rolling(252, min_periods=1).mean()) / ({parsed_inner}).rolling(252, min_periods=1).std().replace(0, np.nan)"
+            # zscore: (x - mean) / std，使用safe_divide防止除零
+            code = f"safe_divide({parsed_inner} - ({parsed_inner}).rolling(252, min_periods=1).mean(), ({parsed_inner}).rolling(252, min_periods=1).std(), default=np.nan)"
         else:
             code = parse_and_replace(expression)
 
@@ -504,6 +507,7 @@ class FactorGeneratorService:
 import talib
 import pandas as pd
 import numpy as np
+from backend.utils.safe_math import safe_divide
 
 def calculate_factor(df):
     '''计算因子: {expression}'''
@@ -677,10 +681,11 @@ def calculate_factor(df):
                     continue
 
                 # 通过筛选
-                factor_info["ic"] = float(ic)
-                factor_info["ir"] = float(ir)
-                factor_info["valid_ratio"] = float(valid_ratio)
-                selected_factors.append(factor_info)
+                factor_info_copy = factor_info.copy()
+                factor_info_copy["ic"] = float(ic)
+                factor_info_copy["ir"] = float(ir)
+                factor_info_copy["valid_ratio"] = float(valid_ratio)
+                selected_factors.append(factor_info_copy)
 
         return selected_factors
 

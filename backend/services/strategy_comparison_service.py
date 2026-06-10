@@ -5,6 +5,7 @@ from typing import List, Dict, Optional
 import pandas as pd
 from scipy import stats
 from backend.services.strategy_registry import strategy_registry
+from backend.utils.safe_math import safe_divide
 
 
 class StrategyComparisonService:
@@ -91,8 +92,8 @@ class StrategyComparisonService:
 
         df = pd.DataFrame(metrics_list)
         df = df.set_index("strategy")
-        # 填充缺失值，避免后续分析因 NaN 出错
-        df = df.fillna(0.0)
+        # 将NaN转为None，避免0.0掩盖数据缺失（符合规则6）
+        df = df.where(df.notna(), None)
 
         return df
 
@@ -173,33 +174,23 @@ class StrategyComparisonService:
         """
         rankings = {}
 
-        # 按不同指标排名
-        # 年化收益率
-        rankings["annual_return"] = metrics_df["annual_return"].rank(
-            ascending=False
-        ).to_dict()
+        # 按不同指标排名（先检查列是否存在，避免KeyError）
+        for col in ["annual_return", "sharpe_ratio", "max_drawdown"]:
+            if col in metrics_df.columns:
+                ascending = col != "max_drawdown"
+                rankings[col] = metrics_df[col].rank(ascending=ascending).to_dict()
 
-        # 夏普比率
-        rankings["sharpe_ratio"] = metrics_df["sharpe_ratio"].rank(
-            ascending=False
-        ).to_dict()
-
-        # 最大回撤（越小越好）
-        rankings["max_drawdown"] = metrics_df["max_drawdown"].rank(
-            ascending=True
-        ).to_dict()
-
-        # 综合得分（简单平均）
+        # 综合得分（简单平均，仅基于已有指标排名）
         overall_scores = {}
 
         for strategy in metrics_df.index:
-            # 将每个策略的各个指标排名相加
-            rank_sum = (
-                rankings["annual_return"][strategy] +
-                rankings["sharpe_ratio"][strategy] +
-                rankings["max_drawdown"][strategy]
-            )
-            overall_scores[strategy] = rank_sum / 3
+            rank_sum = 0
+            rank_count = 0
+            for col, col_ranking in rankings.items():
+                if col != "overall" and strategy in col_ranking:
+                    rank_sum += col_ranking[strategy]
+                    rank_count += 1
+            overall_scores[strategy] = safe_divide(rank_sum, rank_count, default=0.0)
 
         # 按综合得分排名（得分越低越好）
         sorted_overall = sorted(overall_scores.items(), key=lambda x: x[1])

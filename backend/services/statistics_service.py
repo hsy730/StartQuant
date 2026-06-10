@@ -9,6 +9,7 @@ from scipy import stats
 from sklearn.preprocessing import PolynomialFeatures
 import warnings
 import logging
+import math
 
 from backend.utils.returns import calculate_future_returns
 from backend.utils.safe_math import safe_divide
@@ -47,12 +48,23 @@ class StatisticsService:
 
         if len(ic_clean) == 0:
             return {
-                "t_statistic": 0.0,
-                "p_value": 1.0,
+                "t_statistic": None,
+                "p_value": None,
                 "is_significant": False,
-                "mean_ic": 0.0,
+                "mean_ic": None,
+                "std_ic": None,
+                "confidence_interval": (None, None),
+            }
+
+        # 常数IC序列（std≈0）：ttest返回NaN，t.interval退化
+        if ic_clean.std() < 1e-10:
+            return {
+                "t_statistic": None,
+                "p_value": None,
+                "confidence_interval": (None, None),
+                "is_significant": False,
+                "mean_ic": float(ic_clean.mean()),
                 "std_ic": 0.0,
-                "confidence_interval": (0.0, 0.0),
             }
 
         with _suppress_scipy_warnings():
@@ -409,11 +421,11 @@ class StatisticsService:
 
                 if len(returns_clean) == 0:
                     results[quantile_name] = {
-                        "mean": 0.0,
-                        "std": 0.0,
-                        "annual_return": 0.0,
-                        "sharpe": 0.0,
-                        "win_rate": 0.0,
+                        "mean": None,
+                        "std": None,
+                        "annual_return": None,
+                        "sharpe": None,
+                        "win_rate": None,
                     }
                     continue
 
@@ -421,8 +433,8 @@ class StatisticsService:
                 std = returns_clean.std()
                 # 委托risk_metrics统一入口计算年化收益和Sharpe（符合规则2）
                 metrics = calculate_risk_metrics(returns_clean, risk_free_rate=risk_free_rate, annual_trading_days=annual_trading_days)
-                annual_return = metrics.get("annual_return") or 0.0
-                sharpe = metrics.get("sharpe_ratio") or 0.0
+                annual_return = metrics.get("annual_return")
+                sharpe = metrics.get("sharpe_ratio")
                 win_rate = (returns_clean > 0).mean()
 
                 results[quantile_name] = {
@@ -453,9 +465,15 @@ class StatisticsService:
         autocorrs = []
         for l in range(1, lag + 1):
             autocorr = ic_series.autocorr(lag=l)
-            autocorrs.append(autocorr)
+            if autocorr is not None and not (isinstance(autocorr, float) and math.isnan(autocorr)):
+                autocorrs.append(autocorr)
+
+        if not autocorrs:
+            mean_abs = None
+        else:
+            mean_abs = float(np.mean(np.abs(autocorrs)))
 
         return {
             "autocorrelations": autocorrs,
-            "mean_abs_autocorr": np.mean(np.abs(autocorrs)),
+            "mean_abs_autocorr": mean_abs,
         }

@@ -371,9 +371,8 @@ class FactorCorrelationService:
                     if f1 != f2 and isinstance(val, (int, float)):
                         if abs(val) < 1 and n_days > 3:
                             # Fisher z变换：对每日相关系数分别做z变换，再计算标准误
-                            # arctanh(mean(r)) ≠ mean(arctanh(r))，应先变换再取均值
-                            z_val = np.arctanh(val)
-                            # 正确做法：收集每日相关系数的z值，用std(z)/sqrt(n)作为均值的标准误
+                            # 必须保持一致：z_val和z_se都基于每日z值（Method B）
+                            # arctanh(mean(r)) ≠ mean(arctanh(r))，混用会导致检验偏差
                             if daily_pearson:
                                 daily_z = []
                                 for daily_corr_df in daily_pearson:
@@ -384,12 +383,15 @@ class FactorCorrelationService:
                                     except (KeyError, ValueError):
                                         continue
                                 if len(daily_z) >= 3:
+                                    z_val = np.mean(daily_z)
                                     z_se = np.std(daily_z, ddof=1) / np.sqrt(len(daily_z))
                                 else:
                                     # 不足3天有效数据，回退到经典公式
+                                    z_val = np.arctanh(val)
                                     z_se = 1 / np.sqrt(n_days - 3)
                             else:
                                 # 无每日数据，回退到经典公式
+                                z_val = np.arctanh(val)
                                 z_se = 1 / np.sqrt(n_days - 3)
                             p_value = 2 * (1 - scipy_stats.norm.cdf(abs(z_val) / z_se))
                             

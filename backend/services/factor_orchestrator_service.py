@@ -467,9 +467,46 @@ class FactorOrchestrator:
 
             # 收集多股票的因子值和收益
             if len(factor_data) >= 2:
-                # 多股票：使用横截面检测，保留横截面结构
+                # 多股票：使用横截面检测，需构造 factor_df 和 return_df
+                factor_records = []
+                return_records = []
+                for stock_code, df in factor_data.items():
+                    df_copy = df.copy()
+                    if factor_name not in df_copy.columns:
+                        continue
+                    if "close" not in df_copy.columns:
+                        continue
+                    # 计算未来收益率
+                    df_copy["return"] = df_copy["close"].pct_change().shift(-1)
+                    for date_idx, row in df_copy.iterrows():
+                        if pd.notna(row.get(factor_name)):
+                            factor_records.append({
+                                "date": date_idx,
+                                "stock_code": stock_code,
+                                factor_name: row[factor_name],
+                            })
+                        if pd.notna(row.get("return")):
+                            return_records.append({
+                                "date": date_idx,
+                                "stock_code": stock_code,
+                                "return": row["return"],
+                            })
+
+                if len(factor_records) < 50 or len(return_records) < 50:
+                    return PipelineStageResult(
+                        stage_name="lookahead_detection",
+                        status=PipelineStatus.WARNING,
+                        duration_seconds=time.time() - t0,
+                        result={"has_bias": False, "risk_level": "unknown", "reason": "横截面数据不足"},
+                        warnings=["横截面数据不足50条，无法可靠检测未来函数"],
+                    )
+
+                factor_df = pd.DataFrame(factor_records)
+                return_df = pd.DataFrame(return_records)
+
                 detection_result = lookahead_bias_detector.detect_cross_sectional(
-                    factor_data=factor_data,
+                    factor_df=factor_df,
+                    return_df=return_df,
                     factor_name=factor_name,
                 )
             else:

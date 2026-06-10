@@ -258,7 +258,7 @@ async def calculate_ic(request: ICAnalysisRequest):
 
         return {
             "success": True,
-            "data": simplified_result
+            "data": sanitize_dict(simplified_result)
         }
     except Exception as e:
         logger.error(f"IC分析失败: {str(e)}\n{traceback.format_exc()}")
@@ -642,16 +642,20 @@ async def enhanced_correlation_analysis(request: CorrelationAnalysisRequest):
         factor_panel_list = []
         for factor_name, factor_dict in all_factor_data.items():
             records = []
-            for stock_code, data in factor_dict.items():
-                if 'dates' in data and 'factor_values' in data:
-                    for date, value in zip(data['dates'], data['factor_values']):
-                        if value is not None:
-                            records.append({
-                                'date': pd.Timestamp(date),
-                                'asset': stock_code,
-                                factor_name: value
-                            })
-            
+            for stock_code, stock_df in factor_dict.items():
+                if not isinstance(stock_df, pd.DataFrame):
+                    continue
+                if factor_name not in stock_df.columns:
+                    continue
+                for date_idx, row in stock_df.iterrows():
+                    value = row[factor_name]
+                    if pd.notna(value):
+                        records.append({
+                            'date': pd.Timestamp(date_idx),
+                            'asset': stock_code,
+                            factor_name: value
+                        })
+
             if records:
                 factor_df = pd.DataFrame(records)
                 factor_df = factor_df.set_index(['date', 'asset'])

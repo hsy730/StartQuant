@@ -524,7 +524,7 @@ class AnalysisService:
         for factor_name, ic_s in ic_series.items():
             ic_mean = float(ic_s.mean())
             ic_std = float(ic_s.std()) if len(ic_s) > 1 else 0.0
-            ir = safe_ir(ic_mean, ic_std, default=0.0)
+            ir = safe_ir(ic_mean, ic_std, default=None)
 
             n = len(ic_s)
             t_stat = safe_divide(ic_mean * np.sqrt(n), ic_std, default=0.0) if n > 1 else 0.0
@@ -594,8 +594,11 @@ class AnalysisService:
                 min_periods = max(2, int(60 * 0.6))
                 rolling_ic = factor_masked.rolling(window=60, min_periods=min_periods).corr(return_masked)
                 # Rank IC: 使用per-window Spearman（全局rank+rolling Pearson是近似，不精确）
+                # 在lambda内先对齐factor和return，去除NaN后再调用spearmanr
                 rolling_rank_ic = factor_masked.rolling(window=60, min_periods=min_periods).apply(
-                    lambda x: spearmanr(x, return_masked.loc[x.index])[0] if len(x.dropna()) >= min_periods else np.nan,
+                    lambda x: (
+                        lambda vx, vy: spearmanr(vx, vy)[0] if len(vx) >= min_periods else np.nan
+                    )(x.dropna(), return_masked.loc[x.index].dropna().reindex(x.dropna().index).dropna()),
                     raw=False
                 )
             else:
@@ -609,8 +612,11 @@ class AnalysisService:
                     continue
                 rolling_ic = factor_clean.rolling(window=60).corr(return_clean)
                 # Rank IC: 使用per-window Spearman（全局rank+rolling Pearson是近似，不精确）
+                # 在lambda内先对齐factor和return，去除NaN后再调用spearmanr
                 rolling_rank_ic = factor_clean.rolling(window=60).apply(
-                    lambda x: spearmanr(x, return_clean.loc[x.index])[0] if len(x.dropna()) >= 2 else np.nan,
+                    lambda x: (
+                        lambda vx, vy: spearmanr(vx, vy)[0] if len(vx) >= 2 else np.nan
+                    )(x.dropna(), return_clean.loc[x.index].dropna().reindex(x.dropna().index).dropna()),
                     raw=False
                 )
 
@@ -628,7 +634,7 @@ class AnalysisService:
             primary_ic = rank_ic_series.get(factor_name, ic_s)
             ic_mean = primary_ic.mean()
             ic_std = primary_ic.std()
-            ir = safe_ir(ic_mean, ic_std, default=0.0)
+            ir = safe_ir(ic_mean, ic_std, default=None)
             stats = {
                 "IC均值": ic_mean, "IC标准差": ic_std, "IR": ir,
                 "IC>0占比": (primary_ic > 0).mean(), "IC绝对值均值": abs(primary_ic).mean(),
@@ -639,7 +645,7 @@ class AnalysisService:
             pearson_ic_s = ic_s
             stats["Pearson_IC均值"] = pearson_ic_s.mean()
             stats["Pearson_IC标准差"] = pearson_ic_s.std()
-            stats["Pearson_IR"] = safe_ir(pearson_ic_s.mean(), pearson_ic_s.std(), default=0.0)
+            stats["Pearson_IR"] = safe_ir(pearson_ic_s.mean(), pearson_ic_s.std(), default=None)
             ic_stats[factor_name] = stats
 
         result = {
@@ -800,10 +806,13 @@ class AnalysisService:
             min_periods = max(1, window // 4)
             rolling_mean = ic_s.rolling(window=window, min_periods=min_periods).mean()
             rolling_std = ic_s.rolling(window=window, min_periods=min_periods).std()
-            # 使用 safe_divide 统一处理除零，避免 *1e6 hack
-            ir = safe_divide(rolling_mean, rolling_std, default=np.nan)
-            # 当均值和标准差都接近0时（如IC恒为0），IR应为0而非NaN
-            # 语义：无信号无波动 → IR=0（无信息比率），而非NaN（不可计算）
+            # 使用 safe_divide 统一处理除零，default=None（Series中为NaN）
+            # 符合规则7.10：IR不可计算时返回None（NaN），而非0.0
+            ir = safe_divide(rolling_mean, rolling_std, default=None)
+            # 当均值和标准差都接近0时（如IC恒为0），IR=0是合理的
+            # 语义：无信号无波动 → IR=0（无信息比率），而非None（不可计算）
+            # 注意：当IC_mean显著非零但IC_std≈0时，safe_divide返回None（NaN），
+            # 表示IR不可计算（因子极其稳定），符合规则7.10
             both_near_zero = (rolling_mean.abs() < 1e-10) & (rolling_std.abs() < 1e-10)
             ir = ir.mask(both_near_zero, 0.0)
             rolling_ir[factor_name] = ir
@@ -1113,7 +1122,10 @@ class AnalysisService:
             return float(ic_s.mean())
         weights_normalized = normalize_weights(weights_series)
 
-        aligned_weights = weights_normalized.reindex(ic_s.index, fill_value=1.0 / len(ic_s))
+        aligned_weights = weights_normalized.reindex(ic_s.index, fill_value=0.0)
+        weight_sum = aligned_weights.sum()
+        if weight_sum > 0:
+            aligned_weights = aligned_weights / weight_sum
 
         weighted_vals = ic_s * aligned_weights
         return float(weighted_vals.sum())

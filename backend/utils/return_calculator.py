@@ -28,9 +28,10 @@ def calculate_future_return(
     prices = df[price_column]
 
     # MultiIndex (date, asset) 下需按资产分组计算，否则 pct_change 会跨资产比较
+    # 使用 transform 而非 apply+droplevel，保留原始 MultiIndex 结构
     if isinstance(df.index, pd.MultiIndex):
-        return prices.groupby(level=1).apply(
+        return prices.groupby(level=1).transform(
             lambda s: s.pct_change(period).shift(-period)
-        ).droplevel(0)
+        )
 
     return prices.pct_change(period).shift(-period)

@@ -142,17 +142,27 @@ class FormulaCompilerService:
                     # 用户可通过第二个参数选择: 0=macd, 1=signal, 2=histogram
                     macd_idx = "0"  # default: MACD line
                     if len(compiled_args) > 1:
-                        # Try to parse the second argument as an integer index
                         try:
                             idx = int(compiled_args[1].strip().strip('"').strip("'"))
+                            if idx not in (0, 1, 2):
+                                raise ValueError(f"MACD索引必须为0(macd), 1(signal), 2(hist)，当前为{idx}")
                             macd_idx = str(idx)
-                        except (ValueError, AttributeError):
+                        except ValueError as e:
+                            if "MACD索引" in str(e):
+                                raise
                             macd_idx = "0"
                     return f"MACD({compiled_args[0]}, fastperiod=12, slowperiod=26, signalperiod=9)[{macd_idx}]"
                 elif func_name == "BBANDS":
                     # TA-Lib BBANDS返回(upperband, middleband, lowerband)
-                    # [1] = middleband（中轨），返回值顺序已在注释中明确标注（规则4）
-                    return f"BBANDS({compiled_args[0]}, timeperiod=20)[1]  # TA-Lib返回(upper,middle,lower), [1]=middleband"
+                    # 用户可通过第二个参数选择: 0=upper, 1=middle, 2=lower
+                    # 返回值顺序已在注释中明确标注（规则4）
+                    if len(compiled_args) > 1:
+                        idx = int(compiled_args[1].strip().strip('"').strip("'"))
+                        if idx not in (0, 1, 2):
+                            raise ValueError(f"BBANDS索引必须为0(upper), 1(middle), 2(lower)，当前为{idx}")
+                    else:
+                        idx = 1  # default to middle band
+                    return f"BBANDS({compiled_args[0]}, timeperiod=20)[{idx}]"
                 elif func_name == "ATR":
                     # TA-Lib ATR需要(high, low, close, timeperiod=N)三个价格序列
                     if len(compiled_args) >= 4:
@@ -171,7 +181,7 @@ class FormulaCompilerService:
             elif func_name == "zscore":
                 # 使用滚动窗口zscore避免前视偏差，默认窗口20
                 window = compiled_args[1] if len(compiled_args) > 1 else 20
-                return f'({compiled_args[0]} - {compiled_args[0]}.rolling({window}).mean()) / {compiled_args[0]}.rolling({window}).std().replace(0, np.nan)'
+                return f'backend.utils.safe_math.safe_divide({compiled_args[0]} - {compiled_args[0]}.rolling({window}).mean(), {compiled_args[0]}.rolling({window}).std(), default=np.nan)'
             else:
                 return f"{func_name}({', '.join(compiled_args)})"
 
@@ -181,14 +191,31 @@ class FormulaCompilerService:
             left = self._compile_node(node["left"])
             right = self._compile_node(node["right"])
 
-            return f"({left} {operator} {right})"
+            if operator == "/":
+                return f"backend.utils.safe_math.safe_divide({left}, {right}, default=np.nan)"
+            else:
+                return f"({left} {operator} {right})"
 
         else:
             raise ValueError(f"未知的节点类型: {node_type}")
 
+    # 禁止调用的函数名（危险内置函数）
+    _FORBIDDEN_FUNCTIONS = {
+        "exec", "eval", "compile", "open", "__import__", "input",
+        "globals", "locals", "vars", "dir", "getattr", "hasattr",
+        "delattr", "setattr", "breakpoint",
+    }
+
+    # 禁止访问的属性名（防止沙箱逃逸）
+    _FORBIDDEN_ATTRS = {
+        "__builtins__", "__import__", "__class__", "__bases__", "__subclasses__",
+        "__globals__", "__code__", "__closure__", "__dict__", "__mro__",
+        "__getattribute__", "__setattr__", "delattr",
+    }
+
     def validate_formula(self, formula_code: str) -> Tuple[bool, str]:
         """
-        验证公式代码（语法 + 函数名白名单校验）
+        验证公式代码（语法 + 函数名白名单校验 + 安全性检查）
 
         Args:
             formula_code: 公式代码
@@ -197,10 +224,33 @@ class FormulaCompilerService:
             (是否有效, 错误消息)
         """
         try:
-            # 尝试编译代码
             if formula_code.strip().startswith("def "):
-                # 函数形式
-                compile(formula_code, '<string>', 'exec')
+                # 函数形式：语法检查 + AST安全校验
+                tree = ast.parse(formula_code, mode='exec')
+                # 校验函数体中的安全约束
+                for node in ast.walk(tree):
+                    # 检查函数调用是否安全
+                    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+                        func_name = node.func.id
+                        if func_name in self._FORBIDDEN_FUNCTIONS:
+                            return False, f"禁止调用的函数: {func_name}"
+                        if func_name not in self.ALLOWED_FUNCTIONS and func_name not in (
+                            # 函数模式允许的额外安全名称
+                            "abs", "min", "max", "len", "sum", "range",
+                            "float", "int", "bool", "str", "list", "tuple", "dict", "set",
+                            "enumerate", "zip", "round", "pow", "sorted", "reversed",
+                            "map", "filter", "any", "all",
+                            "isinstance",
+                        ):
+                            return False, f"不允许的函数: {func_name}，仅支持: {sorted(self.ALLOWED_FUNCTIONS)}"
+                    # 检查属性访问是否安全
+                    if isinstance(node, ast.Attribute):
+                        if node.attr in self._FORBIDDEN_ATTRS or node.attr.startswith('_'):
+                            return False, f"禁止访问的属性: {node.attr}"
+                    # 检查变量名是否安全
+                    if isinstance(node, ast.Name):
+                        if node.id in self._FORBIDDEN_FUNCTIONS or node.id in self._FORBIDDEN_ATTRS:
+                            return False, f"禁止访问: {node.id}"
             else:
                 # 表达式形式
                 # 只验证语法，不执行
@@ -211,6 +261,14 @@ class FormulaCompilerService:
                         func_name = node.func.id
                         if func_name not in self.ALLOWED_FUNCTIONS:
                             return False, f"不允许的函数: {func_name}，仅支持: {sorted(self.ALLOWED_FUNCTIONS)}"
+                    # 检查属性访问是否安全
+                    if isinstance(node, ast.Attribute):
+                        if node.attr in self._FORBIDDEN_ATTRS or node.attr.startswith('_'):
+                            return False, f"禁止访问的属性: {node.attr}"
+                    # 检查变量名是否安全
+                    if isinstance(node, ast.Name):
+                        if node.id in self._FORBIDDEN_FUNCTIONS or node.id in self._FORBIDDEN_ATTRS:
+                            return False, f"禁止访问: {node.id}"
 
             return True, "公式验证通过"
 

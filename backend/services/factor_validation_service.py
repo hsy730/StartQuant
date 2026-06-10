@@ -1,15 +1,32 @@
 """
 因子验证服务 - 验证因子质量（含未来函数检测）
+
+多股票场景下，IC和换手率计算委托alphalens-reloaded（符合开源库优先原则和规则7.1/7.2/7.12），
+单股票场景保留自实现作为回退。
 """
+import logging
 from typing import Dict, Optional
 import pandas as pd
 import numpy as np
 from scipy import stats
+from scipy.stats import spearmanr
 from backend.services.lookahead_bias_detector import (
     lookahead_bias_detector,
     BiasRiskLevel,
 )
-from backend.utils.safe_math import safe_ir
+from backend.utils.safe_math import safe_ir, safe_divide
+
+logger = logging.getLogger(__name__)
+
+
+def _to_python_float(value, default=None):
+    """转换numpy类型为Python原生类型"""
+    if value is None or (isinstance(value, float) and (np.isnan(value) or np.isinf(value))):
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
 
 
 class FactorValidationService:
@@ -34,6 +51,8 @@ class FactorValidationService:
         factor_values: pd.Series,
         return_values: pd.Series,
         existing_factors: Optional[Dict[str, pd.Series]] = None,
+        cross_sectional_panel: Optional[pd.DataFrame] = None,
+        factor_data: Optional[pd.DataFrame] = None,
     ) -> Dict:
         """
         全面验证因子质量
@@ -42,6 +61,10 @@ class FactorValidationService:
             factor_values: 因子值序列
             return_values: 收益率序列
             existing_factors: 已有因子字典（用于相关性检测）
+            cross_sectional_panel: 横截面面板数据（MultiIndex: date×asset），
+                多股票场景下提供以计算正确的横截面换手率
+            factor_data: alphalens格式的因子数据（MultiIndex: date×asset），
+                传入时IC和换手率计算委托alphalens（推荐）
 
         Returns:
             验证结果
@@ -58,15 +81,23 @@ class FactorValidationService:
             "score": 0.0,
         }
 
-        results["ic_validation"] = self._validate_ic(factor_values, return_values)
+        # IC验证：优先使用alphalens（多股票场景），回退到自实现（单股票场景）
+        results["ic_validation"] = self._validate_ic(
+            factor_values, return_values, factor_data=factor_data
+        )
 
         results["rank_ic_validation"] = self._validate_rank_ic(factor_values, return_values)
 
-        # 2. IR验证
-        results["ir_validation"] = self._validate_ir(factor_values, return_values)
+        # IR验证：优先使用alphalens IC序列
+        results["ir_validation"] = self._validate_ir(
+            factor_values, return_values, factor_data=factor_data
+        )
 
-        # 3. 换手率验证
-        results["turnover_validation"] = self._validate_turnover(factor_values)
+        # 换手率验证：优先使用alphalens，回退到自实现
+        results["turnover_validation"] = self._validate_turnover(
+            factor_values, cross_sectional_panel=cross_sectional_panel,
+            factor_data=factor_data
+        )
 
         # 4. 稳定性验证
         results["stability_validation"] = self._validate_stability(factor_values)
@@ -110,19 +141,76 @@ class FactorValidationService:
     def _validate_ic(
         self,
         factor_values: pd.Series,
-        return_values: pd.Series
+        return_values: pd.Series,
+        factor_data: Optional[pd.DataFrame] = None,
     ) -> Dict:
         """
         验证IC
 
+        多股票场景下委托alphalens计算横截面Spearman IC（规则7.1/7.12），
+        单股票场景回退到scipy.stats.spearmanr。
+
         Args:
             factor_values: 因子值
             return_values: 收益率
+            factor_data: alphalens格式的因子数据（可选）
 
         Returns:
             IC验证结果
         """
-        # 对齐数据
+        # 优先使用alphalens横截面IC（多股票场景）
+        if factor_data is not None and isinstance(factor_data.index, pd.MultiIndex):
+            num_assets = factor_data.index.get_level_values("asset").nunique()
+            if num_assets >= 2:
+                try:
+                    import alphalens
+                    import warnings
+                    with warnings.catch_warnings():
+                        warnings.simplefilter("ignore")
+                        ic_df = alphalens.performance.factor_information_coefficient(
+                            factor_data
+                        )
+                    # 取1D周期的IC序列
+                    ic_col = [c for c in ic_df.columns if "1" in str(c)]
+                    if ic_col:
+                        ic_series = ic_df[ic_col[0]].dropna()
+                    else:
+                        ic_series = ic_df.iloc[:, 0].dropna()
+
+                    if len(ic_series) == 0:
+                        return {"passed": False, "ic": None, "message": "alphalens IC序列为空"}
+
+                    ic = float(ic_series.mean())
+                    n = len(ic_series)
+                    ic_std = float(ic_series.std()) if n > 1 else 0.0
+
+                    # 基于IC序列的t检验（比单期Fisher z更可靠）
+                    if n > 1 and ic_std > 1e-10:
+                        t_stat = safe_divide(ic, ic_std / np.sqrt(n), default=0.0)
+                        p_value = float(2 * (1 - stats.t.cdf(abs(t_stat), df=n - 1)))
+                    else:
+                        t_stat = 0.0
+                        p_value = 1.0
+
+                    is_significant = p_value < 0.05
+                    passed = abs(ic) >= self.ic_threshold and is_significant
+
+                    return {
+                        "passed": passed,
+                        "ic": ic,
+                        "ic_std": _to_python_float(ic_std),
+                        "t_statistic": float(t_stat),
+                        "p_value": float(p_value),
+                        "is_significant": is_significant,
+                        "threshold": self.ic_threshold,
+                        "method": "alphalens横截面Spearman IC",
+                        "n_dates": n,
+                        "message": f"IC={ic:.4f}(std={ic_std:.4f}) t={t_stat:.4f} p={p_value:.4f} {'通过' if passed else '未通过'} (阈值±{self.ic_threshold}, 显著性p<0.05)",
+                    }
+                except Exception as e:
+                    logger.warning(f"alphalens IC计算失败，回退到自实现: {e}")
+
+        # 单股票回退：使用scipy.stats.spearmanr（符合规则7.12）
         aligned_data = pd.DataFrame({
             "factor": factor_values,
             "return": return_values
@@ -135,19 +223,20 @@ class FactorValidationService:
                 "message": "数据量不足",
             }
 
-        # 计算IC
-        ic = aligned_data["factor"].corr(aligned_data["return"])
+        ic, _ = spearmanr(aligned_data["factor"], aligned_data["return"])
+        if np.isnan(ic):
+            return {
+                "passed": False,
+                "ic": None,
+                "message": "IC计算结果为NaN",
+            }
 
         n = len(aligned_data)
-        if abs(ic) >= 1.0:
-            t_stat = float('inf') if ic > 0 else float('-inf')
-            p_value = 0.0
-        else:
-            t_stat = ic * np.sqrt(n - 2) / np.sqrt(1 - ic ** 2)
-            p_value = 2 * (1 - stats.t.cdf(abs(t_stat), df=n - 2))
+        ic_clipped = np.clip(ic, -0.9999, 0.9999)
+        t_stat = ic_clipped * np.sqrt(n - 2) / np.sqrt(1 - ic_clipped ** 2)
+        p_value = 2 * (1 - stats.t.cdf(abs(t_stat), df=n - 2))
 
         is_significant = p_value < 0.05
-
         passed = abs(ic) >= self.ic_threshold and is_significant
 
         return {
@@ -157,6 +246,7 @@ class FactorValidationService:
             "p_value": float(p_value),
             "is_significant": is_significant,
             "threshold": self.ic_threshold,
+            "method": "scipy单期Spearman IC（单股票回退）",
             "message": f"IC={ic:.4f} t={t_stat:.4f} p={p_value:.4f} {'通过' if passed else '未通过'} (阈值±{self.ic_threshold}, 显著性p<0.05)",
         }
 
@@ -204,22 +294,79 @@ class FactorValidationService:
     def _validate_ir(
         self,
         factor_values: pd.Series,
-        return_values: pd.Series
+        return_values: pd.Series,
+        factor_data: Optional[pd.DataFrame] = None,
     ) -> Dict:
         """
         验证IR
 
-        Phase 5: 使用 pandas rolling().corr() 向量化计算替代 Python 循环，
-        性能提升 ~10-50x。
+        多股票场景下使用alphalens横截面IC序列计算IR（规则7.1/7.12），
+        单股票场景回退到滚动Spearman IC。
 
         Args:
             factor_values: 因子值
             return_values: 收益率
+            factor_data: alphalens格式的因子数据（可选）
 
         Returns:
             IR验证结果
         """
-        # 对齐数据
+        # 优先使用alphalens IC序列计算IR（多股票场景）
+        if factor_data is not None and isinstance(factor_data.index, pd.MultiIndex):
+            num_assets = factor_data.index.get_level_values("asset").nunique()
+            if num_assets >= 2:
+                try:
+                    import alphalens
+                    import warnings
+                    with warnings.catch_warnings():
+                        warnings.simplefilter("ignore")
+                        ic_df = alphalens.performance.factor_information_coefficient(
+                            factor_data
+                        )
+                    ic_col = [c for c in ic_df.columns if "1" in str(c)]
+                    if ic_col:
+                        ic_series = ic_df[ic_col[0]].dropna()
+                    else:
+                        ic_series = ic_df.iloc[:, 0].dropna()
+
+                    if len(ic_series) >= 2:
+                        ic_mean = float(ic_series.mean())
+                        ic_std = float(ic_series.std())
+
+                        if ic_std < 1e-10:
+                            ir = None  # 不可计算（规则7.10）
+                        else:
+                            ir = safe_ir(ic_mean, ic_std, default=None)
+                            if ir is not None:
+                                ir = min(ir, 5.0)
+
+                        # t检验
+                        n = len(ic_series)
+                        if n > 1 and ic_std > 1e-10:
+                            t_stat = safe_divide(ic_mean, ic_std / np.sqrt(n), default=0.0)
+                            p_value = float(2 * (1 - stats.t.cdf(abs(t_stat), df=n - 1)))
+                        else:
+                            t_stat = 0.0
+                            p_value = 1.0
+
+                        passed = ir is not None and ir >= self.ir_threshold
+
+                        return {
+                            "passed": passed,
+                            "ir": float(ir) if ir is not None else None,
+                            "ic_mean": ic_mean,
+                            "ic_std": ic_std,
+                            "t_statistic": float(t_stat),
+                            "p_value": float(p_value),
+                            "threshold": self.ir_threshold,
+                            "method": "alphalens横截面IC序列IR",
+                            "n_dates": n,
+                            "message": f"IR={'不可计算' if ir is None else f'{ir:.4f}'} {'通过' if passed else '未通过'} (阈值{self.ir_threshold})",
+                        }
+                except Exception as e:
+                    logger.warning(f"alphalens IR计算失败，回退到自实现: {e}")
+
+        # 单股票回退：滚动Spearman IC
         aligned_data = pd.DataFrame({
             "factor": factor_values,
             "return": return_values
@@ -232,67 +379,157 @@ class FactorValidationService:
                 "message": "数据量不足",
             }
 
-        # Phase 5: 向量化滚动IC计算（替代 O(N*W) Python 循环）
         window = 20
         min_periods = 10
 
+        def _rolling_spearman_ic(x):
+            """滚动窗口内计算Spearman IC"""
+            y_aligned = aligned_data["return"].loc[x.index]
+            valid = x.notna() & y_aligned.notna()
+            if valid.sum() < min_periods:
+                return np.nan
+            return spearmanr(x[valid], y_aligned[valid])[0]
+
         rolling_ic = aligned_data["factor"].rolling(
             window=window, min_periods=min_periods
-        ).corr(aligned_data["return"])
+        ).apply(_rolling_spearman_ic, raw=False)
 
-        # 计算IR（IC均值 / IC标准差）
         ic_mean = rolling_ic.mean()
         ic_std = rolling_ic.std()
 
-        if ic_std > 0:
-            ir = safe_ir(float(ic_mean), float(ic_std), default=0.0)
-            ir = min(ir, 5.0)
+        if ic_std < 1e-10:
+            ir = None
         else:
-            ir = 0.0
+            ir = safe_ir(float(ic_mean), float(ic_std), default=None)
+            if ir is not None:
+                ir = min(ir, 5.0)
 
-        # 判断是否通过
-        passed = ir >= self.ir_threshold
+        passed = ir is not None and ir >= self.ir_threshold
 
         return {
             "passed": passed,
-            "ir": float(ir),
+            "ir": float(ir) if ir is not None else None,
             "ic_mean": float(ic_mean),
             "ic_std": float(ic_std),
             "threshold": self.ir_threshold,
-            "message": f"IR={ir:.4f} {'通过' if passed else '未通过'} (阈值{self.ir_threshold})",
+            "method": "滚动Spearman IC（单股票回退）",
+            "message": f"IR={'不可计算' if ir is None else f'{ir:.4f}'} {'通过' if passed else '未通过'} (阈值{self.ir_threshold})",
         }
 
     def _validate_turnover(
         self,
-        factor_values: pd.Series
+        factor_values: pd.Series,
+        cross_sectional_panel: Optional[pd.DataFrame] = None,
+        factor_data: Optional[pd.DataFrame] = None,
     ) -> Dict:
         """
         验证换手率
 
+        优先使用alphalens quantile_turnover（横截面分位数换手率，规则7.2），
+        回退到自实现横截面分位数或时序分位数。
+
         Args:
             factor_values: 因子值
+            cross_sectional_panel: 横截面面板数据（回退方案）
+            factor_data: alphalens格式的因子数据（推荐）
 
         Returns:
             换手率验证结果
         """
-        # 计算因子排名变化
-        factor_rank = factor_values.rolling(
-            window=252, min_periods=1
-        ).rank(pct=True)
+        # 优先使用alphalens换手率（多股票场景，规则7.2）
+        if factor_data is not None and isinstance(factor_data.index, pd.MultiIndex):
+            num_assets = factor_data.index.get_level_values("asset").nunique()
+            if num_assets >= 2:
+                try:
+                    import alphalens
+                    import warnings
+                    with warnings.catch_warnings():
+                        warnings.simplefilter("ignore")
+                        # alphalens分位数换手率：基于横截面分位数桶变化
+                        turnover_df = alphalens.performance.quantile_turnover(
+                            factor_data['factor_quantile'],
+                            quantile=factor_data['factor_quantile'].max()
+                        )
+                        # 因子排名自相关（换手率的互补指标）
+                        autocorr_df = alphalens.performance.factor_rank_autocorrelation(
+                            factor_data
+                        )
 
-        # 计算换手率（排名变化的比例）
-        rank_change = factor_rank.diff().abs()
-        turnover = rank_change.mean()
+                    # 提取1D周期的换手率均值
+                    if isinstance(turnover_df, pd.DataFrame):
+                        turnover_col = [c for c in turnover_df.columns if "1" in str(c)]
+                        if turnover_col:
+                            turnover_series = turnover_df[turnover_col[0]].dropna()
+                        else:
+                            turnover_series = turnover_df.iloc[:, 0].dropna()
+                    elif isinstance(turnover_df, pd.Series):
+                        turnover_series = turnover_df.dropna()
+                    else:
+                        turnover_series = pd.Series(dtype=float)
 
-        # 判断是否通过
+                    turnover = float(turnover_series.mean()) if len(turnover_series) > 0 else 0.0
+
+                    # 自相关
+                    if isinstance(autocorr_df, pd.DataFrame):
+                        ac_col = [c for c in autocorr_df.columns if "1" in str(c)]
+                        if ac_col:
+                            autocorr_series = autocorr_df[ac_col[0]].dropna()
+                        else:
+                            autocorr_series = autocorr_df.iloc[:, 0].dropna()
+                    elif isinstance(autocorr_df, pd.Series):
+                        autocorr_series = autocorr_df.dropna()
+                    else:
+                        autocorr_series = pd.Series(dtype=float)
+
+                    autocorr = float(autocorr_series.mean()) if len(autocorr_series) > 0 else None
+
+                    passed = turnover <= self.turnover_threshold
+
+                    return {
+                        "passed": passed,
+                        "turnover": turnover,
+                        "autocorrelation": _to_python_float(autocorr),
+                        "threshold": self.turnover_threshold,
+                        "method": "alphalens横截面分位数换手率",
+                        "message": f"换手率={turnover:.4f} 自相关={_to_python_float(autocorr)} {'通过' if passed else '未通过'} (阈值{self.turnover_threshold})",
+                    }
+                except Exception as e:
+                    logger.warning(f"alphalens换手率计算失败，回退到自实现: {e}")
+
+        # 回退方案1：自实现横截面分位数换手率
+        n_bins = 5
+        if cross_sectional_panel is not None and isinstance(cross_sectional_panel.index, pd.MultiIndex):
+            factor_name = factor_values.name or "factor"
+            if factor_name in cross_sectional_panel.columns:
+                panel = cross_sectional_panel[[factor_name]].dropna()
+                factor_bins = panel.groupby(level=0)[factor_name].transform(
+                    lambda x: pd.cut(x.rank(pct=True), bins=n_bins, labels=False)
+                )
+                rank_change = (factor_bins != factor_bins.groupby(level=1).shift(1)).astype(float)
+                turnover = rank_change.dropna().mean()
+            else:
+                turnover = self._time_series_turnover(factor_values, n_bins)
+        else:
+            # 回退方案2：单股票时序分位数换手率
+            turnover = self._time_series_turnover(factor_values, n_bins)
+
         passed = turnover <= self.turnover_threshold
 
         return {
             "passed": passed,
             "turnover": float(turnover),
             "threshold": self.turnover_threshold,
+            "method": "自实现分位数换手率（回退）",
             "message": f"换手率={turnover:.4f} {'通过' if passed else '未通过'} (阈值{self.turnover_threshold})",
         }
+
+    @staticmethod
+    def _time_series_turnover(factor_values: pd.Series, n_bins: int = 5) -> float:
+        """单股票时序分位数换手率计算"""
+        factor_ranks = factor_values.rank(pct=True)
+        factor_bins = pd.cut(factor_ranks, bins=n_bins, labels=False)
+        rank_change = (factor_bins != factor_bins.shift(1)).astype(float)
+        return rank_change.mean()
 
     def _validate_stability(
         self,
@@ -423,7 +660,7 @@ class FactorValidationService:
             score += min(rank_ic_abs * 300, 25)
 
         ir_result = validation_results["ir_validation"]
-        if ir_result["passed"]:
+        if ir_result["passed"] and ir_result["ir"] is not None:
             ir = ir_result["ir"]
             score += min(ir * 20, 20)
 

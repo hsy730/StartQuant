@@ -299,8 +299,10 @@ class PortfolioAnalysisService:
             }
 
         # 预处理因子收益率，处理 NaN 和 Inf 值
+        # NaN 不填充为0.0（0.0在Z-score空间意味着"平均水平"，严重误导优化）
+        # 先前向填充（保留时间序列连续性），再删除剩余NaN
         factor_returns = factor_returns.replace([np.inf, -np.inf], np.nan)
-        factor_returns = factor_returns.fillna(0.0)
+        factor_returns = factor_returns.ffill().dropna()
 
         n_factors = len(factor_returns.columns)
 
@@ -313,41 +315,33 @@ class PortfolioAnalysisService:
             weights = pd.Series(1.0 / n_factors, index=factor_returns.columns)
             extra_info["note"] = "等权重分配"
 
-        # 2. IC加权（基于因子值与收益率的Spearman相关系数）
+        # 2. IC加权 — 委托WeightOptimizer统一入口（规则2/7.13）
         elif method == "ic_weight":
-            from scipy.stats import spearmanr
+            from backend.services.weight_optimizer_service import WeightOptimizer
+            optimizer = WeightOptimizer()
 
             # 获取因子值数据（kwargs中传入）
             factor_values = kwargs.get("factor_values", None)
+            factor_data_dict = kwargs.get("factor_data_dict", None)
 
-            # 计算每个因子的IC（因子值与收益率的Spearman相关系数）
-            ic_values = {}
-            for factor in factor_returns.columns:
-                if factor_values is not None and factor in factor_values.columns:
-                    valid = factor_returns[factor].dropna().index.intersection(
-                        factor_values[factor].dropna().index
-                    )
-                    if len(valid) >= 10:
-                        ic, _ = spearmanr(
-                            factor_values[factor].loc[valid],
-                            factor_returns[factor].loc[valid]
-                        )
-                        ic_values[factor] = abs(ic) if not np.isnan(ic) else 0.0
-                    else:
-                        ic_values[factor] = 0.0
-                else:
-                    # 无因子值数据时，无法计算真实IC，设为0（归一化后等权）
-                    logger.warning(f"因子 '{factor}' 缺少因子值数据，无法计算IC，将使用等权分配")
-                    ic_values[factor] = 0.0
-
-            ic_series = pd.Series(ic_values)
-            total_ic = ic_series.sum()
-            if total_ic > 0:
-                weights = (ic_series / total_ic)
+            # 构建factor_values字典格式
+            if factor_values is not None and isinstance(factor_values, pd.DataFrame):
+                fv_dict = {col: factor_values[col] for col in factor_values.columns}
             else:
-                weights = pd.Series(1.0 / n_factors, index=factor_returns.columns)
+                fv_dict = {col: pd.Series(dtype=float) for col in factor_returns.columns}
 
-            extra_info["ic_values"] = ic_values
+            # 使用统一入口计算IC加权权重
+            result = optimizer.calculate_weights(
+                factor_values=fv_dict,
+                factor_names=list(factor_returns.columns),
+                method="ic_weight",
+                returns=None,  # portfolio场景下使用因子收益率
+                factor_data_dict=factor_data_dict,
+            )
+            weights = pd.Series(result["weights"])
+            extra_info["ic_values"] = {
+                k: v for k, v in result["weights"].items()
+            }
 
         # 3. 风险平价 — 使用HRPOpt（层次风险平价，考虑因子间相关性）
         elif method == "risk_parity":
@@ -426,6 +420,8 @@ class PortfolioAnalysisService:
         # 组合方差 = w' * Σ * w
         cov_matrix = factor_returns.cov() * 252  # 年化协方差矩阵
         portfolio_variance = np.dot(weights.T, np.dot(cov_matrix.values, weights))
+        # 数值精度保护：方差可能因浮点误差略小于0，截断到0
+        portfolio_variance = max(0.0, portfolio_variance)
         weighted_volatility = np.sqrt(portfolio_variance)
 
         # 计算夏普比率（不可计算时返回None，符合规则6）

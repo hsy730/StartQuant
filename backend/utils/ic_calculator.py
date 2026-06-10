@@ -7,6 +7,7 @@ TODO: 逐步迁移各服务中的IC计算到此处
 import numpy as np
 import pandas as pd
 from typing import Optional
+from scipy.stats import spearmanr
 
 
 def calculate_ic(
@@ -72,10 +73,25 @@ def calculate_rolling_ic(
         return pd.Series(dtype=float)
 
     if method == "spearman":
-        # Spearman相关 = 两个变量排名的Pearson相关
-        # 必须对factor和returns都做排名，而非只对returns排名
-        factor_rank = aligned["factor"].rank()
-        returns_rank = aligned["returns"].rank()
-        return factor_rank.rolling(window).corr(returns_rank)
+        # 逐窗口计算Spearman相关（全局rank+rolling Pearson不等于per-window Spearman）
+        min_periods = max(2, window // 2)
+
+        def _rolling_spearman(x):
+            valid_x = x.dropna()
+            if len(valid_x) < min_periods:
+                return np.nan
+            y = aligned["returns"].loc[x.index]
+            valid_y = y.reindex(valid_x.index).dropna()
+            # 重新对齐：只保留两个序列都有效的位置
+            common_idx = valid_x.index.intersection(valid_y.index)
+            if len(common_idx) < min_periods:
+                return np.nan
+            vx = valid_x.loc[common_idx]
+            vy = valid_y.loc[common_idx]
+            return spearmanr(vx, vy)[0]
+
+        return aligned["factor"].rolling(window, min_periods=min_periods).apply(
+            _rolling_spearman, raw=False
+        )
     else:
         return aligned["factor"].rolling(window).corr(aligned["returns"])

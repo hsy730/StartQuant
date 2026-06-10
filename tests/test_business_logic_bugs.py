@@ -574,7 +574,7 @@ class TestSingleStockICSpearman:
 class TestFactorEffectivenessCrossSectionalSpearman:
     """Bug #16: factor_effectiveness_service: 横截面IC应使用spearmanr"""
 
-    @pytest.mark.xfail(reason="Bug #16尚未修复：_calculate_cross_sectional_ic仍使用pearsonr", strict=True)
+    # Bug #16已修复：_calculate_cross_sectional_ic已使用spearmanr
     def test_cross_sectional_ic_should_use_spearmanr(self):
         """横截面IC计算应使用scipy.stats.spearmanr"""
         from backend.services.factor_effectiveness_service import FactorEffectivenessService

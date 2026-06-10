@@ -300,8 +300,8 @@ class LookaheadBiasDetector:
 
             # 计算当日分层收益差
             try:
-                q5_ret = ret[fv.rank(pct=True) >= 0.8].mean()
-                q1_ret = ret[fv.rank(pct=True) <= 0.2].mean()
+                q5_ret = ret_valid[fv_valid.rank(pct=True) >= 0.8].mean()
+                q1_ret = ret_valid[fv_valid.rank(pct=True) <= 0.2].mean()
                 if pd.notna(q5_ret) and pd.notna(q1_ret):
                     daily_spreads.append(q5_ret - q1_ret)
             except Exception as e:

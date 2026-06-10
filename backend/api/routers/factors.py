@@ -13,28 +13,56 @@ router = APIRouter()
 
 def _validate_expression_safety(expression: str) -> bool:
     """验证因子表达式安全性，防止代码注入"""
+    # 允许的名称白名单（变量名、函数名等）
+    ALLOWED_NAMES = {
+        # 安全的内置函数
+        'abs', 'max', 'min', 'sum', 'len', 'log', 'exp', 'sqrt', 'sign',
+        'round', 'pow', 'int', 'float', 'bool', 'str',
+        # 数据源变量
+        'open', 'high', 'low', 'close', 'volume', 'amount',
+        'C', 'O', 'H', 'L', 'V', 'CLOSE', 'OPEN', 'HIGH', 'LOW', 'VOL', 'VWAP',
+        # 库别名
+        'np', 'pd', 'df',
+        # 安全工具
+        'safe_divide',
+        # TALib 指标
+        'SMA', 'MA', 'EMA', 'RSI', 'MACD', 'ADX', 'CCI', 'ATR', 'BBANDS', 'OBV',
+        'STOCH', 'STOCHRSI', 'WILLR', 'KAMA', 'ROC', 'MOM',
+        # 麦语言函数
+        'REF', 'HHV', 'LLV', 'AVE', 'STD', 'COUNT', 'EVERY', 'EXIST',
+        'CROSS', 'LONGCROSS', 'UP', 'DOWN', 'IF', 'BETWEEN',
+        'BARSLAST', 'CONST', 'TSRANK', 'CORR', 'COV', 'DELTA',
+        'SIGN', 'SIGNEDPOWER', 'RETURNS', 'TS_PRODUCT', 'TS_ARGMAX', 'TS_ARGMIN',
+        'SCALE', 'DECAY_LINEAR',
+        # 统计函数
+        'mean', 'median', 'rank', 'zscore',
+    }
     try:
         tree = ast.parse(expression, mode='eval')
-        # 只允许安全节点
+        # 只允许安全节点（注意：ast.Name 不在此列表中，需单独校验）
         allowed_nodes = (
             ast.Expression, ast.BinOp, ast.UnaryOp, ast.Compare,
-            ast.Call, ast.Attribute, ast.Name, ast.Constant, ast.Num,
+            ast.Call, ast.Attribute, ast.Constant, ast.Num,
             ast.Str, ast.Load, ast.Add, ast.Sub, ast.Mult, ast.Div,
             ast.Pow, ast.Mod, ast.USub, ast.UAdd, ast.And, ast.Or,
             ast.Eq, ast.NotEq, ast.Lt, ast.LtE, ast.Gt, ast.GtE,
             ast.Subscript, ast.Index,
         )
         for node in ast.walk(tree):
-            if not isinstance(node, allowed_nodes):
-                # 检查是否是允许的函数调用（pandas/numpy方法）
-                if isinstance(node, ast.Name) and node.id in ('abs', 'max', 'min', 'sum', 'len', 'log', 'exp', 'sqrt', 'sign'):
-                    continue
+            if isinstance(node, allowed_nodes):
+                # allowed_nodes 中的节点类型直接放行
+                # 但 ast.Attribute 需要额外检查下划线属性
                 if isinstance(node, ast.Attribute):
-                    # 禁止访问下划线开头的特殊属性/方法（如__import__、__getattr__）
                     if node.attr.startswith('_'):
                         return False
-                    continue
-                return False
+                continue
+            # ast.Name 不在 allowed_nodes 中，需单独校验白名单
+            if isinstance(node, ast.Name):
+                if node.id not in ALLOWED_NAMES:
+                    return False
+                continue
+            # 其他未允许的节点类型一律拒绝
+            return False
         return True
     except SyntaxError:
         return False

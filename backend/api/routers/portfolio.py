@@ -85,7 +85,7 @@ async def optimize_weights(request: OptimizeWeightsRequest):
         factor_values = {}
         for factor_name, factor_def in factor_defs.items():
             try:
-                values = factor_service.calculator.calculate(stock_data, factor_def.code)
+                values = factor_service.calculator.calculate(stock_data.copy(), factor_def.code)
                 if values is not None and len(values.dropna()) > 0:
                     factor_values[factor_name] = values
             except Exception as e:
@@ -261,7 +261,7 @@ async def calculate_composite_score(request: CompositeScoreRequest):
         factor_data = {}
         for factor_name, factor_def in factor_defs.items():
             try:
-                values = factor_service.calculator.calculate(stock_data, factor_def.code)
+                values = factor_service.calculator.calculate(stock_data.copy(), factor_def.code)
                 if values is not None:
                     factor_data[factor_name] = values
             except Exception as e:
@@ -338,7 +338,7 @@ async def compare_weight_methods(request: CompareMethodsRequest):
         factor_data = {}
         for factor_name, factor_def in factor_defs.items():
             try:
-                values = factor_service.calculator.calculate(stock_data, factor_def.code)
+                values = factor_service.calculator.calculate(stock_data.copy(), factor_def.code)
                 if values is not None and len(values.dropna()) > 0:
                     factor_data[factor_name] = values
             except Exception as e:

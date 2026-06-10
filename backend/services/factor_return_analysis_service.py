@@ -446,10 +446,14 @@ class FactorReturnAnalysisService:
             for series in all_factor_series:
                 if len(series) < window + 1:
                     continue
-                
-                ranks = series.rolling(window=window, min_periods=1).rank(pct=True)
-                rank_changes = ranks.diff().abs()
-                turnover = rank_changes.mean()
+
+                # 横截面分位数换手率（规则7.2）：
+                # 将因子值分桶，衡量分桶随时间变化的比例
+                n_bins = 5
+                factor_ranks = series.rank(pct=True)
+                factor_bins = pd.cut(factor_ranks, bins=n_bins, labels=False)
+                rank_change = (factor_bins != factor_bins.shift(1)).astype(float)
+                turnover = rank_change.dropna().mean()
                 turnover_rates.append(turnover)
                 
                 auto_corr = series.autocorr(lag=1)

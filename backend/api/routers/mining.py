@@ -32,7 +32,7 @@ from backend.services import factor_validation_service
 router = APIRouter()
 
 
-def _safe_float(value, default=0.0) -> float:
+def _safe_float(value, default=None):
     if value is None:
         return default
     try:
@@ -1036,21 +1036,20 @@ async def _run_simulated_mining(task_id: str, request: GeneticMiningRequest, dat
         })
 
     result = {
-        "factors": discovered_factors,
+        "best_factors": discovered_factors,
         "best_fitness": discovered_factors[0]["ic"] if discovered_factors else 0,
         "avg_fitness": sum(f["fitness"] for f in discovered_factors) / len(discovered_factors) if discovered_factors else 0,
         "generations": n_generations,
         "fitness_history": fitness_history,
         "algorithm": request.algorithm,
+        "source": "simulated",
     }
 
-    mining_tasks[task_id]["status"] = "completed"
-    mining_tasks[task_id]["progress"] = 100
-    mining_tasks[task_id]["result"] = result
-    mining_tasks[task_id]["fitness_history"] = fitness_history
+    # 调用 _finalize_task 完成统一验证、暂存和状态更新
+    _finalize_task(task_id, result, request, data, base_factor_codes,
+                   factor_service.calculator, logger)
 
     logger.info(f"Task {task_id} completed (simulated mode)")
-    logger.info(f"Discovered {len(discovered_factors)} factors")
 
 
 @router.get("/status/{task_id}")

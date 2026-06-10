@@ -161,11 +161,22 @@ class FactorMonitoringService:
         # 过滤掉 NaN 值
         binned_clean = binned.dropna()
 
+        # 使用实际 bin 标签值构建映射，避免 range 检查丢弃有效转移
+        unique_labels = sorted(binned_clean.unique())
+        label_to_idx = {int(label): idx for idx, label in enumerate(unique_labels)}
+        n_effective = len(unique_labels)
+
+        # 如果实际标签数与 effective_bins 不一致，以实际标签数为准重建矩阵
+        if n_effective != effective_bins:
+            effective_bins = n_effective
+            transition_matrix = np.zeros((effective_bins, effective_bins))
+            transition_counts = np.zeros((effective_bins, effective_bins))
+
         for i in range(len(binned_clean) - 1):
-            from_state = int(binned_clean.iloc[i])
-            to_state = int(binned_clean.iloc[i + 1])
-            if 0 <= from_state < effective_bins and 0 <= to_state < effective_bins:
-                transition_counts[from_state, to_state] += 1
+            from_idx = label_to_idx.get(int(binned_clean.iloc[i]))
+            to_idx = label_to_idx.get(int(binned_clean.iloc[i + 1]))
+            if from_idx is not None and to_idx is not None:
+                transition_counts[from_idx, to_idx] += 1
 
         # 归一化为概率
         for i in range(effective_bins):
@@ -268,7 +279,10 @@ class FactorMonitoringService:
         n = len(time_series)
 
         # 计算频率
-        freqs = fftfreq(n, d=1)  # 假设日频数据
+        # Note: FFT assumes uniform sampling. A-share data has weekend/holiday gaps.
+        # Using d=1 is an approximation; for precise frequency analysis,
+        # resample to business day frequency first.
+        freqs = fftfreq(n, d=1)
 
         # 计算功率谱
         power = np.abs(fft_values)

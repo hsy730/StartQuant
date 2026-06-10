@@ -121,7 +121,7 @@ class WeightedICService:
                 
                 ic_stats[name] = {
                     "mean_ic": float(valid_ic.mean()),
-                    "std_ic": float(valid_ic.std()) if abs(valid_ic.std()) > 1e-10 else 1e-6,
+                    "std_ic": float(valid_ic.std()) if abs(valid_ic.std()) > 1e-10 else None,
                     "ir": safe_ir(float(valid_ic.mean()), float(valid_ic.std()), default=0.0),
                     "ic_positive_ratio": float((valid_ic > 0).mean()),
                     "n_observations": len(valid_ic),
@@ -487,12 +487,21 @@ class WeightedICService:
         ics = []
         stds = []
         valid_names = []
-        
+
         for name in factor_names:
             if name in ic_stats:
+                std_ic = ic_stats[name]["std_ic"]
+                if std_ic is None:
+                    # std_ic不可靠的因子，跳过最优权重计算
+                    continue
                 ics.append(ic_stats[name]["mean_ic"])
-                stds.append(max(ic_stats[name]["std_ic"], 1e-6))
+                stds.append(std_ic)
                 valid_names.append(name)
+
+        if len(valid_names) < 1:
+            # 所有因子std均不可靠，回退到等权
+            n_valid = len([n for n in factor_names if n in ic_stats])
+            return {name: 1.0 / n_valid for name in factor_names if name in ic_stats} if n_valid > 0 else {}
         
         ics = np.array(ics)
         stds = np.array(stds)
@@ -507,7 +516,22 @@ class WeightedICService:
         else:
             optimal_weights = np.full(len(valid_names), safe_divide(1.0, len(valid_names), default=0.0))
         
-        return dict(zip(valid_names, optimal_weights.tolist()))
+        result = dict(zip(valid_names, optimal_weights.tolist()))
+
+        # std_ic为None的因子分配极小等权（避免完全排除，但权重可忽略）
+        skipped_names = [n for n in factor_names if n in ic_stats and n not in result]
+        if skipped_names:
+            # 给被跳过的因子分配剩余权重的极小比例
+            skip_weight = 0.01 / len(skipped_names)
+            # 等比缩减已有权重以腾出空间
+            total_existing = sum(result.values())
+            if total_existing > 0:
+                scale = (1.0 - 0.01) / total_existing
+                result = {k: v * scale for k, v in result.items()}
+            for name in skipped_names:
+                result[name] = skip_weight
+
+        return result
 
     def _calculate_stability_score(self, ic_series: pd.Series) -> float:
         """计算IC稳定性得分"""

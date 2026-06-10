@@ -85,7 +85,16 @@ class BaseStrategy(ABC):
         elif "date" in df.columns:
             df = df.sort_values("date")
         elif df.index.name != "date":
+            original_index_name = df.index.name
             df = df.reset_index()
+            # Try to sort by date column if available
+            sort_col = None
+            for col in ["date", "index", original_index_name]:
+                if col in df.columns:
+                    sort_col = col
+                    break
+            if sort_col:
+                df = df.sort_values(sort_col)
 
         # 1. 生成交易信号
         signals = self.generate_signals(df)

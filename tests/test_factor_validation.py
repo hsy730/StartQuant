@@ -112,9 +112,9 @@ class TestFactorValidationService:
         return_values = pd.Series(np.random.randn(100) * 0.02)
         result = self.service.validate_factor(factor_values, return_values)
         assert isinstance(result, dict)
-        # 恒定因子的IC应为0或NaN
+        # 恒定因子的IC应为None（不可计算）或0或NaN
         ic = result["ic_validation"].get("ic", 0)
-        assert ic == 0 or np.isnan(ic) or abs(ic) < 1e-10
+        assert ic is None or ic == 0 or (isinstance(ic, float) and np.isnan(ic)) or abs(ic) < 1e-10
 
     def test_validate_with_existing_factors(self):
         """传入已有因子时应进行相关性验证"""

@@ -204,7 +204,7 @@ class DataService:
             cache_key = f"{self._get_cache_key(stock_code, start_date, end_date)}_min_{period}"
             cached_data = self._load_from_cache(cache_key)
             if cached_data is not None:
-                return cached_data
+                return cached_data.copy()
 
         try:
             pure_code = stock_code.replace(".SH", "").replace(".SZ", "")

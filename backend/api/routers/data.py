@@ -184,7 +184,7 @@ async def get_stock_pool_stocks(pool_id: str):
         # 策略2: fallback 使用 index_stock_cons_csindex
         if df is None or len(df) == 0:
             try:
-                df = ak.index_stock_cons_csindex(symbol=symbol)
+                df = _call_akshare_with_timeout(ak.index_stock_cons_csindex, symbol=symbol)
                 if df is not None and len(df) > 0:
                     code_col = None
                     name_col = None
@@ -200,7 +200,7 @@ async def get_stock_pool_stocks(pool_id: str):
         # 策略3: fallback 使用 index_stock_cons_weight_csindex
         if df is None or len(df) == 0:
             try:
-                df = ak.index_stock_cons_weight_csindex(symbol=symbol)
+                df = _call_akshare_with_timeout(ak.index_stock_cons_weight_csindex, symbol=symbol)
                 if df is not None and len(df) > 0:
                     code_col = None
                     name_col = None

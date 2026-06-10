@@ -424,14 +424,14 @@ class FactorCalculator:
             # 提供完整的全局变量，包括 pandas, numpy 和常见函数
             global_vars = {
                 "__builtins__": {
-                    # 安全的内置函数（不含__import__、exec、eval、open等）
+                    # 安全的内置函数（不含__import__、exec、eval、open、getattr、hasattr等）
                     "abs": abs, "min": min, "max": max, "len": len,
                     "range": range, "float": float, "int": int, "bool": bool,
                     "list": list, "tuple": tuple, "dict": dict, "sum": sum,
                     "any": any, "all": all, "enumerate": enumerate, "zip": zip,
                     "round": round, "pow": pow, "divmod": divmod,
                     "sorted": sorted, "reversed": reversed, "map": map, "filter": filter,
-                    "isinstance": isinstance, "hasattr": hasattr, "getattr": getattr,
+                    "isinstance": isinstance,
                     "str": str, "set": set,
                 },
                 "pd": pd,

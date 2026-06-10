@@ -314,6 +314,295 @@ warnings.filterwarnings("ignore", category=FutureWarning)  # 影响所有线程�
 
 ---
 
+## 规范7：金融计算语义正确性 — 统计量定义必须符合业界标准
+
+> 基于 2026-06-10 全面代码审查中发现的系统性金融计算语义错误，提炼为规范。
+> 这些 Bug 不涉及语法或运行时崩溃，而是计算结果的语义与业界标准不一致，
+> 比运行时崩溃更危险——因为结果"看起来合理"但实际错误。
+
+### 规则7.1：IC 必须使用横截面 Spearman 秩相关，禁止池化 Pearson
+
+**来源**：`enhanced_analysis_service.py` 池化 Spearman 相关、`weight_optimizer_service.py` IR 加权使用 Pearson、`ic_calculator.py` 滚动 Spearman 用全局排名、`factor_validation_service.py` IC验证使用 Pearson、`weight_optimizer_service.py` IC加权使用池化 Spearman
+
+```python
+# ❌ 错误：池化所有股票数据计算单个相关系数
+all_factor = pd.concat([df["factor"] for df in factor_data.values()])
+all_return = pd.concat([df["return"] for df in factor_data.values()])
+ic = all_factor.corr(all_return, method="spearman")  # 违反独立性假设
+
+# ❌ 错误：滚动 Spearman 用全局排名代替逐窗口排名
+factor_rank = factor.rank()  # 全局排名
+returns_rank = returns.rank()
+ic = factor_rank.rolling(20).corr(returns_rank)  # 不等于逐窗口Spearman
+
+# ❌ 错误：IR 加权用 Pearson 代替 Spearman
+ic_series = factor.rolling(20).corr(returns)  # 这是 Pearson！
+
+# ❌ 错误：IC验证使用 Pearson（factor_validation_service.py）
+ic = aligned_data["factor"].corr(aligned_data["return"])  # 默认Pearson！
+
+# ❌ 错误：IC加权使用池化 Spearman（weight_optimizer_service.py）
+ic, _ = spearmanr(aligned_data['factor'], aligned_data['returns'])  # 池化！违反独立性
+
+# ❌ 错误：IR验证使用滚动 Pearson IC（factor_validation_service.py）
+rolling_ic = factor.rolling(20).corr(returns)  # Pearson IC → IR基于错误值
+
+# ✅ 正确：横截面 IC — 每个时间截面上计算 Spearman 相关
+ic_list = []
+for date, group in data.groupby("date"):
+    ic, _ = spearmanr(group["factor"], group["return"])
+    ic_list.append(ic)
+mean_ic = np.mean(ic_list)
+
+# ✅ 正确：滚动 Spearman — 每个窗口内独立排名
+def rolling_spearman(x, y_series):
+    y_aligned = y_series.loc[x.index]
+    valid = x.notna() & y_aligned.notna()
+    if valid.sum() < 5:
+        return np.nan
+    return spearmanr(x[valid], y_aligned[valid])[0]
+
+ic_series = factor.rolling(20).apply(
+    lambda x: rolling_spearman(x, returns), raw=False
+)
+```
+
+**强制检查项**：
+- [ ] IC 计算是否为横截面（per-date）而非池化？
+- [ ] Spearman IC 是否在每个窗口内独立排名？
+- [ ] IR 加权是否使用 Spearman 而非 Pearson？
+- [ ] IC 显著性检验是否基于横截面 IC 序列的 t 检验？
+
+### 规则7.2：换手率必须基于横截面分位数变化，禁止用时序滚动排名
+
+**来源**：`factor_validation_service.py` 使用 `rolling(252).rank(pct=True)` 计算换手率
+
+```python
+# ❌ 错误：时序滚动百分位排名 ≠ 换手率
+factor_rank = factor_values.rolling(252).rank(pct=True)  # 时序排名
+turnover = factor_rank.diff().abs().mean()  # 这不是换手率！
+
+# ✅ 正确：横截面分位数换手率
+n_bins = 5
+factor_ranks = factor_values.rank(pct=True)
+factor_bins = pd.cut(factor_ranks, bins=n_bins, labels=False)
+rank_change = (factor_bins != factor_bins.shift(1)).astype(float)
+turnover = rank_change.mean()  # 分位数变化的比例
+```
+
+**判断标准**：换手率衡量的是"因子排名在相邻期间发生变化的程度"，必须在横截面上定义分位数桶。
+
+### 规则7.3：Fisher z 变换必须方法一致，禁止混用理论值和经验值
+
+**来源**：`factor_correlation_service.py` 混用方法A的z值和方法B的标准误
+
+```python
+# ❌ 错误：z_val 来自 arctanh(avg_corr)（方法A），z_se 来自 std(daily_z)/sqrt(n)（方法B）
+z_val = np.arctanh(avg_corr)           # 方法A：对平均相关做z变换
+z_se = np.std(daily_z, ddof=1) / np.sqrt(n)  # 方法B：每日z值的标准误
+p_value = 2 * (1 - norm.cdf(abs(z_val) / z_se))  # 混用！
+
+# ✅ 正确：方法B一致 — z_val 也用每日z值的均值
+z_val = np.mean(daily_z)               # 方法B：每日z值的均值
+z_se = np.std(daily_z, ddof=1) / np.sqrt(n)  # 方法B：标准误
+p_value = 2 * (1 - norm.cdf(abs(z_val) / z_se))
+```
+
+### 规则7.4：spearmanr 不处理 NaN，调用前必须清理数据
+
+**来源**：`analysis_service.py` 传入含 NaN 的数据给 `spearmanr`，结果全为 NaN
+
+```python
+# ❌ 错误：spearmanr 默认 nan_policy='propagate'，含 NaN 返回 NaN
+ic = spearmanr(factor_masked, return_masked)[0]  # 含NaN → 返回NaN
+
+# ✅ 正确：先对齐并清理 NaN
+valid = factor.notna() & returns.notna()
+if valid.sum() >= min_periods:
+    ic = spearmanr(factor[valid], returns[valid])[0]
+else:
+    ic = np.nan
+```
+
+**注意**：pandas 的 `.rolling().corr()` 内部会自动跳过 NaN 对，但 `scipy.stats.spearmanr` 不会。两者行为不一致，是常见的 Bug 来源。
+
+### 规则7.5：组合方差可能因浮点精度为负，sqrt 前必须截断
+
+**来源**：`portfolio_analysis_service.py` 协方差矩阵接近奇异时方差为微小负数
+
+```python
+# ❌ 错误：浮点精度导致方差略小于0
+portfolio_variance = np.dot(weights.T, np.dot(cov_matrix.values, weights))
+volatility = np.sqrt(portfolio_variance)  # 负数 → NaN
+
+# ✅ 正确：截断到非负
+portfolio_variance = np.dot(weights.T, np.dot(cov_matrix.values, weights))
+volatility = np.sqrt(max(0.0, portfolio_variance))
+```
+
+### 规则7.6：零标准差阈值必须统一使用 `< 1e-10`，禁止 `== 0`
+
+**来源**：`risk_metrics.py` 中 `calculate_sharpe` 用 `== 0`，`calculate_risk_metrics` 用 `< 1e-10`
+
+```python
+# ❌ 错误：== 0 无法捕获浮点噪声
+if np.std(returns) == 0:  # pd.Series([0.05]*20).std() ≈ 7e-18 ≠ 0
+    return None
+
+# ✅ 正确：使用阈值
+if np.std(returns) < 1e-10:  # 捕获近零浮点值
+    return None
+```
+
+**根因**：浮点运算中，"几乎恒定"的序列标准差可能为 1e-17 而非精确的 0。`== 0` 漏检后，Sharpe 等指标会产生 1e8 级别的极端值。
+
+### 规则7.7：因子收益率缺失值禁止填充为 0.0
+
+**来源**：`portfolio_analysis_service.py` 用 `fillna(0.0)` 处理因子收益率
+
+```python
+# ❌ 错误：NaN → 0.0 扭曲优化结果
+factor_returns = factor_returns.fillna(0.0)  # 缺失=无收益？不，缺失=无观测
+
+# ✅ 正确：前向填充保持连续性，再删除剩余 NaN
+factor_returns = factor_returns.fillna(method='ffill').dropna()
+# 或直接删除
+factor_returns = factor_returns.dropna()
+```
+
+**原则**：0.0 收益率 = "该因子当日无收益"，NaN = "该因子当日无观测"。两者含义完全不同，填充 0.0 会人为拉低均值并扭曲协方差。
+
+### 规则7.8：衰减率/敏感度计算中，分母为零时 default 必须与语义一致
+
+**来源**：`comprehensive_scoring_service.py` 中 `return_decay` 用 `default=0.0`，`sensitivity_ratio` 用 `default=float('inf')`
+
+```python
+# ❌ 错误：年化收益为0时衰减率=0%，实际应为100%或无穷
+return_decay = safe_divide(annual_cost, annual_return, default=0.0) * 100
+
+# ✅ 正确：年化收益为0时，成本完全吞噬收益，衰减为无穷
+return_decay = safe_divide(annual_cost, annual_return, default=float('inf')) * 100
+```
+
+**原则**：`safe_divide` 的 `default` 参数必须反映业务语义——"不可计算"和"无穷大"是不同的概念。
+
+### 规则7.9：MultiIndex 场景下 groupby+apply 禁止 droplevel，必须用 transform
+
+**来源**：`return_calculator.py` 用 `groupby(level=1).apply(...).droplevel(0)` 丢失资产维度
+
+```python
+# ❌ 错误：droplevel 丢失资产维度，产生重复日期索引
+prices.groupby(level=1).apply(
+    lambda s: s.pct_change(period).shift(-period)
+).droplevel(0)  # 丢失 asset 层！
+
+# ✅ 正确：transform 保持原始索引结构
+prices.groupby(level=1).transform(
+    lambda s: s.pct_change(period).shift(-period)
+)
+```
+
+**原则**：`groupby().apply()` 可能改变索引结构，`groupby().transform()` 保证输出与输入索引一致。
+
+### 规则7.10：IC 标准差为零时 IR 不可计算，必须返回 None 而非 0.0
+
+**来源**：`factor_validation_service.py` 中 IC 恒正但 IR=0.0，导致好因子被错误拒绝；`analysis_service.py` 中 `safe_ir(ic_mean, ic_std, default=0.0)` 导致同样问题
+
+```python
+# ❌ 错误：IC 恒正（如所有窗口IC=0.05）但 IR=0.0
+if ic_std == 0:
+    ir = 0.0  # 好因子被拒绝！
+
+# ❌ 错误：safe_ir 使用 default=0.0（analysis_service.py）
+ir = safe_ir(ic_mean, ic_std, default=0.0)  # IC_std≈0时返回0.0，好因子被拒！
+
+# ✅ 正确：IR 不可计算时返回 None
+if ic_std < 1e-10:
+    ir = None  # 不可计算，不是0
+
+# ✅ 正确：safe_ir 使用 default=None
+ir = safe_ir(ic_mean, ic_std, default=None)  # 不可计算→None，让下游判断
+```
+
+**原则**：IR = IC_mean / IC_std。当 std→0 且 mean≠0 时，IR→∞（因子极其稳定），而非 IR=0（因子无效）。返回 None 让下游逻辑自行判断。
+
+### 规则7.11：滚动 IR 计算必须使用 safe_divide(default=None)，禁止 default=np.nan
+
+**来源**：`analysis_service.py` 中 `_calculate_rolling_ir` 使用 `safe_divide(rolling_mean, rolling_std, default=np.nan)`
+
+```python
+# ❌ 错误：default=np.nan，与项目规范不一致
+ir = safe_divide(rolling_mean, rolling_std, default=np.nan)
+# NaN 在数值运算中传播，可能导致下游静默出错
+
+# ✅ 正确：default=None（在pandas Series中表现为NaN，但语义明确）
+ir = safe_divide(rolling_mean, rolling_std, default=None)
+# None 在 Series 中存储为 NaN，但通过 sanitize_dict 序列化时转为 JSON null
+
+# ✅ 正确：IC_mean和IC_std都接近0时，IR=0是合理的（无信号无波动）
+both_near_zero = (rolling_mean.abs() < 1e-10) & (rolling_std.abs() < 1e-10)
+ir = ir.mask(both_near_zero, 0.0)
+```
+
+**原则**：`default=None` 是项目规范（规则6）的统一标准，表示"不可计算"。`default=np.nan` 虽然在 Series 中表现相同，但语义不明确，且与 `sanitize_dict` 的 NaN→None 转换逻辑不一致。
+
+### 规则7.12：IC 验证和 IR 验证必须使用 Spearman，禁止 Pearson
+
+**来源**：`factor_validation_service.py` 中 `_validate_ic` 使用 Pearson、`_validate_ir` 使用滚动 Pearson IC
+
+```python
+# ❌ 错误：IC验证使用 Pearson（对非线性单调关系和异常值不敏感）
+ic = aligned_data["factor"].corr(aligned_data["return"])  # 默认Pearson
+
+# ❌ 错误：IR验证使用滚动 Pearson IC
+rolling_ic = factor.rolling(20).corr(returns)  # Pearson IC → IR基于错误值
+
+# ✅ 正确：IC验证使用 Spearman
+from scipy.stats import spearmanr
+ic, _ = spearmanr(aligned_data["factor"], aligned_data["return"])
+
+# ✅ 正确：IR验证使用滚动 Spearman IC
+def _rolling_spearman_ic(x):
+    y_aligned = returns.loc[x.index]
+    valid = x.notna() & y_aligned.notna()
+    if valid.sum() < min_periods:
+        return np.nan
+    return spearmanr(x[valid], y_aligned[valid])[0]
+
+rolling_ic = factor.rolling(20).apply(_rolling_spearman_ic, raw=False)
+```
+
+**原则**：因子验证是因子质量把关的第一道防线。Pearson 对非线性单调关系不敏感，可能遗漏有效的因子信号。所有 IC/IR 验证必须使用 Spearman 秩相关，与业界标准一致。
+
+### 规则7.13：IC 加权必须使用横截面 IC，禁止池化 Spearman
+
+**来源**：`weight_optimizer_service.py` 中 `_ic_weight` 使用 `spearmanr(aligned_data['factor'], aligned_data['returns'])` 池化计算
+
+```python
+# ❌ 错误：池化 Spearman — 将所有时间点数据混合计算单个相关系数
+ic, _ = spearmanr(aligned_data['factor'], aligned_data['returns'])
+# 违反独立性假设：同一日不同股票观测值并不独立
+
+# ✅ 正确：MultiIndex 数据按日期截面计算IC后取均值
+if isinstance(aligned_data.index, pd.MultiIndex):
+    daily_ics = []
+    for date, group in aligned_data.groupby(level=0):
+        if len(group) >= 5:
+            ic_val, _ = spearmanr(group['factor'], group['returns'])
+            if not np.isnan(ic_val):
+                daily_ics.append(ic_val)
+    ic = float(np.mean(daily_ics))
+
+# ✅ 正确：单股票时序使用滚动Spearman IC均值
+from backend.utils.ic_calculator import calculate_rolling_ic
+rolling_ic = calculate_rolling_ic(factor, returns, window=20, method='spearman')
+ic = float(rolling_ic.dropna().mean())
+```
+
+**原则**：IC 加权直接影响多因子组合的权重分配。池化相关违反独立性假设，可能产生虚假的高/低 IC 值，导致权重偏离真实因子预测能力。
+
+---
+
 ## 代码审查 Checklist
 
 提交 PR 时，reviewer 必须确认以下各项：
@@ -322,6 +611,7 @@ warnings.filterwarnings("ignore", category=FutureWarning)  # 影响所有线程�
 - [ ] 所有 `/` 运算符是否使用了 `safe_divide`？
 - [ ] 所有 IR 计算是否使用了 `safe_ir`？
 - [ ] 是否存在 `+ 1e-10` hack？
+- [ ] `default` 参数是否符合语义（不可计算→None，无穷→float('inf')）？
 
 ### 统一入口
 - [ ] 风险指标是否通过 `risk_metrics.py` 统一入口？
@@ -331,6 +621,7 @@ warnings.filterwarnings("ignore", category=FutureWarning)  # 影响所有线程�
 ### 数据安全
 - [ ] 服务层方法是否对传入参数做了 `.copy()`？
 - [ ] 是否存在直接修改传入 DataFrame 的代码？
+- [ ] 缓存返回的数据是否做了 `.copy()`？
 
 ### 日志规范
 - [ ] 是否存在 `print()` 调用？
@@ -345,8 +636,25 @@ warnings.filterwarnings("ignore", category=FutureWarning)  # 影响所有线程�
 - [ ] 是否存在模块级 `warnings.filterwarnings`？
 - [ ] warnings 抑制是否局部化？
 
+### 金融计算语义
+- [ ] IC 计算是否为横截面 Spearman，而非池化 Pearson？
+- [ ] 滚动 Spearman 是否在每个窗口内独立排名？
+- [ ] 换手率是否基于横截面分位数变化？
+- [ ] Fisher z 变换的方法是否一致（理论值 vs 经验值不混用）？
+- [ ] `spearmanr` 调用前是否已清理 NaN？
+- [ ] 组合方差 sqrt 前是否截断到非负？
+- [ ] 零标准差检查是否统一使用 `< 1e-10`？
+- [ ] 因子收益率缺失值是否禁止填充为 0.0？
+- [ ] MultiIndex 场景是否使用 `transform` 而非 `apply+droplevel`？
+- [ ] IR 不可计算时是否返回 None 而非 0.0？
+- [ ] IC 验证是否使用 Spearman 而非 Pearson？（规则7.12）
+- [ ] IR 验证是否使用滚动 Spearman IC 而非 Pearson？（规则7.12）
+- [ ] IC 加权是否使用横截面 IC 而非池化 Spearman？（规则7.13）
+- [ ] `safe_ir` 的 `default` 是否为 None 而非 0.0？（规则7.10）
+- [ ] 滚动 IR 是否使用 `safe_divide(default=None)` 而非 `default=np.nan`？（规则7.11）
+
 ---
 
-**最后更新**: 2026-06-07
+**最后更新**: 2026-06-10
 **维护者**: FactorHub Core Team
 **适用版本**: v1.0.0+

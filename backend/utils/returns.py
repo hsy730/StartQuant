@@ -103,7 +103,7 @@ def calculate_ic_stats(
             "positive_ratio": positive_ratio,
         }
 
-    ir = safe_ir(float(mean_ic), float(std_ic), default=0.0)
+    ir = safe_ir(float(mean_ic), float(std_ic), default=None)
 
     # t检验
     se = std_ic / np.sqrt(n)

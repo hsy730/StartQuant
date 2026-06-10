@@ -185,6 +185,8 @@ async def run_single_backtest(request: SingleBacktestRequest):
                         data_copy = data_copy.reset_index()
                     merged_list.append(data_copy)
 
+                if not merged_list:
+                    raise HTTPException(status_code=400, detail="没有有效的因子数据")
                 df = pd.concat(merged_list, ignore_index=True)
                 top_percentile = (100 - request.percentile) / 100.0
                 result = await asyncio.to_thread(
@@ -220,6 +222,8 @@ async def run_single_backtest(request: SingleBacktestRequest):
                         data_copy = data_copy.reset_index()
                     merged_list.append(data_copy)
 
+                if not merged_list:
+                    raise HTTPException(status_code=400, detail="没有有效的因子数据")
                 df = pd.concat(merged_list, ignore_index=True)
 
                 # 计算复合得分（等权归一化因子值求和）

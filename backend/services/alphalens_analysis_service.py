@@ -221,7 +221,7 @@ class AlphalensAnalysisService:
             n = len(ic_series)
             ic_mean = float(ic_series.mean())
             ic_std = float(ic_series.std()) if n > 1 else 0.0
-            ir = safe_ir(float(ic_mean), float(ic_std), default=0.0)
+            ir = safe_ir(float(ic_mean), float(ic_std), default=None)
 
             if n > 1 and ic_std > 0:
                 t_stat = safe_divide(float(ic_mean), float(ic_std / np.sqrt(n)), default=0.0)
