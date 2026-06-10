@@ -113,7 +113,8 @@ def calculate_ic_stats(
 
     # t检验
     se = std_ic / np.sqrt(n)
-    t_statistic = safe_divide(float(mean_ic), float(se), default=0.0)
+    # se guaranteed positive: std_ic >= 1e-10 (after guard above), n >= 2
+    t_statistic = float(mean_ic) / float(se)
     p_value = 2 * (1 - scipy_stats.t.cdf(abs(t_statistic), df=n - 1))
 
     # 置信区间

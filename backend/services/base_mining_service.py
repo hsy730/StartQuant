@@ -231,7 +231,9 @@ class BaseMiningService(ABC):
                 end = start + fold_size if k < self.cv_folds - 1 else n
                 segment = aligned.iloc[start:end]
                 if len(segment) >= 10:
-                    ic = segment["factor"].corr(segment["return"])
+                    from scipy.stats import spearmanr
+                    ic_result = spearmanr(segment["factor"], segment["return"])
+                    ic = ic_result[0]
                     if not np.isnan(ic):
                         fold_ics.append(abs(ic))
 
@@ -269,10 +271,10 @@ class BaseMiningService(ABC):
                     continue
                 mean_ic = abs(float(mean_ic))
                 std_ic = float(std_ic)
-                ir = safe_ir(float(mean_ic), float(std_ic), default=0.0)
+                ir = safe_ir(float(mean_ic), float(std_ic), default=None)
                 if mean_ic > best_ic:
                     best_ic = mean_ic
-                if ir > best_ir:
+                if ir is not None and ir > best_ir:
                     best_ir = ir
 
         return best_ic, best_ir

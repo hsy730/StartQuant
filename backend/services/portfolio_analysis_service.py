@@ -330,22 +330,25 @@ class PortfolioAnalysisService:
             else:
                 fv_dict = {col: pd.Series(dtype=float) for col in factor_returns.columns}
 
-            # 构建收益率序列：使用因子收益率的均值作为组合收益代理
-            # 用于IC计算（因子值与收益的相关性）
-            combined_returns = factor_returns.mean(axis=1)
-
-            # 使用统一入口计算IC加权权重
-            result = optimizer.calculate_weights(
-                factor_values=fv_dict,
-                factor_names=list(factor_returns.columns),
-                method="ic_weight",
-                returns=combined_returns,
-                factor_data_dict=factor_data_dict,
-            )
-            weights = pd.Series(result["weights"])
-            extra_info["ic_values"] = {
-                k: v for k, v in result["weights"].items()
-            }
+            # IC加权需要stock_returns参数（因子值与股票收益的相关性）
+            stock_returns = kwargs.get("stock_returns")
+            if stock_returns is None:
+                logger.warning("IC加权需要stock_returns参数，回退到等权")
+                weights = pd.Series(1.0 / n_factors, index=factor_returns.columns)
+                extra_info["note"] = "IC加权回退到等权：缺少stock_returns参数"
+            else:
+                # 使用统一入口计算IC加权权重
+                result = optimizer.calculate_weights(
+                    factor_values=fv_dict,
+                    factor_names=list(factor_returns.columns),
+                    method="ic_weight",
+                    returns=stock_returns,
+                    factor_data_dict=factor_data_dict,
+                )
+                weights = pd.Series(result["weights"])
+                extra_info["ic_values"] = {
+                    k: v for k, v in result["weights"].items()
+                }
 
         # 3. 风险平价 — 使用HRPOpt（层次风险平价，考虑因子间相关性）
         elif method == "risk_parity":

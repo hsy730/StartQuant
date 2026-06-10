@@ -547,12 +547,33 @@ class FactorReturnAnalysisService:
         n_top = top_group["n_observations"]
         n_bottom = bottom_group["n_observations"]
 
+        std_top = top_group["std_return"]
+        std_bottom = bottom_group["std_return"]
+
+        # Guard against None std_return (e.g., only 1 observation in group)
+        if std_top is None or std_bottom is None:
+            return {
+                "long_short_spread": float(spread),
+                "spread_std": None,
+                "t_statistic": None,
+                "p_value": None,
+                "is_significant": False,
+                "top_group_return": top_group["avg_return"],
+                "bottom_group_return": bottom_group["avg_return"],
+                "interpretation": self._interpret_spread(spread, 1.0),
+            }
+
         # Welch's t-test: t = spread / sqrt(std_top^2/n_top + std_bottom^2/n_bottom)
         se = np.sqrt(
-            top_group["std_return"]**2 / n_top + bottom_group["std_return"]**2 / n_bottom
+            std_top**2 / n_top + std_bottom**2 / n_bottom
         ) if n_top > 0 and n_bottom > 0 else 0.0
 
-        t_stat = safe_divide(spread, se, default=0.0) if se > 0 else 0.0
+        if se > 0:
+            t_stat = safe_divide(spread, se, default=0.0)
+        elif abs(spread) > 1e-10:
+            t_stat = float('inf')
+        else:
+            t_stat = 0.0
 
         # Welch-Satterthwaite degrees of freedom
         if se > 0 and n_top > 1 and n_bottom > 1:
@@ -670,18 +691,16 @@ class FactorReturnAnalysisService:
             except ValueError:
                 continue
 
+            iter_returns = {}
             for q in range(self.config.n_quantiles):
                 group = sample_df[sample_df["quantile"] == q]
                 if len(group) > 0:
-                    bootstrapped_returns[f"Q{q+1}"].append(group[return_col].mean())
+                    iter_returns[f"Q{q+1}"] = float(group[return_col].mean())
+                    bootstrapped_returns[f"Q{q+1}"].append(iter_returns[f"Q{q+1}"])
 
-            if f"Q{self.config.n_quantiles}" in bootstrapped_returns and \
-               "Q1" in bootstrapped_returns and \
-               len(bootstrapped_returns[f"Q{self.config.n_quantiles}"]) > 0 and \
-               len(bootstrapped_returns["Q1"]) > 0:
-                spread = (bootstrapped_returns[f"Q{self.config.n_quantiles}"][-1] -
-                         bootstrapped_returns["Q1"][-1])
-                bootstrapped_spreads.append(spread)
+            top_key = f"Q{self.config.n_quantiles}"
+            if top_key in iter_returns and "Q1" in iter_returns:
+                bootstrapped_spreads.append(iter_returns[top_key] - iter_returns["Q1"])
 
         result = {}
 

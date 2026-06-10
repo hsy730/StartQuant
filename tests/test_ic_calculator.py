@@ -202,10 +202,10 @@ class TestCalculateRollingIC:
         result = calculate_rolling_ic(factor, returns, window=20, method="pearson")
         assert isinstance(result, pd.Series)
         assert len(result) == n
-        # 前19个值应为NaN（窗口不足）
-        assert result.iloc[:19].isna().all()
-        # 第20个值开始应有值
-        assert not result.iloc[19:].isna().all()
+        # 前9个值应为NaN（min_periods = max(2, window//2) = 10, so index 0-8 are NaN）
+        assert result.iloc[:9].isna().all()
+        # 第10个值开始应有值
+        assert not result.iloc[10:].isna().all()
 
     def test_calculate_rolling_ic_window_larger_than_data_should_return_empty(self):
         """窗口大于数据长度时应返回空Series"""

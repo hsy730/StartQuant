@@ -36,9 +36,11 @@ def calculate_ic(
     if method == "spearman":
         ic = float(factor[valid].rank().corr(returns[valid].rank()))
         return ic if not np.isnan(ic) else None
-    else:
+    elif method == "pearson":
         ic = float(factor[valid].corr(returns[valid]))
         return ic if not np.isnan(ic) else None
+    else:
+        raise ValueError(f"Unsupported IC method: {method}. Use 'spearman' or 'pearson'.")
 
 
 def calculate_rank_ic(
@@ -94,4 +96,5 @@ def calculate_rolling_ic(
             _rolling_spearman, raw=False
         )
     else:
-        return aligned["factor"].rolling(window).corr(aligned["returns"])
+        min_periods = max(2, window // 2)
+        return aligned["factor"].rolling(window, min_periods=min_periods).corr(aligned["returns"])

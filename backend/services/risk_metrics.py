@@ -39,6 +39,15 @@ def calculate_risk_metrics(
 
     # 标准差为零或近零时，波动率依赖指标不可计算，但收益/胜率仍可计算
     if np.std(returns_arr) < 1e-10:
+        mdd = float(empyrical.max_drawdown(returns_arr))
+        mdd = mdd if np.isfinite(mdd) else None
+        if mdd is not None and abs(mdd) > 1e-10:
+            ann_ret = float(empyrical.annual_return(
+                returns_arr, period='daily', annualization=annual_trading_days
+            ))
+            calmar = safe_divide(ann_ret, abs(mdd), default=None)
+        else:
+            calmar = None
         return {
             "total_return": float(empyrical.cum_returns_final(returns_arr)),
             "annual_return": float(empyrical.annual_return(
@@ -47,8 +56,8 @@ def calculate_risk_metrics(
             "volatility": None,
             "sharpe_ratio": None,
             "sortino_ratio": None,
-            "max_drawdown": None,
-            "calmar_ratio": None,
+            "max_drawdown": mdd,
+            "calmar_ratio": calmar,
             "win_rate": float((returns_arr > 0).mean()),
             "var_95": None,
             "cvar_95": None,

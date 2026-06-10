@@ -119,11 +119,16 @@ async def optimize_weights(request: OptimizeWeightsRequest):
         for factor_name, values in factor_values.items():
             factor_df[factor_name] = values
 
-        # 计算加权组合因子
-        weighted_factor = pd.Series(index=factor_df.index, dtype=float).fillna(0)
+        # 计算加权组合因子（NaN不填充为0，符合规则7.7）
+        from backend.utils.safe_math import safe_series_divide
+        weighted_sum = pd.Series(0.0, index=factor_df.index)
+        weight_sum = pd.Series(0.0, index=factor_df.index)
         for factor_name, weight in weights.items():
             if factor_name in factor_df.columns:
-                weighted_factor += factor_df[factor_name].fillna(0) * weight
+                valid = factor_df[factor_name].notna()
+                weighted_sum[valid] += factor_df.loc[valid, factor_name] * weight
+                weight_sum[valid] += weight
+        weighted_factor = safe_series_divide(weighted_sum, weight_sum, fill_value=np.nan)
 
         weighted_factor = weighted_factor.dropna()
 
@@ -142,17 +147,20 @@ async def optimize_weights(request: OptimizeWeightsRequest):
         aligned_returns = aligned_returns[valid_mask]
 
         if len(aligned_factor) > 3:
-            # 计算组合IC
-            portfolio_ic = aligned_factor.corr(aligned_returns)
+            # 计算组合IC（使用Spearman，符合规则7.1）
+            from scipy.stats import spearmanr
+            portfolio_ic_result = spearmanr(aligned_factor, aligned_returns)
+            portfolio_ic = float(portfolio_ic_result[0]) if not np.isnan(portfolio_ic_result[0]) else None
 
             # 计算组合收益率（因子的平均收益）
             portfolio_return = aligned_returns.mean()
 
-            # 计算组合IR (IC均值 / IC标准差)
-            ic_series = aligned_factor.rolling(window=20, min_periods=10).corr(aligned_returns)
+            # 计算组合IR (IC均值 / IC标准差)（使用Spearman，符合规则7.1/7.30）
+            from backend.utils.ic_calculator import calculate_rolling_ic
+            ic_series = calculate_rolling_ic(aligned_factor, aligned_returns, window=20, method='spearman')
             ic_mean = ic_series.mean()
             ic_std = ic_series.std()
-            portfolio_ir = safe_ir(float(ic_mean), float(ic_std), default=0.0)
+            portfolio_ir = safe_ir(float(ic_mean), float(ic_std), default=None)
         else:
             portfolio_ic = None
             portfolio_return = None
@@ -370,11 +378,15 @@ async def compare_weight_methods(request: CompareMethodsRequest):
 
                 # 2. 构建加权组合因子（factor_df已在循环外构建）
 
-                # 计算加权组合
-                weighted_factor = pd.Series(0.0, index=factor_df.index)
+                # 计算加权组合（NaN不填充为0，符合规则7.7）
+                weighted_sum = pd.Series(0.0, index=factor_df.index)
+                weight_sum = pd.Series(0.0, index=factor_df.index)
                 for factor_name, weight in weights.items():
                     if factor_name in factor_df.columns:
-                        weighted_factor += factor_df[factor_name].fillna(0) * weight
+                        valid = factor_df[factor_name].notna()
+                        weighted_sum[valid] += factor_df.loc[valid, factor_name] * weight
+                        weight_sum[valid] += weight
+                weighted_factor = safe_series_divide(weighted_sum, weight_sum, fill_value=np.nan)
 
                 weighted_factor = weighted_factor.dropna()
 
@@ -385,15 +397,17 @@ async def compare_weight_methods(request: CompareMethodsRequest):
                 }).dropna()
 
                 if len(aligned) >= 20:
-                    # 计算IC时间序列
-                    ic_series = aligned['factor'].rolling(
-                        window=20, min_periods=10
-                    ).corr(aligned['returns'])
+                    # 计算IC时间序列（使用Spearman，符合规则7.1/7.30）
+                    from backend.utils.ic_calculator import calculate_rolling_ic
+                    ic_series = calculate_rolling_ic(
+                        aligned['factor'], aligned['returns'],
+                        window=20, method='spearman'
+                    )
 
                     # 计算统计指标
                     ic_mean = ic_series.mean()
                     ic_std = ic_series.std()
-                    ir = safe_ir(float(ic_mean), float(ic_std), default=0.0)
+                    ir = safe_ir(float(ic_mean), float(ic_std), default=None)
 
                     # 注意：此处计算的是IC代理指标，非真实投资组合收益率，
                     # 无法直接使用 empyrical（需要真实收益率序列）。

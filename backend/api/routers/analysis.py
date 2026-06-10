@@ -360,8 +360,9 @@ async def decay_analysis(request: ICAnalysisRequest):
                 factor_series = data[request.factor_name]
                 # 计算未来收益率
                 future_returns = data["close"].pct_change(period).shift(-period)
-                # 计算IC
-                ic = factor_series.rolling(20).corr(future_returns)
+                # 计算IC（使用Spearman，符合规则7.1）
+                from backend.utils.ic_calculator import calculate_rolling_ic
+                ic = calculate_rolling_ic(factor_series, future_returns, window=20, method='spearman')
                 if not ic.empty and ic.dropna().count() > 0:
                     all_ics.append(ic.dropna().mean())
 
@@ -1230,10 +1231,10 @@ def _extract_all_ics(
                 )
                 
                 if valid_mask.sum() > 20:
-                    ic_series = (
-                        df.loc[valid_mask, factor_name]
-                        .rolling(20)
-                        .corr(future_ret.loc[valid_mask])
+                    from backend.utils.ic_calculator import calculate_rolling_ic
+                    ic_series = calculate_rolling_ic(
+                        df.loc[valid_mask, factor_name], future_ret.loc[valid_mask],
+                        window=20, method='spearman'
                     )
                     valid_ic = ic_series.dropna()
                     

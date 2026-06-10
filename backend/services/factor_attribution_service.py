@@ -7,6 +7,7 @@ import pandas as pd
 from typing import Dict, Optional, Any
 from scipy.stats import ttest_1samp
 import akshare as ak
+import empyrical
 
 from backend.services.risk_metrics import calculate_sharpe, calculate_volatility, calculate_relative_metrics
 from backend.utils.safe_math import safe_divide
@@ -266,7 +267,7 @@ class FactorAttributionService:
                 "message": "未提供基准数据（如市场指数），无法计算Alpha-Beta",
                 "portfolio_return": {
                     "daily_mean": float(portfolio_returns.mean()),
-                    "annual_return": float((1 + portfolio_returns.mean()) ** 252 - 1),
+                    "annual_return": float(empyrical.annual_return(portfolio_returns, period='daily')),
                     "volatility": calculate_volatility(portfolio_returns),
                     "sharpe": calculate_sharpe(portfolio_returns, risk_free_rate=0.03)
                 }
@@ -277,8 +278,7 @@ class FactorAttributionService:
             return {"error": "基准数据缺少close列"}
 
         # 对齐基准日期
-        benchmark_aligned = benchmark_data.reindex(common_index)
-        benchmark_returns = benchmark_aligned["close"].pct_change(1).dropna()
+        benchmark_returns = benchmark_data["close"].pct_change(1).dropna()
 
         # 再次对齐组合和基准
         aligned_data = pd.DataFrame({
@@ -367,7 +367,7 @@ class FactorAttributionService:
 
                     returns_by_stock[stock_code] = {
                         "avg_daily_return": avg_return,
-                        "annual_return": float((1 + avg_return) ** 252 - 1),
+                        "annual_return": float(empyrical.annual_return(returns, period='daily')),
                         "cumulative_return": cum_return,
                         "volatility": vol_annual,
                         "daily_volatility": float(returns.std()),
@@ -405,7 +405,7 @@ class FactorAttributionService:
         return {
             "overall_stats": {
                 "avg_daily_return": overall_avg,
-                "annual_return": float((1 + overall_avg) ** 252 - 1),
+                "annual_return": float((1 + overall_avg) ** 252 - 1) if overall_avg is not None else None,
                 "cumulative_return": overall_cum,
                 "volatility_annual": overall_vol_annual,
                 "daily_volatility": overall_daily_vol,

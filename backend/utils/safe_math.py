@@ -52,7 +52,7 @@ def safe_divide(
             safe_denominator = denominator.copy()
             safe_denominator[invalid] = 1.0
             result = numerator / safe_denominator
-            result[invalid] = default
+            result[invalid] = np.nan if default is None else default
         return result
     else:
         # 标量处理
@@ -63,6 +63,10 @@ def safe_divide(
         if isinstance(denominator, (float, np.floating)) and np.isnan(denominator):
             return default
         if abs(denominator) < min_threshold:
+            if isinstance(numerator, pd.Series):
+                return pd.Series(np.nan if default is None else default, index=numerator.index, dtype=float)
+            elif isinstance(numerator, np.ndarray):
+                return np.full_like(numerator, np.nan if default is None else default, dtype=float)
             return default
         return numerator / denominator
 

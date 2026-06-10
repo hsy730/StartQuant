@@ -919,6 +919,85 @@ rolling_ic = calculate_rolling_ic(factor, returns, window=20, method='spearman')
 
 **原则**：与规则5一致，相同逻辑出现 ≥ 2 次必须提取为公共方法。`ic_calculator.calculate_rolling_ic` 已处理 NaN 清理、最小样本数等边界条件，各服务不应重复实现。
 
+### 规则7.31：API 路由层 IC 计算必须与服务层一致，使用 Spearman
+
+**来源**：`analysis.py`、`portfolio.py` 中 API 路由直接使用 `.corr()` 和 `.rolling().corr()` 计算 Pearson IC
+
+```python
+# ❌ 错误：API路由层绕过服务层，直接用 Pearson IC
+ic = factor_series.rolling(20).corr(future_returns)  # Pearson
+portfolio_ic = aligned_factor.corr(aligned_returns)   # Pearson
+
+# ✅ 正确：使用统一的 IC 计算工具
+from backend.utils.ic_calculator import calculate_rolling_ic
+ic_series = calculate_rolling_ic(factor, returns, window=20, method='spearman')
+
+from scipy.stats import spearmanr
+portfolio_ic, _ = spearmanr(aligned_factor, aligned_returns)
+```
+
+**原则**：服务层的 IC 计算规范必须同样适用于 API 路由层。API 路由中任何内联的 IC 计算都应使用 `ic_calculator` 或 `spearmanr`，而非 `.corr()`（默认 Pearson）。
+
+### 规则7.32：年化收益必须使用几何复利，禁止算术平均复利
+
+**来源**：`factor_attribution_service.py` 中 `(1 + daily_mean) ** 252 - 1` 系统性高估收益
+
+```python
+# ❌ 错误：算术平均复利，由 Jensen 不等式系统性高估
+annual_return = (1 + returns.mean()) ** 252 - 1
+# 日收益交替+2%/-2%：mean=0%→年化0%，实际年化-4.8%
+
+# ✅ 正确：几何复利（empyrical 标准实现）
+annual_return = float(empyrical.annual_return(returns, period='daily'))
+```
+
+**原则**：`E[(1+r)^252] > (1+E[r])^252`（Jensen 不等式）。算术平均复利系统性高估年化收益，高估幅度随波动率增大而增大。必须使用 empyrical 的几何复利实现。
+
+### 规则7.33：IC 加权必须使用股票收益率，禁止使用因子收益率均值
+
+**来源**：`portfolio_analysis_service.py` 中 IC 加权传入 `factor_returns.mean(axis=1)` 作为收益率
+
+```python
+# ❌ 错误：IC 衡量因子与因子均值的相关性，无预测意义
+combined_returns = factor_returns.mean(axis=1)
+result = optimizer.calculate_weights(stock_data, factor_names, method="ic_weight", returns=combined_returns)
+
+# ✅ 正确：IC 衡量因子对股票收益率的预测能力
+result = optimizer.calculate_weights(stock_data, factor_names, method="ic_weight", returns=stock_returns)
+# 当缺少 stock_returns 时，回退到等权并记录警告
+```
+
+**原则**：IC 的定义是因子值与未来收益率的相关性。因子收益率的均值不是股票收益率，用其计算 IC 衡量的是"因子与所有因子平均的相关性"，无预测意义。
+
+### 规则7.34：`safe_divide` 在标准误（se）小于 min_threshold 时会吞掉有效的 t 统计量
+
+**来源**：`returns.py` 中 `safe_divide(mean_ic, se, default=0.0)` 当 se < 1e-10 时返回 0.0
+
+```python
+# ❌ 错误：se < 1e-10 时 safe_divide 返回 default=0.0，吞掉极大 t 统计量
+se = std_ic / np.sqrt(n)  # std_ic=1.5e-10, n=100 → se=1.5e-11
+t_statistic = safe_divide(mean_ic, se, default=0.0)  # 返回 0.0！
+
+# ✅ 正确：se 保证为正（std_ic >= 1e-10 且 n >= 2），直接除法
+t_statistic = float(mean_ic) / float(se)
+```
+
+**原则**：`safe_divide` 的 `min_threshold=1e-10` 是为"分母接近零表示不可计算"设计的，但标准误 `se = std/sqrt(n)` 可以合法地小于 1e-10（当 std 刚过阈值且 n 较大时）。此时 t 统计量极大（因子高度显著），不应被吞掉。
+
+### 规则7.35：变异系数（CV）分母必须使用 `abs(mean)`，禁止直接用 `mean`
+
+**来源**：`factor_stability_service.py` 中 CV 计算产生负值
+
+```python
+# ❌ 错误：mean 为负时 CV 为负，语义无意义
+cv = safe_divide(std, mean, default=None)  # mean=-0.03, std=0.02 → cv=-0.667
+
+# ✅ 正确：CV 衡量相对离散度，分母取绝对值
+cv = safe_divide(std, abs(mean), default=None)  # cv=0.667
+```
+
+**原则**：CV = std/|mean| 衡量的是"标准差相对于均值的比例"，与均值符号无关。负均值不意味着低离散度，负 CV 无语义。
+
 ---
 
 ## 代码审查 Checklist
@@ -987,6 +1066,11 @@ rolling_ic = calculate_rolling_ic(factor, returns, window=20, method='spearman')
 - [ ] Bootstrap 重采样是否保持横截面结构（按日期聚类）？（规则7.28）
 - [ ] Alpha/Beta 分解是否通过 `calculate_relative_metrics` 统一入口？（规则7.29）
 - [ ] 滚动 Spearman IC 是否使用 `ic_calculator.calculate_rolling_ic`？（规则7.30）
+- [ ] API路由层是否也使用 Spearman IC？（规则7.31）
+- [ ] 年化收益是否使用几何复利而非算术平均？（规则7.32）
+- [ ] IC加权是否使用股票收益率而非因子收益率均值？（规则7.33）
+- [ ] `safe_divide` 在 se < min_threshold 时是否吞掉了有效 t 统计量？（规则7.34）
+- [ ] CV 计算分母是否使用 `abs(mean)`？（规则7.35）
 
 ---
 

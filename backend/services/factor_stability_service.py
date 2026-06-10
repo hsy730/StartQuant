@@ -192,7 +192,7 @@ class FactorStabilityService:
         mean = ic_clean.mean()
         std = ic_clean.std()
 
-        cv = safe_divide(float(std), float(mean), default=None)
+        cv = safe_divide(float(std), float(abs(mean)), default=None)
 
         return {
             "mean": float(mean),
@@ -266,7 +266,7 @@ class FactorStabilityService:
                     "mean_ic": float(ic_series.mean()),
                     "std_ic": float(ic_series.std()),
                     "ir": safe_ir(float(ic_series.mean()), float(ic_series.std()), default=None),
-                    "cv": safe_divide(float(ic_series.std()), float(ic_series.mean()), default=None),
+                    "cv": safe_divide(float(ic_series.std()), float(abs(ic_series.mean())), default=None),
                 }
 
         return results

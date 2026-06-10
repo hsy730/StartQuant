@@ -89,13 +89,6 @@ class FactorEffectivenessService:
         # 多股票时使用横截面IC（规则7.1），单股票时池化是唯一选择
         if len(factor_data) >= 2:
             cross_sectional_ics = []
-            for stock_code, df in factor_data.items():
-                if factor_name in df.columns and "close" in df.columns:
-                    df_copy = calculate_future_returns(df[[factor_name, "close"]], periods=[1])
-                    df_copy["_stock_code"] = stock_code
-                    # 仅保留有效数据
-                    df_copy = df_copy[[factor_name, "future_return_1", "_stock_code"]].dropna()
-
             # 合并所有股票数据，按日期分组计算横截面IC
             panel_frames = []
             for stock_code, df in factor_data.items():

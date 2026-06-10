@@ -595,7 +595,8 @@ class TestOptimizeWeights:
         }, index=dates)
 
         result = self.service.optimize_weights(
-            factor_returns, method="ic_weight", factor_values=factor_values
+            factor_returns, method="ic_weight", factor_values=factor_values,
+            stock_returns=pd.Series(returns_data, index=dates)
         )
         weights = result["weights"]
         # good_factor 的 IC 应更高，权重应更大
