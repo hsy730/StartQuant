@@ -118,7 +118,7 @@ class FactorSummaryService:
             ts_stability = stability_analysis["time_series_stability"]
             summary["time_series"] = {
                 "is_stationary": bool(ts_stability.get("is_stationary", False)),
-                "p_value": float(ts_stability.get("p_value", 1)),
+                "p_value": _safe_float(ts_stability.get("p_value"), default=1.0),
             }
 
         # 滚动窗口稳定性

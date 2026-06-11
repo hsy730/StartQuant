@@ -24,6 +24,7 @@ import os
 import json
 import time
 import math
+import threading
 from typing import List, Dict, Optional, Tuple
 from datetime import datetime
 
@@ -177,7 +178,7 @@ if DEEP_FACTOR_AVAILABLE:
             self.seq_length = seq_length
 
         def __len__(self) -> int:
-            return len(self.features) - self.seq_length
+            return max(0, len(self.features) - self.seq_length)
 
         def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
             x = self.features[idx : idx + self.seq_length]  # noqa: E203  # (seq_len, n_features)
@@ -291,9 +292,6 @@ class DeepFactorMiningService:
             if hasattr(self, "_trained_model") and self._trained_model is not None:
                 del self._trained_model
                 self._trained_model = None
-            if hasattr(self, "data") and self.data is not None:
-                # Don't delete self.data as it may be shared, just remove reference
-                self.data = None
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
         except ImportError:
@@ -439,9 +437,9 @@ class DeepFactorMiningService:
         """
         mean = X_train.mean(axis=0)
         std = X_train.std(axis=0)
-        std[std < 1e-8] = 1.0  # 避免除零 — guard before division below
+        std[std < 1e-10] = 1.0  # 避免除零 — guard before division below
 
-        # NOTE: Division by std is safe due to the guard above (std[std < 1e-8] = 1.0)
+        # NOTE: Division by std is safe due to the guard above (std[std < 1e-10] = 1.0)
         X_train_norm = (X_train - mean) / std
         X_val_norm = (X_val - mean) / std
 
@@ -459,7 +457,7 @@ class DeepFactorMiningService:
 
         # 前向填充 + 零填充处理 NaN
         df_features = pd.DataFrame(X)
-        df_features = df_features.ffill().fillna(0)
+        df_features = df_features.ffill().bfill()
         X = df_features.values
 
         # 时间分割: 后 20% 作为验证集
@@ -583,8 +581,8 @@ class DeepFactorMiningService:
                     val_loss = criterion(pred, batch_y)
                     val_losses.append(val_loss.item())
 
-            avg_train_loss = float(np.mean(train_losses))
-            avg_val_loss = float(np.mean(val_losses))
+            avg_train_loss = float(np.mean(train_losses)) if train_losses else float("inf")
+            avg_val_loss = float(np.mean(val_losses)) if val_losses else float("inf")
             history["train_loss"].append(avg_train_loss)
             history["val_loss"].append(avg_val_loss)
 
@@ -644,7 +642,7 @@ class DeepFactorMiningService:
 
         # 前向填充 + 零填充
         df_features = pd.DataFrame(X)
-        df_features = df_features.ffill().fillna(0)
+        df_features = df_features.ffill().bfill()
         X = df_features.values
 
         # 标准化（使用训练时保存的统计量）
@@ -671,7 +669,7 @@ class DeepFactorMiningService:
                             for start in range(chunk_start, chunk_end)
                         ]
                     )
-                    _, chunk_latent = self._trained_model(chunk_windows.to(self.device))
+                    _, chunk_latent = model(chunk_windows.to(self.device))
                     all_factors.append(chunk_latent[:, -1, :].cpu())
                     del chunk_windows
             if all_factors:
@@ -739,7 +737,7 @@ class DeepFactorMiningService:
                             existing_factors=None,
                         )
                         score_val = validation.get("score")
-                        fitness = (score_val / 100.0) if score_val is not None else 0.0
+                        fitness = max(0.0, min(score_val / 100.0, 1.0)) if score_val is not None else 0.0
                 except Exception as e:
                     logger.warning(f"{factor_name} 验证失败: {e}")
 

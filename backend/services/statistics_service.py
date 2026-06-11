@@ -349,7 +349,7 @@ class StatisticsService:
         if len(factor_df) == 0:
             return pd.DataFrame()
 
-        corr_matrix = factor_df.corr()
+        corr_matrix = factor_df.corr(method="spearman")
         return corr_matrix
 
     # ==================== 因子拥挤度分析 ====================

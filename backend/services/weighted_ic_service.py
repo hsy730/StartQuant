@@ -151,7 +151,7 @@ class WeightedICService:
             for i, name in enumerate(factor_names):
                 if name in weights and name in aligned_ics.columns:
                     weight = weights[name]
-                    ic_contribution = aligned_ics[name].fillna(0) * weight
+                    ic_contribution = aligned_ics[name] * weight
                     weighted_ic_series += ic_contribution
 
                     contribution_ratio = safe_divide(

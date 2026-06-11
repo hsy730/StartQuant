@@ -356,11 +356,22 @@ class FactorCalculator:
             )
 
         def CORR(x, y, n=10):
-            if isinstance(x, pd.Series) and isinstance(y, pd.Series):
-                result = x.rolling(window=n, min_periods=2).corr(y)
-                return result.replace([np.inf, -np.inf], np.nan)
-            result = pd.Series(x).rolling(window=n, min_periods=2).corr(pd.Series(y))
-            return result.replace([np.inf, -np.inf], np.nan)
+            """滚动Spearman秩相关（规则7.1：因子分析必须使用Spearman）"""
+            from scipy.stats import spearmanr
+            if not isinstance(x, pd.Series):
+                x = pd.Series(x)
+            if not isinstance(y, pd.Series):
+                y = pd.Series(y)
+
+            def _spearman_corr(window_x):
+                idx = window_x.index
+                window_y = y.loc[idx]
+                valid = window_x.notna() & window_y.notna()
+                if valid.sum() < 2:
+                    return np.nan
+                return spearmanr(window_x[valid], window_y[valid])[0]
+
+            return x.rolling(window=n, min_periods=2).apply(_spearman_corr, raw=False).replace([np.inf, -np.inf], np.nan)
 
         def COV(x, y, n=10):
             if isinstance(x, pd.Series) and isinstance(y, pd.Series):

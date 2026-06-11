@@ -305,14 +305,14 @@ class PySRFactorMiningService(BaseMiningService):
                                     else 0.0
                                 )
                                 ir_raw = period_stats.get("ir")
-                                ir_val = float(ir_raw) if ir_raw is not None else 0.0
+                                ir_val = float(ir_raw) if ir_raw is not None else None
                                 break
 
                     _stability = (  # noqa: F841
                         float(ic_results.get("stability")) if ic_results.get("stability") is not None else 0.0
                     )
 
-                    ir_capped = min(ir_val, 5.0)
+                    ir_capped = min(ir_val, 5.0) if ir_val is not None else None
 
                     validation = {
                         "ic_validation": {

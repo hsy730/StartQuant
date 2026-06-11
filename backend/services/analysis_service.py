@@ -1092,8 +1092,8 @@ class AnalysisService:
                         all_ic_stats[factor_key] = {
                             "IC均值": float(weighted_mean),
                             "IC标准差": (
-                                float(period_stats.get("std_ic"))
-                                if period_stats.get("std_ic") is not None
+                                float(_std_ic)
+                                if _std_ic is not None
                                 else float(ic_s.std())
                             ),
                             "IR": safe_ir(float(weighted_mean), float(std_ic_val), default=None),
@@ -1104,7 +1104,7 @@ class AnalysisService:
                             "t统计量": (
                                 float(period_stats.get("t_statistic"))
                                 if period_stats.get("t_statistic") is not None
-                                else 0.0
+                                else None
                             ),
                             "p值": (
                                 float(period_stats.get("p_value")) if period_stats.get("p_value") is not None else 1.0
