@@ -1094,6 +1094,65 @@ if abs(annual_return) < 1e-10:
 
 **原则**：规则7.6 的扩展。`== 0` 对浮点数不可靠，适用于所有数值比较场景——包括权重和、标准差、收益率、IC 权重和等。`len(x) == 0`（容器长度）不受此规则约束。
 
+### 规则7.41：`dict.get(key, default)` 在值为 None 时不提供 default，评分函数必须显式检查
+
+**来源**：`comprehensive_scoring_service.py` 中 `factor_metrics.get("ir", 0)` 返回 `None`（键存在），`abs(None)` 崩溃
+
+```python
+# ❌ 错误：dict.get(key, default) 仅在键不存在时返回 default，键存在但值为 None 时返回 None
+ir = factor_metrics.get("ir", 0)  # {"ir": None} → ir=None，不是0
+ir_score = min(abs(ir) * 40, 100)  # abs(None) → TypeError!
+
+# ❌ 错误：or 0 在值为0时也回退（0 or 0.2 → 0.2，错误）
+annual_return = strategy_metrics.get("annual_return") or 0  # 年化0%→回退到0，OK
+sharpe = strategy_metrics.get("sharpe_ratio") or 1.0  # sharpe=0.0→回退到1.0，错误！
+
+# ✅ 正确：显式 None 检查
+ir_val = factor_metrics.get("ir")
+ir_score = min(abs(ir_val) * 40, 100) if ir_val is not None else 0
+
+annual_return = strategy_metrics.get("annual_return")
+return_score = min(max(annual_return / 0.2 * 100, 0), 100) if annual_return is not None else 0
+```
+
+**原则**：上游服务（`calculate_risk_metrics`、`safe_ir` 等）遵循规则6返回 `None` 表示"不可计算"。消费端必须区分"值为0"和"值为None"。`dict.get(key, default)` 和 `or default` 都无法正确区分这两种情况。
+
+### 规则7.42：循环变量禁止泄漏到循环外用于计算整体指标
+
+**来源**：`factor_attribution_service.py` 中 `_decompose_return` 循环变量 `returns` 被用于计算整体年化收益
+
+```python
+# ❌ 错误：循环结束后 returns 是最后一次迭代的值
+for stock_code, df in factor_data.items():
+    if "close" in df.columns:
+        returns = df["close"].pct_change(1).dropna()  # 循环变量被覆盖
+
+# 循环外使用 returns — 实际是最后一只股票的收益率
+"annual_return": float(empyrical.annual_return(returns, period='daily'))
+
+# ✅ 正确：从各股票结果中聚合
+per_stock_annual = [v["annual_return"] for v in returns_by_stock.values()
+                    if v.get("annual_return") is not None]
+"annual_return": float(np.mean(per_stock_annual)) if per_stock_annual else None
+```
+
+**原则**：Python 循环变量在循环结束后保留最后一次迭代的值。在金融计算中，用单只股票的收益率代表整体表现是严重的语义错误。
+
+### 规则7.43：f-string 格式化 None 值会崩溃，必须先检查
+
+**来源**：`factor_attribution_service.py` 中 `f"{alpha_annual:.4f}"` 当 alpha 为 None 时崩溃
+
+```python
+# ❌ 错误：None 不能用 :.4f 格式化
+f"Alpha: {alpha_annual:.4f}"  # alpha_annual=None → TypeError
+
+# ✅ 正确：先检查再格式化
+alpha_str = f"{alpha_annual:.4f}" if alpha_annual is not None else "不可计算"
+f"Alpha: {alpha_str}"
+```
+
+**原则**：与规则7.36一致，None 值不能参与任何数值运算，包括 f-string 格式化。
+
 ---
 
 ## 代码审查 Checklist
@@ -1172,6 +1231,9 @@ if abs(annual_return) < 1e-10:
 - [ ] 评分函数总分是否截断到 [0, 100]？（规则7.38）
 - [ ] 衰减率在收益为零时是否返回无穷大而非 0%？（规则7.39）
 - [ ] 浮点数值 `== 0` 是否统一改为 `< 1e-10`？（规则7.40）
+- [ ] `dict.get(key, default)` 是否正确处理值为 None 的情况？（规则7.41）
+- [ ] 循环变量是否泄漏到循环外用于计算整体指标？（规则7.42）
+- [ ] f-string 格式化是否对 None 值做了检查？（规则7.43）
 
 ---
 

@@ -58,28 +58,30 @@ class ComprehensiveScoringService:
         total_score = 0.0
         details = {}
 
-        # 1. IC得分 (0-100)
-        ic_mean = abs(factor_metrics.get("ic_mean", 0))
+        # 1. IC得分 (0-100) — 规则7.36: dict.get(key, default) 在值为None时不生效
+        ic_mean_val = factor_metrics.get("ic_mean")
+        ic_mean = abs(ic_mean_val) if ic_mean_val is not None else 0
         ic_score = min(ic_mean * 400, 100)  # IC=0.25时满分
         total_score += weights["ic"] * ic_score
         details["ic_score"] = float(ic_score)
 
         # 2. IR得分 (0-100)
-        ir = factor_metrics.get("ir", 0)
-        ir_score = min(abs(ir) * 40, 100)  # IR=2.5时满分
+        ir_val = factor_metrics.get("ir")
+        ir_score = min(abs(ir_val) * 40, 100) if ir_val is not None else 0  # IR=2.5时满分
         total_score += weights["ir"] * ir_score
         details["ir_score"] = float(ir_score)
 
         # 3. 稳定性得分 (0-100)
-        stability = factor_metrics.get("stability_score", 0.8)
-        stability_score = stability * 100
+        stability = factor_metrics.get("stability_score")
+        stability_score = (stability if stability is not None else 0.8) * 100
         total_score += weights["stability"] * stability_score
         details["stability_score"] = float(stability_score)
 
         # 4. 换手率得分 (0-100)
-        turnover = factor_metrics.get("turnover", 0.3)
+        turnover = factor_metrics.get("turnover")
+        turnover_val = turnover if turnover is not None else 0.3
         # 换手率越低越好
-        turnover_score = max(100 - turnover * 200, 0)
+        turnover_score = max(100 - turnover_val * 200, 0)
         total_score += weights["turnover"] * turnover_score
         details["turnover_score"] = float(turnover_score)
 
@@ -87,7 +89,7 @@ class ComprehensiveScoringService:
         grade = self._get_grade(total_score)
 
         return {
-            "total_score": round(total_score, 2),
+            "total_score": max(0.0, min(round(total_score, 2), 100.0)),
             "grade": grade,
             "details": details,
             "weights": weights,
@@ -143,7 +145,10 @@ class ComprehensiveScoringService:
             # 年化滑点成本 = 滑点率 * 换手率 * 2（买入+卖出）
             annual_cost = slip * turnover * 2
             net_return = annual_return - annual_cost
-            return_decay = safe_divide(float(annual_cost), float(annual_return), default=float('inf')) * 100
+            if annual_return is None or annual_return == 0:
+                return_decay = float('inf')
+            else:
+                return_decay = safe_divide(float(annual_cost), float(annual_return), default=float('inf')) * 100
 
             scenario = {
                 "slippage_rate": slip,
@@ -310,34 +315,39 @@ class ComprehensiveScoringService:
         details = {}
 
         # 1. 收益率得分 (0-100)
-        annual_return = strategy_metrics.get("annual_return", 0)
+        annual_return = strategy_metrics.get("annual_return")
+        annual_return = annual_return if annual_return is not None else 0
         # 假设年化收益率目标为20%
         return_score = min(max(annual_return / 0.2 * 100, 0), 100)
         total_score += weights["return"] * return_score
         details["return_score"] = float(return_score)
 
         # 2. 风险得分 (0-100)
-        max_drawdown = strategy_metrics.get("max_drawdown", 0.2)
+        max_drawdown = strategy_metrics.get("max_drawdown")
+        max_drawdown = max_drawdown if max_drawdown is not None else 0.2
         # 最大回撤越小越好，假设目标为10%
         drawdown_score = max(100 - abs(max_drawdown) / 0.1 * 100, 0)
         total_score += weights["risk"] * drawdown_score
         details["risk_score"] = float(drawdown_score)
 
         # 3. 效率得分 (0-100)
-        sharpe_ratio = strategy_metrics.get("sharpe_ratio", 0)
+        sharpe_ratio = strategy_metrics.get("sharpe_ratio")
+        sharpe_ratio = sharpe_ratio if sharpe_ratio is not None else 0
         # 夏普比率目标为2.0
         sharpe_score = max(min(sharpe_ratio / 2.0 * 100, 100), 0)
         total_score += weights["efficiency"] * sharpe_score
         details["efficiency_score"] = float(sharpe_score)
 
         # 4. 稳定性得分 (0-100)
-        win_rate = strategy_metrics.get("win_rate", 0.5)
+        win_rate = strategy_metrics.get("win_rate")
+        win_rate = win_rate if win_rate is not None else 0.5
         win_rate_score = win_rate * 100
         total_score += weights["stability"] * win_rate_score
         details["stability_score"] = float(win_rate_score)
 
         # 5. 成本得分 (0-100)
-        turnover = strategy_metrics.get("turnover", 0.5)
+        turnover = strategy_metrics.get("turnover")
+        turnover = turnover if turnover is not None else 0.5
         # 换手率越低越好
         cost_score = max(100 - turnover * 100, 0)
         total_score += weights["cost"] * cost_score
@@ -347,7 +357,7 @@ class ComprehensiveScoringService:
         grade = self._get_grade(total_score)
 
         return {
-            "total_score": round(total_score, 2),
+            "total_score": max(0.0, min(round(total_score, 2), 100.0)),
             "grade": grade,
             "details": details,
             "weights": weights,
@@ -382,12 +392,14 @@ class ComprehensiveScoringService:
         details = {}
 
         # 1. 收益率得分
-        annual_return = portfolio_metrics.get("annual_return", 0)
+        annual_return = portfolio_metrics.get("annual_return")
+        annual_return = annual_return if annual_return is not None else 0
         return_score = min(max(annual_return / 0.15 * 100, 0), 100)
 
         # 如果有基准，计算超额收益
         if benchmark_metrics:
-            benchmark_return = benchmark_metrics.get("annual_return", 0)
+            benchmark_return = benchmark_metrics.get("annual_return")
+            benchmark_return = benchmark_return if benchmark_return is not None else 0
             excess_return = annual_return - benchmark_return
             return_score = min(max(excess_return / 0.05 * 100, 0), 100)
 
@@ -395,22 +407,26 @@ class ComprehensiveScoringService:
         details["return_score"] = float(return_score)
 
         # 2. 风险得分
-        volatility = portfolio_metrics.get("volatility", 0.15)
-        max_drawdown = portfolio_metrics.get("max_drawdown", 0.1)
+        volatility = portfolio_metrics.get("volatility")
+        volatility = volatility if volatility is not None else 0.15
+        max_drawdown = portfolio_metrics.get("max_drawdown")
+        max_drawdown = max_drawdown if max_drawdown is not None else 0.1
         # empyrical 返回负值（如 -0.15 表示15%回撤），需取绝对值
         risk_score = max(100 - (volatility / 0.2 * 50 + abs(max_drawdown) / 0.15 * 50), 0)
         total_score += weights["risk"] * risk_score
         details["risk_score"] = float(risk_score)
 
         # 3. 分散化得分
-        concentration = portfolio_metrics.get("herfindahl_index", 0.1)
+        concentration = portfolio_metrics.get("herfindahl_index")
+        concentration = concentration if concentration is not None else 0.1
         # Herfindahl指数越低越好
         diversification_score = max(100 - concentration * 100, 0)
         total_score += weights["diversification"] * diversification_score
         details["diversification_score"] = float(diversification_score)
 
         # 4. 效率得分
-        sharpe_ratio = portfolio_metrics.get("sharpe_ratio", 1.0)
+        sharpe_ratio = portfolio_metrics.get("sharpe_ratio")
+        sharpe_ratio = sharpe_ratio if sharpe_ratio is not None else 1.0
         sharpe_score = max(min(sharpe_ratio / 2.0 * 100, 100), 0)
         total_score += weights["efficiency"] * sharpe_score
         details["efficiency_score"] = float(sharpe_score)
@@ -419,7 +435,7 @@ class ComprehensiveScoringService:
         grade = self._get_grade(total_score)
 
         return {
-            "total_score": round(total_score, 2),
+            "total_score": max(0.0, min(round(total_score, 2), 100.0)),
             "grade": grade,
             "details": details,
             "weights": weights,

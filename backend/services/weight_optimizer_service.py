@@ -163,7 +163,14 @@ class WeightOptimizer:
                     ic_mean = ic_series.mean()
                     ic_std = ic_series.std()
                     ir = safe_ir(float(ic_mean), float(ic_std), default=None)
-                    ir_values[factor_name] = abs(ir) if ir is not None else 0.0
+                    if ir is not None:
+                        ir_values[factor_name] = abs(ir)
+                    elif abs(float(ic_mean)) > 1e-10:
+                        # IR不可计算但IC_mean非零 → 因子极稳定，用IC绝对值作为权重代理
+                        ir_values[factor_name] = abs(float(ic_mean)) * 10
+                        logger.info(f"因子{factor_name} IR不可计算(IC_std≈0)，使用IC代理权重")
+                    else:
+                        ir_values[factor_name] = 0.0
                 else:
                     ir_values[factor_name] = 0.0
             else:

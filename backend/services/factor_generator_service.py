@@ -689,7 +689,11 @@ def calculate_factor(df):
 
                     ir = safe_ir(float(ic_mean), float(ic_std), default=None)
                     if ir is None:
-                        ir = 0
+                        # Rule 7.10: IC_std≈0 且 IC_mean≠0 → IR→∞，因子极其稳定
+                        if abs(float(ic_mean)) > 1e-10:
+                            ir = float('inf')
+                        else:
+                            ir = 0
                 else:
                     ir = 0
 

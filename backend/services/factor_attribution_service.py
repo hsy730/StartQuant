@@ -323,13 +323,13 @@ class FactorAttributionService:
         else:
             r_squared = None
 
+        alpha_str = f"{alpha_annual:.4f}" if alpha_annual is not None else "不可计算"
+        beta_str = f"{beta:.4f}" if beta is not None else "不可计算"
+        r2_str = f"{r_squared:.4f}" if r_squared is not None else "不可计算"
         interpretation = (
-            f"相对于基准的年化Alpha: {alpha_annual:.4f}, "
-            f"Beta: {beta:.4f}, "
-            f"拟合度(R²): {r_squared:.4f}" if r_squared is not None else
-            f"相对于基准的年化Alpha: {alpha_annual:.4f}, "
-            f"Beta: {beta:.4f}, "
-            f"拟合度(R²): 不可计算（组合收益恒定）"
+            f"相对于基准的年化Alpha: {alpha_str}, "
+            f"Beta: {beta_str}, "
+            f"拟合度(R²): {r2_str}"
         )
 
         return {
@@ -409,7 +409,7 @@ class FactorAttributionService:
         return {
             "overall_stats": {
                 "avg_daily_return": overall_avg,
-                "annual_return": float(empyrical.annual_return(returns, period='daily')) if overall_avg is not None and len(returns) > 0 else None,
+                "annual_return": float(np.mean([v["annual_return"] for v in returns_by_stock.values() if v.get("annual_return") is not None])) if any(v.get("annual_return") is not None for v in returns_by_stock.values()) else None,
                 "cumulative_return": overall_cum,
                 "volatility_annual": overall_vol_annual,
                 "daily_volatility": overall_daily_vol,

@@ -186,7 +186,7 @@ class FactorValidationService:
 
                     # 基于IC序列的t检验（比单期Fisher z更可靠）
                     if n > 1 and ic_std > 1e-10:
-                        t_stat = safe_divide(ic, ic_std / np.sqrt(n), default=0.0)
+                        t_stat = float(ic) / float(ic_std / np.sqrt(n))  # se guaranteed positive (Rule 7.34)
                         p_value = float(2 * (1 - stats.t.cdf(abs(t_stat), df=n - 1)))
                     else:
                         # 规则7.15：ic_std≈0 且 ic_mean≠0 → t_stat=inf
@@ -348,7 +348,7 @@ class FactorValidationService:
                         # t检验
                         n = len(ic_series)
                         if n > 1 and ic_std > 1e-10:
-                            t_stat = safe_divide(ic_mean, ic_std / np.sqrt(n), default=0.0)
+                            t_stat = float(ic_mean) / float(ic_std / np.sqrt(n))  # se guaranteed positive (Rule 7.34)
                             p_value = float(2 * (1 - stats.t.cdf(abs(t_stat), df=n - 1)))
                         else:
                             # 规则7.15：ic_std≈0 且 ic_mean≠0 → t_stat=inf
