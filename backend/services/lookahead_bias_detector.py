@@ -776,10 +776,18 @@ class LookaheadBiasDetector:
         """检测 6: 回测指标真实性校验"""
         warnings_list = []
 
-        annual_return = metrics.get("annual_return", metrics.get("total_return", 0))
-        sharpe = metrics.get("sharpe_ratio", 0)
-        win_rate = metrics.get("win_rate", 0.5)
-        max_dd = metrics.get("max_drawdown", 1.0)
+        annual_return = metrics.get("annual_return")
+        if annual_return is None:
+            annual_return = metrics.get("total_return", 0)
+        sharpe = metrics.get("sharpe_ratio")
+        if sharpe is None:
+            sharpe = 0
+        win_rate = metrics.get("win_rate")
+        if win_rate is None:
+            win_rate = 0.5
+        max_dd = metrics.get("max_drawdown")
+        if max_dd is None:
+            max_dd = 1.0
 
         if annual_return > self.thresholds["annual_return_max"]:
             warnings_list.append(f"年化收益={annual_return:.1%}>={self.thresholds['annual_return_max']*100:.0f}%")

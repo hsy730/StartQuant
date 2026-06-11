@@ -299,7 +299,8 @@ class PySRFactorMiningService(BaseMiningService):
                             if first_period:
                                 period_stats = ic_type_data[first_period]
                                 ic_mean_val = float(period_stats.get("mean_ic", 0))
-                                ir_val = float(period_stats.get("ir", 0))
+                                ir_raw = period_stats.get("ir")
+                                ir_val = float(ir_raw) if ir_raw is not None else 0.0
                                 break
 
                     _stability = float(ic_results.get("stability", 0))

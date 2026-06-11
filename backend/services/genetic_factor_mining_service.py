@@ -416,10 +416,14 @@ class GeneticFactorMiningService(BaseMiningService):
             return None
 
         # Phase 4: store in cache
-        if cached is None:
-            cached = {}
-        cached[stock_code] = result
-        self._cache_set(tree_str, cached)
+        with self._cache_lock:
+            cached = self._factor_cache.get(tree_str)
+            if cached is None:
+                cached = {}
+                if len(self._factor_cache) >= self.max_cache_size:
+                    self._factor_cache.popitem(last=False)
+                self._factor_cache[tree_str] = cached
+            cached[stock_code] = result
 
         return result
 
@@ -527,7 +531,8 @@ class GeneticFactorMiningService(BaseMiningService):
             # Compute forward returns from close prices for time-series IC
             try:
                 close = self.data["close"]
-                fwd_ret = close.shift(-1) / close - 1
+                from backend.utils.safe_math import safe_series_divide
+                fwd_ret = safe_series_divide(close.shift(-1), close, default=np.nan) - 1
                 fwd_ret = fwd_ret.dropna()
                 fv_aligned = fv.reindex(fwd_ret.index).dropna()
 
@@ -696,8 +701,11 @@ class GeneticFactorMiningService(BaseMiningService):
         def _sort_key(f):
             v = f.get("validation", {})
             if v and isinstance(v, dict):
-                return v.get("score", f.get("fitness", 0))
-            return f.get("fitness", 0)
+                score = v.get("score")
+                if score is not None:
+                    return score
+            fitness = f.get("fitness")
+            return fitness if fitness is not None else 0
 
         best_factors.sort(key=_sort_key, reverse=True)
         for idx, fi in enumerate(best_factors):

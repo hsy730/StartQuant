@@ -1346,14 +1346,15 @@ class AnalysisService:
                             report += "|------|--------|----------|-----|---------|---------|----|\n"
                             for period_label, period_stats in ic_data.items():
                                 if isinstance(period_stats, dict) and "error" not in period_stats:
+                                    _sf = lambda v, d=0: v if v is not None else d
                                     report += (
                                         f"| {period_label} | "
-                                        f"{period_stats.get('mean_ic', 0):.4f} | "
-                                        f"{period_stats.get('std_ic', 0):.4f} | "
-                                        f"{period_stats.get('ir', 0):.4f} | "
-                                        f"{period_stats.get('ic_positive_ratio', 0):.2%} | "
-                                        f"{period_stats.get('t_statistic', 0):.4f} | "
-                                        f"{period_stats.get('p_value', 1):.4f} |\n"
+                                        f"{_sf(period_stats.get('mean_ic'), 0):.4f} | "
+                                        f"{_sf(period_stats.get('std_ic'), 0):.4f} | "
+                                        f"{_sf(period_stats.get('ir'), 0):.4f} | "
+                                        f"{_sf(period_stats.get('ic_positive_ratio'), 0):.2%} | "
+                                        f"{_sf(period_stats.get('t_statistic'), 0):.4f} | "
+                                        f"{_sf(period_stats.get('p_value'), 1):.4f} |\n"
                                     )
                             report += "\n"
 

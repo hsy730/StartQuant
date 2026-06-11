@@ -419,9 +419,10 @@ class PortfolioAnalysisService:
         if abs(weight_sum - 1.0) > 1e-6:
             weights = normalize_weights(weights)
 
-        # 计算加权期望收益（年化）
-        mean_returns = factor_returns.mean()  # 每个因子的平均收益
-        weighted_return = (weights * mean_returns).sum() * 252  # 年化
+        # 计算加权期望收益（年化）— 使用几何复利（Rule 7.32）
+        import empyrical
+        weighted_daily_returns = (factor_returns * weights).sum(axis=1)
+        weighted_return = float(empyrical.annual_return(weighted_daily_returns, period='daily'))
 
         # 计算加权波动率（年化）
         # 组合方差 = w' * Σ * w

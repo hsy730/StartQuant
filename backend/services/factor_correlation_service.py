@@ -386,7 +386,10 @@ class FactorCorrelationService:
                                         continue
                                 if len(daily_z) >= 3:
                                     z_val = np.mean(daily_z)
-                                    z_se = np.std(daily_z, ddof=1) / np.sqrt(len(daily_z))
+                                    z_se = safe_divide(np.std(daily_z, ddof=1), np.sqrt(len(daily_z)), default=None)
+                                    if z_se is None or z_se < 1e-10:
+                                        # 标准误为零/极小 → 因子相关性极其稳定，使用理论标准误
+                                        z_se = 1 / np.sqrt(len(daily_z))
                                 else:
                                     # 不足3天有效数据，回退到经典公式
                                     z_val = np.arctanh(val)

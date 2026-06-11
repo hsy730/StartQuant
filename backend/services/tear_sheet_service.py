@@ -491,8 +491,10 @@ class TearSheetService:
         
         if "ic_ir_analysis" in sections:
             ic_ir = sections["ic_ir_analysis"]
-            ir = ic_ir.get("ir", 0)
-            
+            ir = ic_ir.get("ir")
+            if ir is None:
+                ir = 0
+
             if ir < 0.5:
                 recommendations.append({
                     "priority": "high",

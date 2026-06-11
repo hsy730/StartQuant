@@ -67,15 +67,18 @@ class ExportService:
 
         # 性能指标
         if metrics:
+            def _fmt(val, fmt, default=0):
+                return f"{val:{fmt}}" if val is not None else f"{default:{fmt}}"
+
             summary_data.append(["性能指标"])
-            summary_data.append(["总收益率", f"{metrics.get('total_return', 0):.2%}"])
-            summary_data.append(["年化收益率", f"{metrics.get('annual_return', 0):.2%}"])
-            summary_data.append(["波动率", f"{metrics.get('volatility', 0):.2%}"])
-            summary_data.append(["夏普比率", f"{metrics.get('sharpe_ratio', 0):.2f}"])
-            summary_data.append(["最大回撤", f"{metrics.get('max_drawdown', 0):.2%}"])
-            summary_data.append(["卡玛比率", f"{metrics.get('calmar_ratio', 0):.2f}"])
-            summary_data.append(["胜率", f"{metrics.get('win_rate', 0):.2%}"])
-            summary_data.append(["索提诺比率", f"{metrics.get('sortino_ratio', 0):.2f}"])
+            summary_data.append(["总收益率", _fmt(metrics.get('total_return'), '.2%', 0)])
+            summary_data.append(["年化收益率", _fmt(metrics.get('annual_return'), '.2%', 0)])
+            summary_data.append(["波动率", _fmt(metrics.get('volatility'), '.2%', 0)])
+            summary_data.append(["夏普比率", _fmt(metrics.get('sharpe_ratio'), '.2f', 0)])
+            summary_data.append(["最大回撤", _fmt(metrics.get('max_drawdown'), '.2%', 0)])
+            summary_data.append(["卡玛比率", _fmt(metrics.get('calmar_ratio'), '.2f', 0)])
+            summary_data.append(["胜率", _fmt(metrics.get('win_rate'), '.2%', 0)])
+            summary_data.append(["索提诺比率", _fmt(metrics.get('sortino_ratio'), '.2f', 0)])
 
         # 创建DataFrame
         df_summary = pd.DataFrame(summary_data, columns=["项目", "值"])

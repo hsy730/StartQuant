@@ -384,8 +384,10 @@ class BaseMiningService(ABC):
             validation = factor_info.get("validation", {})
             if not isinstance(validation, dict):
                 continue
-            raw_ic = abs(validation.get("_raw_ic_mean", 0.0))
-            raw_ir = abs(validation.get("_raw_ir", 0.0))
+            raw_ic_val = validation.get("_raw_ic_mean")
+            raw_ir_val = validation.get("_raw_ir")
+            raw_ic = abs(raw_ic_val) if raw_ic_val is not None else 0.0
+            raw_ir = abs(raw_ir_val) if raw_ir_val is not None else 0.0
             if raw_ic > 1e-10:
                 valid_ic.append(raw_ic)
             if raw_ir > 1e-10:
@@ -415,8 +417,10 @@ class BaseMiningService(ABC):
             if not isinstance(validation, dict):
                 continue
 
-            raw_ic = abs(validation.get("_raw_ic_mean", 0.0))
-            raw_ir = abs(validation.get("_raw_ir", 0.0))
+            raw_ic_val = validation.get("_raw_ic_mean")
+            raw_ir_val = validation.get("_raw_ir")
+            raw_ic = abs(raw_ic_val) if raw_ic_val is not None else 0.0
+            raw_ir = abs(raw_ir_val) if raw_ir_val is not None else 0.0
 
             z_ic = max(-3.0, min(safe_divide(float(raw_ic - ic_mean), float(ic_std), default=0.0), 3.0))
             z_ir = max(-3.0, min(safe_divide(float(raw_ir - ir_mean), float(ir_std), default=0.0), 3.0))

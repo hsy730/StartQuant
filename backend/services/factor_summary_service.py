@@ -144,7 +144,7 @@ class FactorSummaryService:
         if ic_summary and isinstance(ic_summary, dict):
             # 简化处理：假设第一个因子的IC数据
             first_factor = list(ic_summary.values())[0] if ic_summary else {}
-            ic_mean = abs(first_factor.get("ic_mean", 0))
+            ic_mean = abs(_safe_float(first_factor.get("ic_mean"), default=0))
             if isinstance(ic_mean, float) and np.isnan(ic_mean):
                 ic_mean = 0.0
             score += min(ic_mean * 400, 40)  # IC=0.1时得40分满分
@@ -152,10 +152,10 @@ class FactorSummaryService:
         # IR得分（0-30分）
         if ic_summary:
             first_factor = list(ic_summary.values())[0] if ic_summary else {}
-            ir = first_factor.get("ir", 0)
-            if isinstance(ir, float) and np.isnan(ir):
-                ir = 0.0
-            score += max(min(ir * 10, 30), 0)  # IR=3时得30分满分
+            ir = _safe_float(first_factor.get("ir"), default=None)
+            if ir is not None and isinstance(ir, float) and np.isnan(ir):
+                ir = None
+            score += max(min(_safe_float(ir, default=0) * 10, 30), 0)  # IR=3时得30分满分
 
         # 稳定性得分（0-20分）
         stability_summary = summary.get("stability_summary")
@@ -273,8 +273,8 @@ class FactorSummaryService:
                 dist = stability_summary["distribution"]
                 report += f"""
 **分布稳定性**
-- 稳定性得分: {dist.get('stability_score', 0):.2f}
-- 稳定比例: {dist.get('stable_ratio', 0):.2%}
+- 稳定性得分: {_safe_float(dist.get('stability_score'), default=0):.2f}
+- 稳定比例: {_safe_float(dist.get('stable_ratio'), default=0):.2%}
 """
 
             if "time_series" in stability_summary:
