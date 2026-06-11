@@ -1,6 +1,7 @@
 """
 因子分析服务模块 - IC/IR统计、SHAP分析（含未来函数检测）
 """
+
 import hashlib
 import logging
 import numpy as np
@@ -9,37 +10,37 @@ import xgboost as xgb
 from typing import Dict, List, Optional, Any
 from pathlib import Path
 from datetime import datetime
-from scipy.stats import spearmanr
 
 # 配置日志
 logger = logging.getLogger(__name__)
 
 try:
     import shap
+
     SHAP_AVAILABLE = True
 except ImportError:
     SHAP_AVAILABLE = False
 
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import StandardScaler  # noqa: E402
 
-from backend.core.settings import settings
-from backend.core.database import get_db
-from backend.repositories.factor_repository import AnalysisCacheRepository
-from backend.models.factor import AnalysisCacheModel
-from backend.services.factor_service import factor_service
-from backend.services.alphalens_analysis_service import alphalens_analysis_service
-from backend.services.data_service import data_service
-from backend.services.factor_preprocessing_pipeline import (
+from backend.core.settings import settings  # noqa: E402
+from backend.core.database import get_db  # noqa: E402
+from backend.repositories.factor_repository import AnalysisCacheRepository  # noqa: E402
+from backend.models.factor import AnalysisCacheModel  # noqa: E402
+from backend.services.factor_service import factor_service  # noqa: E402
+from backend.services.alphalens_analysis_service import alphalens_analysis_service  # noqa: E402
+from backend.services.data_service import data_service  # noqa: E402
+from backend.services.factor_preprocessing_pipeline import (  # noqa: E402
     FactorPreprocessingPipeline,
     PreprocessingConfig,
 )
-from backend.services.lookahead_bias_detector import (
+from backend.services.lookahead_bias_detector import (  # noqa: E402
     lookahead_bias_detector,
     BiasRiskLevel,
 )
-from backend.utils.safe_math import safe_ir, safe_divide
-from backend.utils.weight_utils import normalize_weights
-from backend.utils.ic_calculator import calculate_rolling_ic
+from backend.utils.safe_math import safe_ir, safe_divide  # noqa: E402
+from backend.utils.weight_utils import normalize_weights  # noqa: E402
+from backend.utils.ic_calculator import calculate_rolling_ic  # noqa: E402
 
 
 class AnalysisService:
@@ -64,11 +65,10 @@ class AnalysisService:
             for stock_code, df in results["factor_data"].items():
                 serialized_factor_data[stock_code] = df.to_dict(orient="list")
                 # 保留索引信息以便反序列化恢复
-                if hasattr(df.index, 'to_list'):
+                if hasattr(df.index, "to_list"):
                     index_list = df.index.to_list()
                     serialized_factor_data[stock_code]["__index__"] = [
-                        str(idx) if hasattr(idx, 'isoformat') else idx
-                        for idx in index_list
+                        str(idx) if hasattr(idx, "isoformat") else idx for idx in index_list
                     ]
                     # 记录索引类型，避免整数索引被误解析为日期
                     serialized_factor_data[stock_code]["__index_type__"] = type(df.index).__name__
@@ -86,8 +86,7 @@ class AnalysisService:
                         if key == "IC序列" and isinstance(value, dict):
                             # 将 Timestamp 键转换为字符串
                             serialized_stats[factor_name][key] = {
-                                str(k) if hasattr(k, 'isoformat') else k: v
-                                for k, v in value.items()
+                                str(k) if hasattr(k, "isoformat") else k: v for k, v in value.items()
                             }
                         else:
                             serialized_stats[factor_name][key] = value
@@ -95,16 +94,19 @@ class AnalysisService:
 
             if "monthly_ic" in ic_ir:
                 serialized["ic_ir"]["monthly_ic"] = {
-                    k: v.to_dict() if hasattr(v, 'to_dict') else v
-                    for k, v in ic_ir["monthly_ic"].items()
+                    k: v.to_dict() if hasattr(v, "to_dict") else v for k, v in ic_ir["monthly_ic"].items()
                 }
 
             if "rolling_ir" in ic_ir:
                 serialized["ic_ir"]["rolling_ir"] = {
                     k: (
-                        {str(idx): val for idx, val in v.to_dict().items()} if hasattr(v, 'to_dict')
-                        else {str(idx): val for idx, val in dict(enumerate(v.tolist())).items()} if hasattr(v, 'tolist')
-                        else v
+                        {str(idx): val for idx, val in v.to_dict().items()}
+                        if hasattr(v, "to_dict")
+                        else (
+                            {str(idx): val for idx, val in dict(enumerate(v.tolist())).items()}
+                            if hasattr(v, "tolist")
+                            else v
+                        )
                     )
                     for k, v in ic_ir["rolling_ir"].items()
                 }
@@ -149,8 +151,7 @@ class AnalysisService:
         # 将 monthly_ic 转回 DataFrame
         if "ic_ir" in result and "monthly_ic" in result["ic_ir"]:
             result["ic_ir"]["monthly_ic"] = {
-                k: pd.DataFrame(v) if isinstance(v, dict) else v
-                for k, v in result["ic_ir"]["monthly_ic"].items()
+                k: pd.DataFrame(v) if isinstance(v, dict) else v for k, v in result["ic_ir"]["monthly_ic"].items()
             }
 
         # 将 rolling_ir 转回 Series
@@ -161,12 +162,12 @@ class AnalysisService:
                     # 尝试解析字符串索引为 datetime
                     try:
                         result["ic_ir"]["rolling_ir"][k] = pd.Series(
-                            list(v.values()),
-                            index=pd.to_datetime(list(v.keys()))
+                            list(v.values()), index=pd.to_datetime(list(v.keys()))
                         )
                     except Exception as e:
                         # 如果失败，直接使用字符串索引
                         import logging
+
                         logging.getLogger(__name__).debug(f"日期解析失败，使用字符串索引: {e}")
                         result["ic_ir"]["rolling_ir"][k] = pd.Series(v)
                 else:
@@ -175,7 +176,11 @@ class AnalysisService:
         return result
 
     def _generate_cache_key(
-        self, stock_codes: List[str], factor_names: List[str], start_date: str, end_date: str,
+        self,
+        stock_codes: List[str],
+        factor_names: List[str],
+        start_date: str,
+        end_date: str,
         factor_version_hash: Optional[str] = None,
     ) -> str:
         """生成缓存键（包含因子版本哈希，因子更新时自动失效）"""
@@ -201,7 +206,7 @@ class AnalysisService:
                 codes = []
                 for name in factor_names:
                     factor = repo.get_by_name(name)
-                    if factor and hasattr(factor, 'code') and factor.code:
+                    if factor and hasattr(factor, "code") and factor.code:
                         codes.append(f"{name}:{factor.code}")
 
                 if codes:
@@ -254,13 +259,15 @@ class AnalysisService:
             raise ValueError("未能获取任何有效的因子数据")
 
         logger.info("开始执行因子数据美颜处理...")
-        preprocessing_pipeline = FactorPreprocessingPipeline(config=PreprocessingConfig(
-            winsorize_method="mad",
-            enable_market_cap_neutralization=True,
-            enable_industry_neutralization=True,
-            standardize_method="zscore",
-            cross_sectional=(len(stock_codes) > 1),
-        ))
+        preprocessing_pipeline = FactorPreprocessingPipeline(
+            config=PreprocessingConfig(
+                winsorize_method="mad",
+                enable_market_cap_neutralization=True,
+                enable_industry_neutralization=True,
+                standardize_method="zscore",
+                cross_sectional=(len(stock_codes) > 1),
+            )
+        )
 
         factor_data, preprocessing_stats = preprocessing_pipeline.process_multi_stock_factors(
             factor_data=factor_data,
@@ -268,7 +275,9 @@ class AnalysisService:
             parallel_stocks=(len(stock_codes) > 3),
         )
 
-        logger.info(f"因子数据美颜完成，统计信息:\n{preprocessing_pipeline.get_processing_summary(preprocessing_stats)}")
+        logger.info(
+            f"因子数据美颜完成，统计信息:\n{preprocessing_pipeline.get_processing_summary(preprocessing_stats)}"
+        )
 
         results = {
             "metadata": {
@@ -401,7 +410,9 @@ class AnalysisService:
         return all_results
 
     def calculate_ic_ir(
-        self, factor_data: Dict[str, pd.DataFrame], factor_names: List[str],
+        self,
+        factor_data: Dict[str, pd.DataFrame],
+        factor_names: List[str],
         stock_codes: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """
@@ -459,7 +470,9 @@ class AnalysisService:
         }
 
     def _calculate_multi_stock_ic_manual(
-        self, factor_data: Dict[str, pd.DataFrame], factor_names: List[str],
+        self,
+        factor_data: Dict[str, pd.DataFrame],
+        factor_names: List[str],
         stock_codes: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """手动多股票横截面IC计算（当Alphalens不可用时的回退方案）
@@ -500,8 +513,10 @@ class AnalysisService:
 
             # 清理无效值
             valid_mask = (
-                merged[factor_name].notna() & merged["future_return_1"].notna()
-                & ~np.isinf(merged[factor_name]) & ~np.isinf(merged["future_return_1"])
+                merged[factor_name].notna()
+                & merged["future_return_1"].notna()
+                & ~np.isinf(merged[factor_name])
+                & ~np.isinf(merged["future_return_1"])
             )
             merged = merged[valid_mask]
 
@@ -531,7 +546,7 @@ class AnalysisService:
             # 规则7.10：ic_std≈0但ic_mean显著非零时，因子极其稳定，t_stat→∞
             if ic_std < 1e-10:
                 if abs(ic_mean) > 1e-10:
-                    t_stat = float('inf')
+                    t_stat = float("inf")
                     p_value = 0.0
                 else:
                     t_stat = 0.0
@@ -560,8 +575,7 @@ class AnalysisService:
         }
 
     def _calculate_single_stock_ic(
-        self, factor_data: Dict[str, pd.DataFrame], factor_names: List[str],
-        use_tradable_mask: bool = True
+        self, factor_data: Dict[str, pd.DataFrame], factor_names: List[str], use_tradable_mask: bool = True
     ) -> Dict[str, Any]:
         """单股票时序IC计算（Mask-First增强版）"""
         stock_code = list(factor_data.keys())[0]
@@ -592,8 +606,7 @@ class AnalysisService:
 
             if tradable_mask is not None:
                 valid_mask = (
-                    factor_values.notna() & return_values.notna()
-                    & ~np.isinf(factor_values) & ~np.isinf(return_values)
+                    factor_values.notna() & return_values.notna() & ~np.isinf(factor_values) & ~np.isinf(return_values)
                 )
                 combined_mask = valid_mask & tradable_mask
                 # 在原始连续索引上计算rolling，将mask外的数据设为NaN
@@ -601,18 +614,17 @@ class AnalysisService:
                 factor_masked = factor_values.where(combined_mask)
                 return_masked = return_values.where(combined_mask)
                 # 使用统一的 calculate_rolling_ic 计算滚动 Spearman IC（Rule 7.1/7.30）
-                rolling_ic = calculate_rolling_ic(factor_masked, return_masked, window=60, method='spearman')
+                rolling_ic = calculate_rolling_ic(factor_masked, return_masked, window=60, method="spearman")
             else:
                 valid_mask = (
-                    factor_values.notna() & return_values.notna()
-                    & ~np.isinf(factor_values) & ~np.isinf(return_values)
+                    factor_values.notna() & return_values.notna() & ~np.isinf(factor_values) & ~np.isinf(return_values)
                 )
                 factor_clean = factor_values[valid_mask]
                 return_clean = return_values[valid_mask]
                 if len(factor_clean) < 60:
                     continue
                 # 使用统一的 calculate_rolling_ic 计算滚动 Spearman IC（Rule 7.1/7.30）
-                rolling_ic = calculate_rolling_ic(factor_clean, return_clean, window=60, method='spearman')
+                rolling_ic = calculate_rolling_ic(factor_clean, return_clean, window=60, method="spearman")
 
             rolling_ic = rolling_ic.replace([np.inf, -np.inf], np.nan).dropna()
 
@@ -626,9 +638,13 @@ class AnalysisService:
             ic_std = ic_s.std()
             ir = safe_ir(ic_mean, ic_std, default=None)
             stats = {
-                "IC均值": ic_mean, "IC标准差": ic_std, "IR": ir,
-                "IC>0占比": (ic_s > 0).mean(), "IC绝对值均值": abs(ic_s).mean(),
-                "IC序列": ic_s.to_dict(), "IC类型": "时序Rank IC（单股票，Spearman）",
+                "IC均值": ic_mean,
+                "IC标准差": ic_std,
+                "IR": ir,
+                "IC>0占比": (ic_s > 0).mean(),
+                "IC绝对值均值": abs(ic_s).mean(),
+                "IC序列": ic_s.to_dict(),
+                "IC类型": "时序Rank IC（单股票，Spearman）",
                 "Mask-First": tradable_mask is not None,
             }
             ic_stats[factor_name] = stats
@@ -647,7 +663,9 @@ class AnalysisService:
         return result
 
     def _calculate_multi_stock_ic_alphalens(
-        self, factor_data: Dict[str, pd.DataFrame], factor_names: List[str],
+        self,
+        factor_data: Dict[str, pd.DataFrame],
+        factor_names: List[str],
         stock_codes: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """多股票横截面IC计算（委托Alphalens——业界金标准）"""
@@ -683,7 +701,7 @@ class AnalysisService:
                 continue
 
             # 使用因子日期范围构建pricing_df（确保forward returns可计算）
-            _factor_dates_sorted = sorted(factor_dates)
+            _factor_dates_sorted = sorted(factor_dates)  # noqa: F841
 
             # 构建完整的pricing_df（包含因子日期+额外未来日期用于计算forward returns）
             all_price_dates = set()
@@ -748,7 +766,11 @@ class AnalysisService:
                         "IC均值": period_stats.get("mean_ic") if period_stats.get("mean_ic") is not None else 0,
                         "IC标准差": period_stats.get("std_ic") if period_stats.get("std_ic") is not None else 0,
                         "IR": period_stats.get("ir") if period_stats.get("ir") is not None else 0,
-                        "IC>0占比": period_stats.get("ic_positive_ratio") if period_stats.get("ic_positive_ratio") is not None else 0,
+                        "IC>0占比": (
+                            period_stats.get("ic_positive_ratio")
+                            if period_stats.get("ic_positive_ratio") is not None
+                            else 0
+                        ),
                         "IC绝对值均值": abs(ic_s).mean() if len(ic_s) > 0 else 0,
                         "IC序列": ic_s.to_dict(),
                         "IC类型": f"横截面{ic_type_name}（Alphalens）",
@@ -757,7 +779,9 @@ class AnalysisService:
                     }
                     if len(ic_s) > 0:
                         all_monthly_ic[factor_key] = self._calculate_monthly_ic({factor_key: ic_s})[factor_key]
-                        all_rolling_ir[factor_key] = self._calculate_rolling_ir({factor_key: ic_s}, window=60)[factor_key]
+                        all_rolling_ir[factor_key] = self._calculate_rolling_ir({factor_key: ic_s}, window=60)[
+                            factor_key
+                        ]
 
         if not all_ic_stats:
             logger.warning("Alphalens未能返回有效IC数据，请检查因子数据质量")
@@ -774,9 +798,7 @@ class AnalysisService:
             "rolling_ir": all_rolling_ir,
         }
 
-    def _calculate_monthly_ic(
-        self, ic_series: Dict[str, pd.Series]
-    ) -> Dict[str, pd.DataFrame]:
+    def _calculate_monthly_ic(self, ic_series: Dict[str, pd.Series]) -> Dict[str, pd.DataFrame]:
         """计算月度IC热力图数据"""
         monthly_ic = {}
         for factor_name, ic_s in ic_series.items():
@@ -787,9 +809,7 @@ class AnalysisService:
             monthly_ic[factor_name] = pivot
         return monthly_ic
 
-    def _calculate_rolling_ir(
-        self, ic_series: Dict[str, pd.Series], window: int = 60
-    ) -> Dict[str, pd.Series]:
+    def _calculate_rolling_ir(self, ic_series: Dict[str, pd.Series], window: int = 60) -> Dict[str, pd.Series]:
         rolling_ir = {}
         for factor_name, ic_s in ic_series.items():
             min_periods = max(1, window // 4)
@@ -833,7 +853,7 @@ class AnalysisService:
                 if has_multiple_stocks and len(codes) >= 3:
                     # 多股票模式：使用横截面检测（更准确）
                     all_factor_rows = []
-                    _all_return_rows = []
+                    _all_return_rows = []  # noqa: F841
                     for stock_code in codes:
                         df = factor_data.get(stock_code)
                         if df is None or factor_name not in df.columns:
@@ -854,7 +874,9 @@ class AnalysisService:
                         bias_df = pd.concat(all_factor_rows, ignore_index=True)
                         # factor_df仅包含date/stock_code/factor_value，避免与return_df的return列冲突
                         detection_result = lookahead_bias_detector.detect_cross_sectional(
-                            factor_df=bias_df[["date", "stock_code", factor_name]].rename(columns={factor_name: "factor_value"}),
+                            factor_df=bias_df[["date", "stock_code", factor_name]].rename(
+                                columns={factor_name: "factor_value"}
+                            ),
                             return_df=bias_df[["date", "stock_code", "return"]],
                             factor_name="factor_value",
                         )
@@ -927,7 +949,14 @@ class AnalysisService:
         risk_levels = [r.get("risk_level", "unknown") for r in all_bias_results.values()]
         summary = {
             "per_factor": all_bias_results,
-            "overall_risk": max(risk_levels, key=lambda x: ["safe", "low", "medium", "high", "critical", "error", "unknown"].index(x)) if risk_levels else "safe",
+            "overall_risk": (
+                max(
+                    risk_levels,
+                    key=lambda x: ["safe", "low", "medium", "high", "critical", "error", "unknown"].index(x),
+                )
+                if risk_levels
+                else "safe"
+            ),
             "n_high_risk": sum(1 for r in all_bias_results.values() if r.get("risk_level") in ("high", "critical")),
             "n_total": len(all_bias_results),
         }
@@ -1054,20 +1083,32 @@ class AnalysisService:
                         ic_type_name = period_stats.get("ic_type", ic_type_key)
                         factor_key = f"{factor_name}_{ic_type_key}_weighted_{weight_type}"
 
-                        weighted_mean = self._compute_weighted_ic_mean(ic_s, factor_values_dict, weight_map, weight_type)
+                        weighted_mean = self._compute_weighted_ic_mean(
+                            ic_s, factor_values_dict, weight_map, weight_type
+                        )
                         _std_ic = period_stats.get("std_ic")
                         std_ic_val = float(_std_ic) if _std_ic is not None else float(ic_s.std())
 
                         all_ic_stats[factor_key] = {
                             "IC均值": float(weighted_mean),
-                            "IC标准差": float(period_stats.get("std_ic")) if period_stats.get("std_ic") is not None else float(ic_s.std()),
+                            "IC标准差": (
+                                float(period_stats.get("std_ic"))
+                                if period_stats.get("std_ic") is not None
+                                else float(ic_s.std())
+                            ),
                             "IR": safe_ir(float(weighted_mean), float(std_ic_val), default=None),
                             "IC>0占比": float((ic_s > 0).mean()),
                             "IC绝对值均值": float(abs(ic_s).mean()),
                             "IC序列": ic_s.to_dict(),
                             "IC类型": f"横截面{ic_type_name}（{weight_type}加权）",
-                            "t统计量": float(period_stats.get("t_statistic")) if period_stats.get("t_statistic") is not None else 0.0,
-                            "p值": float(period_stats.get("p_value")) if period_stats.get("p_value") is not None else 1.0,
+                            "t统计量": (
+                                float(period_stats.get("t_statistic"))
+                                if period_stats.get("t_statistic") is not None
+                                else 0.0
+                            ),
+                            "p值": (
+                                float(period_stats.get("p_value")) if period_stats.get("p_value") is not None else 1.0
+                            ),
                             "weight_type": weight_type,
                         }
                         if len(ic_s) > 0:
@@ -1084,7 +1125,9 @@ class AnalysisService:
         }
 
     @staticmethod
-    def _compute_weighted_ic_mean(ic_s: pd.Series, factor_values_dict: dict, weight_map: dict, weight_type: str) -> float:
+    def _compute_weighted_ic_mean(
+        ic_s: pd.Series, factor_values_dict: dict, weight_map: dict, weight_type: str
+    ) -> float:
         """计算加权IC均值（按截面对齐权重，每日归一化）"""
         if not weight_map or weight_type == "equal":
             return float(ic_s.mean())
@@ -1120,9 +1163,7 @@ class AnalysisService:
         weighted_vals = ic_s * aligned_weights
         return float(weighted_vals.sum())
 
-    def calculate_shap(
-        self, factor_data: Dict[str, pd.DataFrame], factor_names: List[str]
-    ) -> Dict[str, Any]:
+    def calculate_shap(self, factor_data: Dict[str, pd.DataFrame], factor_names: List[str]) -> Dict[str, Any]:
         """
         计算SHAP值分析
 
@@ -1232,10 +1273,12 @@ class AnalysisService:
         shap_values = explainer.shap_values(X_test)
 
         # 特征重要性
-        feature_importance = pd.DataFrame({
-            "feature": X_test.columns,
-            "importance": np.abs(shap_values).mean(axis=0),
-        }).sort_values("importance", ascending=False)
+        feature_importance = pd.DataFrame(
+            {
+                "feature": X_test.columns,
+                "importance": np.abs(shap_values).mean(axis=0),
+            }
+        ).sort_values("importance", ascending=False)
 
         logger.debug("[SHAP] SHAP analysis completed successfully")
 
@@ -1284,11 +1327,14 @@ class AnalysisService:
             report += "|---------|--------|----------|-----|---------|-------------|\n"
 
             for factor_name, stats in ic_stats.items():
-                ir_display = f"{stats['IR']:.4f}" if stats['IR'] is not None else "N/A"
-                ic_std_display = f"{stats['IC标准差']:.4f}" if stats.get('IC标准差') is not None else "N/A"
-                ic_mean_display = f"{stats['IC均值']:.4f}" if stats.get('IC均值') is not None else "N/A"
-                ic_pos_display = f"{stats['IC>0占比']:.2%}" if stats.get('IC>0占比') is not None else "N/A"
-                report += f"| {factor_name} | {ic_mean_display} | {ic_std_display} | {ir_display} | {ic_pos_display} | {stats['IC绝对值均值']:.4f} |\n"
+                ir_display = f"{stats['IR']:.4f}" if stats["IR"] is not None else "N/A"
+                ic_std_display = f"{stats['IC标准差']:.4f}" if stats.get("IC标准差") is not None else "N/A"
+                ic_mean_display = f"{stats['IC均值']:.4f}" if stats.get("IC均值") is not None else "N/A"
+                ic_pos_display = f"{stats['IC>0占比']:.2%}" if stats.get("IC>0占比") is not None else "N/A"
+                report += (
+                    f"| {factor_name} | {ic_mean_display} | {ic_std_display} "
+                    f"| {ir_display} | {ic_pos_display} | {stats['IC绝对值均值']:.4f} |\n"
+                )
 
             report += "\n"
 
@@ -1325,7 +1371,10 @@ class AnalysisService:
                             report += "|------|--------|----------|-----|---------|---------|----|\n"
                             for period_label, period_stats in ic_data.items():
                                 if isinstance(period_stats, dict) and "error" not in period_stats:
-                                    _sf = lambda v, d=0: v if v is not None else d
+
+                                    def _sf(v, d=0):
+                                        return v if v is not None else d
+
                                     report += (
                                         f"| {period_label} | "
                                         f"{_sf(period_stats.get('mean_ic'), 0):.4f} | "
@@ -1374,7 +1423,7 @@ class AnalysisService:
                     if autocorr:
                         for period_label, ac_data in autocorr.items():
                             if isinstance(ac_data, dict):
-                                ac_val = ac_data.get('mean_autocorrelation')
+                                ac_val = ac_data.get("mean_autocorrelation")
                                 ac_str = f"{ac_val:.4f}" if ac_val is not None else "N/A"
                                 report += f"- {period_label}: 平均自相关={ac_str}\n"
                         report += "\n"
@@ -1386,8 +1435,13 @@ class AnalysisService:
             n_high_risk = bias_data.get("n_high_risk", 0)
 
             risk_emoji = {
-                "safe": "✅", "low": "⚠️", "medium": "🔶",
-                "high": "🔴", "critical": "💀", "error": "❓", "unknown": "➖",
+                "safe": "✅",
+                "low": "⚠️",
+                "medium": "🔶",
+                "high": "🔴",
+                "critical": "💀",
+                "error": "❓",
+                "unknown": "➖",
             }
             report += "---\n\n## 未来函数（Look-ahead Bias）检测\n\n"
             report += f"**综合风险等级**: {risk_emoji.get(overall_risk, '')} `{overall_risk.upper()}`"

@@ -1,6 +1,7 @@
 """
 导出服务 - 导出回测结果到Excel多Sheet
 """
+
 from typing import Dict
 import pandas as pd
 from datetime import datetime
@@ -13,11 +14,7 @@ class ExportService:
         pass
 
     def export_backtest_to_excel(
-        self,
-        backtest_result: Dict,
-        output_path: str,
-        metrics: Dict = None,
-        strategy_name: str = "策略"
+        self, backtest_result: Dict, output_path: str, metrics: Dict = None, strategy_name: str = "策略"
     ):
         """
         导出回测结果到Excel（多Sheet）
@@ -44,13 +41,7 @@ class ExportService:
             # Sheet 5: 收益率分析
             self._write_returns_sheet(writer, backtest_result)
 
-    def _write_summary_sheet(
-        self,
-        writer: pd.ExcelWriter,
-        backtest_result: Dict,
-        metrics: Dict,
-        strategy_name: str
-    ):
+    def _write_summary_sheet(self, writer: pd.ExcelWriter, backtest_result: Dict, metrics: Dict, strategy_name: str):
         """写入摘要Sheet"""
         summary_data = []
 
@@ -67,18 +58,19 @@ class ExportService:
 
         # 性能指标
         if metrics:
+
             def _fmt(val, fmt, default=0):
                 return f"{val:{fmt}}" if val is not None else f"{default:{fmt}}"
 
             summary_data.append(["性能指标"])
-            summary_data.append(["总收益率", _fmt(metrics.get('total_return'), '.2%', 0)])
-            summary_data.append(["年化收益率", _fmt(metrics.get('annual_return'), '.2%', 0)])
-            summary_data.append(["波动率", _fmt(metrics.get('volatility'), '.2%', 0)])
-            summary_data.append(["夏普比率", _fmt(metrics.get('sharpe_ratio'), '.2f', 0)])
-            summary_data.append(["最大回撤", _fmt(metrics.get('max_drawdown'), '.2%', 0)])
-            summary_data.append(["卡玛比率", _fmt(metrics.get('calmar_ratio'), '.2f', 0)])
-            summary_data.append(["胜率", _fmt(metrics.get('win_rate'), '.2%', 0)])
-            summary_data.append(["索提诺比率", _fmt(metrics.get('sortino_ratio'), '.2f', 0)])
+            summary_data.append(["总收益率", _fmt(metrics.get("total_return"), ".2%", 0)])
+            summary_data.append(["年化收益率", _fmt(metrics.get("annual_return"), ".2%", 0)])
+            summary_data.append(["波动率", _fmt(metrics.get("volatility"), ".2%", 0)])
+            summary_data.append(["夏普比率", _fmt(metrics.get("sharpe_ratio"), ".2f", 0)])
+            summary_data.append(["最大回撤", _fmt(metrics.get("max_drawdown"), ".2%", 0)])
+            summary_data.append(["卡玛比率", _fmt(metrics.get("calmar_ratio"), ".2f", 0)])
+            summary_data.append(["胜率", _fmt(metrics.get("win_rate"), ".2%", 0)])
+            summary_data.append(["索提诺比率", _fmt(metrics.get("sortino_ratio"), ".2f", 0)])
 
         # 创建DataFrame
         df_summary = pd.DataFrame(summary_data, columns=["项目", "值"])
@@ -86,11 +78,7 @@ class ExportService:
         # 写入Excel
         df_summary.to_excel(writer, sheet_name="摘要", index=False)
 
-    def _write_equity_sheet(
-        self,
-        writer: pd.ExcelWriter,
-        backtest_result: Dict
-    ):
+    def _write_equity_sheet(self, writer: pd.ExcelWriter, backtest_result: Dict):
         """写入净值曲线Sheet"""
         equity = backtest_result.get("equity_curve")
 
@@ -100,15 +88,11 @@ class ExportService:
 
             # 计算收益率
             df_equity["收益率"] = df_equity["净值"].pct_change()
-            df_equity["累计收益率"] = (df_equity["净值"] / df_equity["净值"].iloc[0] - 1)
+            df_equity["累计收益率"] = df_equity["净值"] / df_equity["净值"].iloc[0] - 1
 
             df_equity.to_excel(writer, sheet_name="净值曲线")
 
-    def _write_positions_sheet(
-        self,
-        writer: pd.ExcelWriter,
-        backtest_result: Dict
-    ):
+    def _write_positions_sheet(self, writer: pd.ExcelWriter, backtest_result: Dict):
         """写入持仓历史Sheet"""
         positions = backtest_result.get("positions")
         weights = backtest_result.get("weights")
@@ -127,11 +111,7 @@ class ExportService:
             df_positions.index.name = "日期"
             df_positions.to_excel(writer, sheet_name="持仓历史")
 
-    def _write_trades_sheet(
-        self,
-        writer: pd.ExcelWriter,
-        backtest_result: Dict
-    ):
+    def _write_trades_sheet(self, writer: pd.ExcelWriter, backtest_result: Dict):
         """写入交易记录Sheet"""
         weights = backtest_result.get("weights")
 
@@ -147,27 +127,23 @@ class ExportService:
                     prev_weight = weights.loc[weight_changes.index.get_loc(date) - 1] if i > 0 else 0
                     curr_weight = weights.loc[date]
 
-                    trades_list.append({
-                        "日期": date,
-                        "操作": "买入" if curr_weight > prev_weight else "卖出",
-                        "前权重": f"{prev_weight:.2%}",
-                        "后权重": f"{curr_weight:.2%}",
-                        "变化量": f"{(curr_weight - prev_weight):.2%}",
-                    })
+                    trades_list.append(
+                        {
+                            "日期": date,
+                            "操作": "买入" if curr_weight > prev_weight else "卖出",
+                            "前权重": f"{prev_weight:.2%}",
+                            "后权重": f"{curr_weight:.2%}",
+                            "变化量": f"{(curr_weight - prev_weight):.2%}",
+                        }
+                    )
 
                 df_trades = pd.DataFrame(trades_list)
                 df_trades.to_excel(writer, sheet_name="交易记录", index=False)
             else:
                 # 无交易记录
-                pd.DataFrame({"消息": ["无交易记录"]}).to_excel(
-                    writer, sheet_name="交易记录", index=False
-                )
+                pd.DataFrame({"消息": ["无交易记录"]}).to_excel(writer, sheet_name="交易记录", index=False)
 
-    def _write_returns_sheet(
-        self,
-        writer: pd.ExcelWriter,
-        backtest_result: Dict
-    ):
+    def _write_returns_sheet(self, writer: pd.ExcelWriter, backtest_result: Dict):
         """写入收益率分析Sheet"""
         portfolio_returns = backtest_result.get("portfolio_returns")
 
@@ -201,15 +177,9 @@ class ExportService:
             df_returns.to_excel(writer, sheet_name="收益率分析")
 
             # 将统计信息写入同一个Sheet
-            df_stats.to_excel(
-                writer, sheet_name="收益率分析", startrow=len(df_returns) + 3
-            )
+            df_stats.to_excel(writer, sheet_name="收益率分析", startrow=len(df_returns) + 3)
 
-    def export_comparison_to_excel(
-        self,
-        comparison_result: Dict,
-        output_path: str
-    ):
+    def export_comparison_to_excel(self, comparison_result: Dict, output_path: str):
         """
         导出策略对比结果到Excel
 
@@ -239,14 +209,16 @@ class ExportService:
                 tests_list = []
 
                 for test_key, test_result in statistical_tests.items():
-                    tests_list.append({
-                        "对比": test_key,
-                        "独立T检验p值": f"{test_result['independent_t_test']['p_value']:.4f}",
-                        "显著性": "是" if test_result['independent_t_test']['significant'] else "否",
-                        "配对T检验p值": f"{test_result['paired_t_test']['p_value']:.4f}",
-                        "显著性(配对)": "是" if test_result['paired_t_test']['significant'] else "否",
-                        "相关系数": f"{test_result['correlation']:.4f}",
-                    })
+                    tests_list.append(
+                        {
+                            "对比": test_key,
+                            "独立T检验p值": f"{test_result['independent_t_test']['p_value']:.4f}",
+                            "显著性": "是" if test_result["independent_t_test"]["significant"] else "否",
+                            "配对T检验p值": f"{test_result['paired_t_test']['p_value']:.4f}",
+                            "显著性(配对)": "是" if test_result["paired_t_test"]["significant"] else "否",
+                            "相关系数": f"{test_result['correlation']:.4f}",
+                        }
+                    )
 
                 df_tests = pd.DataFrame(tests_list)
                 df_tests.to_excel(writer, sheet_name="统计检验", index=False)

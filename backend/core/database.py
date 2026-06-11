@@ -7,6 +7,7 @@
 
 禁止直接使用 get_db_session()（已废弃），因其无异常保护，易导致session泄漏。
 """
+
 import logging
 from functools import wraps
 from sqlalchemy import create_engine
@@ -31,6 +32,7 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 class Base(DeclarativeBase):
     """数据库模型基类"""
+
     pass
 
 
@@ -85,6 +87,7 @@ def with_db(func: F = None, *, db_param: str = "db") -> Any:
         func: 被装饰的函数
         db_param: 方法中接收session的参数名（默认"db"）
     """
+
     def decorator(fn: Callable) -> Callable:
         @wraps(fn)
         def wrapper(*args, **kwargs):
@@ -95,6 +98,7 @@ def with_db(func: F = None, *, db_param: str = "db") -> Any:
             with get_db() as db:
                 kwargs[db_param] = db
                 return fn(*args, **kwargs)
+
         return wrapper
 
     if func is not None:
@@ -112,6 +116,7 @@ def get_db_session() -> Session:
     保留仅为向后兼容，新代码禁止使用。
     """
     import warnings
+
     warnings.warn(
         "get_db_session() is deprecated, use get_db() context manager or @with_db decorator instead",
         DeprecationWarning,

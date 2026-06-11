@@ -1,6 +1,7 @@
 """
 等权重策略 - 等权配置所有股票
 """
+
 import pandas as pd
 from .base_strategy import BaseStrategy
 
@@ -15,11 +16,7 @@ class EqualWeightStrategy(BaseStrategy):
     """
 
     def __init__(
-        self,
-        initial_capital: float = 1000000,
-        commission_rate: float = 0.0003,
-        top_percentile: float = 0.2,
-        **kwargs
+        self, initial_capital: float = 1000000, commission_rate: float = 0.0003, top_percentile: float = 0.2, **kwargs
     ):
         """
         初始化等权重策略
@@ -48,11 +45,7 @@ class EqualWeightStrategy(BaseStrategy):
         signals = pd.Series(1, index=df.index)
         return signals
 
-    def calculate_weights(
-        self,
-        df: pd.DataFrame,
-        signals: pd.Series
-    ) -> pd.Series:
+    def calculate_weights(self, df: pd.DataFrame, signals: pd.Series) -> pd.Series:
         """
         计算等权重
 

@@ -1,6 +1,7 @@
 """
 挖掘任务数据模型
 """
+
 from sqlalchemy import Integer, String, Text, Float, JSON, DateTime
 from sqlalchemy.orm import Mapped, mapped_column
 from datetime import datetime
@@ -10,6 +11,7 @@ from backend.core.database import Base
 
 class MiningTaskModel(Base):
     """挖掘任务模型 - 持久化挖掘任务状态和结果"""
+
     __tablename__ = "mining_tasks"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -50,4 +52,7 @@ class MiningTaskModel(Base):
     completed_at: Mapped[datetime] = mapped_column(DateTime, nullable=True, comment="完成时间")
 
     def __repr__(self):
-        return f"<MiningTask(id={self.id}, task_id={self.task_id[:8]}..., status={self.status}, algorithm={self.algorithm})>"
+        return (
+            f"<MiningTask(id={self.id}, task_id={self.task_id[:8]}..., "
+            f"status={self.status}, algorithm={self.algorithm})>"
+        )

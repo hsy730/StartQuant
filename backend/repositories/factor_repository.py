@@ -1,6 +1,7 @@
 """
 因子数据访问层
 """
+
 from typing import List, Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import select, delete, func
@@ -42,11 +43,7 @@ class FactorRepository:
 
     def get_active_by_name(self, name: str) -> Optional[FactorModel]:
         """根据名称获取活跃因子（仅返回 is_active=1 的记录）"""
-        return self.db.scalar(
-            select(FactorModel)
-            .where(FactorModel.name == name)
-            .where(FactorModel.is_active == 1)
-        )
+        return self.db.scalar(select(FactorModel).where(FactorModel.name == name).where(FactorModel.is_active == 1))
 
     def create(self, factor: FactorModel) -> FactorModel:
         """创建因子"""
@@ -78,19 +75,23 @@ class FactorRepository:
 
     def get_preset_count(self) -> int:
         """获取预置因子数量（仅统计启用的）"""
-        return self.db.scalar(
-            select(func.count(FactorModel.id))
-            .where(FactorModel.source == "preset")
-            .where(FactorModel.is_active == 1)
-        ) or 0
+        return (
+            self.db.scalar(
+                select(func.count(FactorModel.id))
+                .where(FactorModel.source == "preset")
+                .where(FactorModel.is_active == 1)
+            )
+            or 0
+        )
 
     def get_user_count(self) -> int:
         """获取用户自定义因子数量（仅统计启用的）"""
-        return self.db.scalar(
-            select(func.count(FactorModel.id))
-            .where(FactorModel.source == "user")
-            .where(FactorModel.is_active == 1)
-        ) or 0
+        return (
+            self.db.scalar(
+                select(func.count(FactorModel.id)).where(FactorModel.source == "user").where(FactorModel.is_active == 1)
+            )
+            or 0
+        )
 
 
 class AnalysisCacheRepository:
@@ -128,6 +129,7 @@ class AnalysisCacheRepository:
     def delete_old_cache(self, days: int = 7) -> int:
         """删除旧缓存"""
         from datetime import datetime, timedelta
+
         cutoff_date = datetime.now() - timedelta(days=days)
         stmt = delete(AnalysisCacheModel).where(AnalysisCacheModel.created_at < cutoff_date)
         result = self.db.execute(stmt)

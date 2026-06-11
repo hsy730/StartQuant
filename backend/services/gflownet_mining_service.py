@@ -15,6 +15,7 @@ GFlowNet（Generative Flow Network）学习一个策略网络，逐步构建公�
 
 其中 Z_θ 是可学习的基础流，R(x) 是奖励，P_F 是前向策略。
 """
+
 import logging
 import random
 import math
@@ -32,16 +33,17 @@ try:
     import torch
     import torch.nn as nn
     import torch.optim as optim
+
     GFLOWNET_AVAILABLE = True
 except ImportError:
     GFLOWNET_AVAILABLE = False
     logger.warning("PyTorch库未安装，GFlowNet因子挖掘功能将不可用。请运行: pip install torch")
 
-from backend.services.base_mining_service import BaseMiningService
-from backend.utils.safe_math import safe_divide
-from backend.services.factor_validation_service import factor_validation_service
-from backend.services.alphalens_analysis_service import alphalens_analysis_service
-from backend.services.factor_primitives import (
+from backend.services.base_mining_service import BaseMiningService  # noqa: E402
+from backend.utils.safe_math import safe_divide  # noqa: E402
+from backend.services.factor_validation_service import factor_validation_service  # noqa: E402
+from backend.services.alphalens_analysis_service import alphalens_analysis_service  # noqa: E402
+from backend.services.factor_primitives import (  # noqa: E402
     create_pset,
     expression_similarity,
 )
@@ -65,26 +67,37 @@ OP_ARITY.update({op: 2 for op in BINARY_OPS})
 
 # 扩展算子（可选，用于更丰富的表达式）
 EXTENDED_UNARY_OPS = [
-    "ts_mean_5", "ts_mean_10", "ts_mean_20",
-    "ts_std_5", "ts_std_10", "ts_std_20",
-    "ts_delay_1", "ts_delay_5",
-    "ts_delta_1", "ts_delta_5",
-    "sigmoid", "tanh",
+    "ts_mean_5",
+    "ts_mean_10",
+    "ts_mean_20",
+    "ts_std_5",
+    "ts_std_10",
+    "ts_std_20",
+    "ts_delay_1",
+    "ts_delay_5",
+    "ts_delta_1",
+    "ts_delta_5",
+    "sigmoid",
+    "tanh",
 ]
 EXTENDED_BINARY_OPS = [
-    "ts_corr_5", "ts_corr_10", "ts_corr_20",
-    "max", "min",
+    "ts_corr_5",
+    "ts_corr_10",
+    "ts_corr_20",
+    "max",
+    "min",
 ]
 
 # ---------------------------------------------------------------------------
 # 表达式树节点
 # ---------------------------------------------------------------------------
 
+
 class ExprNode:
     """表达式树节点"""
 
     def __init__(self, op: Optional[str] = None, factor_idx: Optional[int] = None):
-        self.op = op            # 算子名称（如 "add", "neg"）或 None
+        self.op = op  # 算子名称（如 "add", "neg"）或 None
         self.factor_idx = factor_idx  # 基础因子索引（叶节点）或 None
         self.children: List["ExprNode"] = []
 
@@ -143,6 +156,7 @@ class ExprNode:
 # ---------------------------------------------------------------------------
 # 表达式状态编码
 # ---------------------------------------------------------------------------
+
 
 class ExpressionState:
     """表达式构建状态，用于策略网络输入编码"""
@@ -326,7 +340,7 @@ class ExpressionState:
     def _count_incomplete(self, node: ExprNode) -> int:
         count = 0
         if not node.is_leaf and not node.is_complete:
-            count += (node.arity - len(node.children))
+            count += node.arity - len(node.children)
         for child in node.children:
             count += self._count_incomplete(child)
         return count
@@ -383,7 +397,7 @@ if GFLOWNET_AVAILABLE:
             logits = self.network(state)
 
             # 将非法动作的logit设为负无穷
-            logits = logits.masked_fill(~valid_actions_mask, float('-inf'))
+            logits = logits.masked_fill(~valid_actions_mask, float("-inf"))
 
             log_probs = torch.log_softmax(logits, dim=-1)
             return log_probs
@@ -531,8 +545,7 @@ if GFLOWNET_AVAILABLE:
             self.optimizer = optim.Adam(self.policy_net.parameters(), lr=self.learning_rate)
 
             logger.info(
-                f"策略网络初始化: state_dim={state_dim}, n_actions={n_actions}, "
-                f"hidden_dim={self.hidden_dim}"
+                f"策略网络初始化: state_dim={state_dim}, n_actions={n_actions}, " f"hidden_dim={self.hidden_dim}"
             )
 
         # ---------------------------------------------------------------
@@ -708,10 +721,21 @@ if GFLOWNET_AVAILABLE:
 
             # 添加安全算子
             from backend.services.factor_primitives import (
-                safe_div, safe_log, safe_sqrt, pct_rank,
-                ts_mean, ts_std, ts_delay, ts_delta, ts_corr,
-                _pair_max, _pair_min, _sigmoid, _tanh,
+                safe_div,
+                safe_log,
+                safe_sqrt,
+                pct_rank,
+                ts_mean,
+                ts_std,
+                ts_delay,
+                ts_delta,
+                ts_corr,
+                _pair_max,
+                _pair_min,
+                _sigmoid,
+                _tanh,
             )
+
             namespace["add"] = np.add
             namespace["sub"] = np.subtract
             namespace["mul"] = np.multiply
@@ -816,6 +840,7 @@ if GFLOWNET_AVAILABLE:
             """在单只股票上计算表达式"""
             try:
                 from deap import gp as deap_gp
+
                 tree = deap_gp.PrimitiveTree.from_string(expr_str, self.pset)
                 func = deap_gp.compile(tree, self.pset)
 
@@ -1003,14 +1028,16 @@ if GFLOWNET_AVAILABLE:
                 for expr_state, traj_info, log_prob in raw_trajectories:
                     if not expr_state.is_complete():
                         # 未完成的表达式，给零奖励
-                        trajectory_data.append({
-                            "reward": 1e-10,
-                            "log_prob": log_prob,
-                            "state_actions": traj_info,
-                            "expression": "",
-                            "placeholder_expression": "",
-                            "fitness": 0.0,
-                        })
+                        trajectory_data.append(
+                            {
+                                "reward": 1e-10,
+                                "log_prob": log_prob,
+                                "state_actions": traj_info,
+                                "expression": "",
+                                "placeholder_expression": "",
+                                "fitness": 0.0,
+                            }
+                        )
                         continue
 
                     expr_str = expr_state.get_expression_string()
@@ -1020,14 +1047,16 @@ if GFLOWNET_AVAILABLE:
                     # NOTE: +1e-10 is a small additive term for numerical stability in log(reward), not a division hack
                     reward = fitness * self.reward_scale + 1e-10
 
-                    trajectory_data.append({
-                        "reward": reward,
-                        "log_prob": log_prob,
-                        "state_actions": traj_info,
-                        "expression": self._convert_expression_to_code(expr_str),
-                        "placeholder_expression": expr_str,
-                        "fitness": fitness,
-                    })
+                    trajectory_data.append(
+                        {
+                            "reward": reward,
+                            "log_prob": log_prob,
+                            "state_actions": traj_info,
+                            "expression": self._convert_expression_to_code(expr_str),
+                            "placeholder_expression": expr_str,
+                            "fitness": fitness,
+                        }
+                    )
 
                     if fitness > best_fitness_iter:
                         best_fitness_iter = fitness
@@ -1164,10 +1193,7 @@ if GFLOWNET_AVAILABLE:
     # -------------------------------------------------------------------
 
     def create_gflownet_mining_service(
-        base_factors: List[str],
-        data: pd.DataFrame,
-        factor_calculator=None,
-        **kwargs
+        base_factors: List[str], data: pd.DataFrame, factor_calculator=None, **kwargs
     ) -> GFlowNetMiningService:
         """创建配置好的GFlowNetMiningService实例
 
@@ -1188,8 +1214,5 @@ if GFLOWNET_AVAILABLE:
         * ``cv_folds`` – 交叉验证折数 (默认 0)
         """
         return GFlowNetMiningService(
-            base_factors=base_factors,
-            data=data,
-            factor_calculator=factor_calculator,
-            **kwargs
+            base_factors=base_factors, data=data, factor_calculator=factor_calculator, **kwargs
         )

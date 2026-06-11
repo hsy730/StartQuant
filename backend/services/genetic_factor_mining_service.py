@@ -11,6 +11,7 @@
   Phase 7: 扩展基元集（9→~25，含时序窗口操作）
   Phase 8: 前端更新
 """
+
 import logging
 import operator
 import threading
@@ -23,16 +24,17 @@ import random
 logger = logging.getLogger(__name__)
 
 try:
-    from deap import base, creator, tools, algorithms, gp
+    from deap import base, creator, tools, algorithms, gp  # noqa: F401
+
     DEAP_AVAILABLE = True
 except ImportError:
     DEAP_AVAILABLE = False
     logger.warning("DEAP库未安装，遗传算法功能将不可用")
 
-from backend.services.base_mining_service import BaseMiningService
-from backend.services.factor_validation_service import factor_validation_service
-from backend.services.alphalens_analysis_service import alphalens_analysis_service
-from backend.services.factor_primitives import (
+from backend.services.base_mining_service import BaseMiningService  # noqa: E402
+from backend.services.factor_validation_service import factor_validation_service  # noqa: E402
+from backend.services.alphalens_analysis_service import alphalens_analysis_service  # noqa: E402
+from backend.services.factor_primitives import (  # noqa: E402
     create_pset,
     tree_to_expression,
     tree_to_placeholder_expr,
@@ -210,8 +212,7 @@ class GeneticFactorMiningService(BaseMiningService):
         _ensure_creator_types()
 
         n_factors = max(len(self.base_factor_values), 1)
-        self.pset = create_pset(n_factors, extended=self.use_extended_primitives,
-                                tradable_mask=self.tradable_mask)
+        self.pset = create_pset(n_factors, extended=self.use_extended_primitives, tradable_mask=self.tradable_mask)
 
         self.toolbox = base.Toolbox()
         # Phase 7: deeper initial trees when extended primitives + parsimony control bloat
@@ -317,7 +318,7 @@ class GeneticFactorMiningService(BaseMiningService):
 
         # --- Diversity Penalty (Phase 3) ---
         diversity_penalty = 0.0
-        if self.diversity_penalty_coeff > 0 and hasattr(self, '_halloffame') and self._halloffame is not None:
+        if self.diversity_penalty_coeff > 0 and hasattr(self, "_halloffame") and self._halloffame is not None:
             ind_expr = tree_to_placeholder_expr(individual)
             for hof_ind in self._halloffame:
                 hof_expr = tree_to_placeholder_expr(hof_ind)
@@ -356,7 +357,7 @@ class GeneticFactorMiningService(BaseMiningService):
 
         # --- Diversity Penalty (Phase 3, applied to IC objective only) ---
         diversity_penalty = 0.0
-        if self.diversity_penalty_coeff > 0 and hasattr(self, '_halloffame') and self._halloffame is not None:
+        if self.diversity_penalty_coeff > 0 and hasattr(self, "_halloffame") and self._halloffame is not None:
             ind_expr = tree_to_placeholder_expr(individual)
             for hof_ind in self._halloffame:
                 hof_expr = tree_to_placeholder_expr(hof_ind)
@@ -445,6 +446,7 @@ class GeneticFactorMiningService(BaseMiningService):
         if cached_all is not None and "_complete" in cached_all:
             factor_values_dict = cached_all["_complete"]
         else:
+
             def _calc_one_stock(code):
                 try:
                     base_factors = self.stock_pool_base_factor_values[code]
@@ -533,6 +535,7 @@ class GeneticFactorMiningService(BaseMiningService):
             try:
                 close = self.data["close"]
                 from backend.utils.safe_math import safe_series_divide
+
                 fwd_ret = safe_series_divide(close.shift(-1), close, default=np.nan) - 1
                 fwd_ret = fwd_ret.dropna()
                 fv_aligned = fv.reindex(fwd_ret.index).dropna()
@@ -542,6 +545,7 @@ class GeneticFactorMiningService(BaseMiningService):
 
                 # Spearman rank IC as fitness (bounded in [-1, 1], take abs)
                 from scipy.stats import spearmanr
+
                 corr, _ = spearmanr(fv_aligned, fwd_ret.reindex(fv_aligned.index))
                 fitness = abs(corr) if not np.isnan(corr) else 0.0
             except Exception as e:
@@ -657,9 +661,13 @@ class GeneticFactorMiningService(BaseMiningService):
 
         # 委托通用进化循环
         self._evolutionary_loop(
-            population, self.n_generations, halloffame,
-            logbook=logbook, use_nsga2=self.use_nsga2,
-            diversity_protection=True, progress=True,
+            population,
+            self.n_generations,
+            halloffame,
+            logbook=logbook,
+            use_nsga2=self.use_nsga2,
+            diversity_protection=True,
+            progress=True,
         )
 
         # Build result
@@ -790,7 +798,7 @@ class GeneticFactorMiningService(BaseMiningService):
             # ---- Mutation ----
             for i in range(len(offspring)):
                 if random.random() < self.mut_prob:
-                    offspring[i], = self.toolbox.mutate(offspring[i])
+                    (offspring[i],) = self.toolbox.mutate(offspring[i])
                     del offspring[i].fitness.values
 
             # ---- Phase 3: Diversity protection – replace duplicates ----
@@ -869,9 +877,13 @@ class GeneticFactorMiningService(BaseMiningService):
 
         # 委托通用进化循环（简化版：无日志、无NSGA2、无去重保护）
         self._evolutionary_loop(
-            population, n_generations, halloffame,
-            logbook=None, use_nsga2=False,
-            diversity_protection=False, progress=False,
+            population,
+            n_generations,
+            halloffame,
+            logbook=None,
+            use_nsga2=False,
+            diversity_protection=False,
+            progress=False,
         )
 
         best = halloffame[0]
@@ -891,11 +903,9 @@ class GeneticFactorMiningService(BaseMiningService):
 # Factory
 # ------------------------------------------------------------------
 
+
 def create_genetic_mining_service(
-    base_factors: List[str],
-    data: pd.DataFrame,
-    factor_calculator=None,
-    **kwargs
+    base_factors: List[str], data: pd.DataFrame, factor_calculator=None, **kwargs
 ) -> GeneticFactorMiningService:
     """Create a configured :class:`GeneticFactorMiningService` instance.
 
@@ -913,8 +923,5 @@ def create_genetic_mining_service(
     * ``max_tree_depth`` – hard depth limit for GP trees (default 17)
     """
     return GeneticFactorMiningService(
-        base_factors=base_factors,
-        data=data,
-        factor_calculator=factor_calculator,
-        **kwargs
+        base_factors=base_factors, data=data, factor_calculator=factor_calculator, **kwargs
     )

@@ -1,6 +1,7 @@
 """
 因子版本数据仓储
 """
+
 from typing import List, Optional
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
@@ -46,16 +47,18 @@ class FactorVersionRepository:
 
     def get_by_factor_id(self, factor_id: int) -> List[FactorVersionModel]:
         """获取因子的所有版本"""
-        stmt = select(FactorVersionModel).where(
-            FactorVersionModel.factor_id == factor_id
-        ).order_by(FactorVersionModel.created_at.desc())
+        stmt = (
+            select(FactorVersionModel)
+            .where(FactorVersionModel.factor_id == factor_id)
+            .order_by(FactorVersionModel.created_at.desc())
+        )
         return list(self.db.scalars(stmt).all())
 
     def get_current_version(self, factor_id: int) -> Optional[FactorVersionModel]:
         """获取因子的当前版本"""
         stmt = select(FactorVersionModel).where(
             FactorVersionModel.factor_id == factor_id,
-            FactorVersionModel.is_current == True,
+            FactorVersionModel.is_current,
         )
         return self.db.scalar(stmt)
 
@@ -81,9 +84,7 @@ class FactorVersionRepository:
         """删除因子的所有版本"""
         from sqlalchemy import delete
 
-        stmt = delete(FactorVersionModel).where(
-            FactorVersionModel.factor_id == factor_id
-        )
+        stmt = delete(FactorVersionModel).where(FactorVersionModel.factor_id == factor_id)
         result = self.db.execute(stmt)
         self.db.commit()
         return result.rowcount
@@ -104,17 +105,14 @@ class FactorVersionRepository:
 
     def _set_current_false(self, factor_id: int) -> None:
         """将因子的所有版本设置为非当前"""
-        stmt = update(FactorVersionModel).where(
-            FactorVersionModel.factor_id == factor_id
-        ).values(is_current=False)
+        stmt = update(FactorVersionModel).where(FactorVersionModel.factor_id == factor_id).values(is_current=False)
         self.db.execute(stmt)
 
     def get_version_count(self, factor_id: int) -> int:
         """获取因子的版本数量"""
         from sqlalchemy import func
 
-        return self.db.scalar(
-            select(func.count(FactorVersionModel.id)).where(
-                FactorVersionModel.factor_id == factor_id
-            )
-        ) or 0
+        return (
+            self.db.scalar(select(func.count(FactorVersionModel.id)).where(FactorVersionModel.factor_id == factor_id))
+            or 0
+        )

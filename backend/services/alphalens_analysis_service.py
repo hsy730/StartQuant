@@ -1,20 +1,20 @@
 """
 Alphalens因子分析服务 - 基于alphalens-reloaded库提供专业因子分析
 """
+
 import logging
 import warnings
 import numpy as np
 import pandas as pd
 from typing import Dict, List, Optional, Tuple, Any
 from scipy import stats as scipy_stats
-from scipy.stats import spearmanr
 
 logger = logging.getLogger(__name__)
 
-import alphalens
+import alphalens  # noqa: E402
 
-from backend.utils.safe_math import safe_divide, safe_ir
-from backend.utils.serialization import safe_numeric_value
+from backend.utils.safe_math import safe_ir  # noqa: E402
+from backend.utils.serialization import safe_numeric_value  # noqa: E402
 
 
 def _to_python_float(value, default=None):
@@ -110,7 +110,8 @@ class AlphalensAnalysisService:
             logger.info(
                 f"因子数据准备完成: {len(factor_data)}条记录, "
                 f"股票数={factor_data.index.get_level_values('asset').nunique()}, "
-                f"日期范围={factor_data.index.get_level_values('date').min()} ~ {factor_data.index.get_level_values('date').max()}"
+                f"日期范围={factor_data.index.get_level_values('date').min()} "
+                f"~ {factor_data.index.get_level_values('date').max()}"
             )
             return factor_data
 
@@ -146,10 +147,8 @@ class AlphalensAnalysisService:
         try:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
-                ic_spearman = alphalens.performance.factor_information_coefficient(
-                    factor_data, by_group=by_group
-                )
-                _mean_ic_spearman = alphalens.performance.mean_information_coefficient(
+                ic_spearman = alphalens.performance.factor_information_coefficient(factor_data, by_group=by_group)
+                _mean_ic_spearman = alphalens.performance.mean_information_coefficient(  # noqa: F841
                     factor_data, by_group=by_group
                 )
 
@@ -175,19 +174,24 @@ class AlphalensAnalysisService:
     def _compute_pearson_ic(self, factor_data: pd.DataFrame) -> pd.DataFrame:
         """手动计算Pearson IC（alphalens默认只提供Spearman Rank IC）"""
         ic_results = {}
-        return_cols = [c for c in factor_data.columns if c not in ['factor', 'factor_quantile', 'group']]
+        return_cols = [c for c in factor_data.columns if c not in ["factor", "factor_quantile", "group"]]
         dates = factor_data.index.get_level_values(0)
         for period_col in return_cols:
-            merged = pd.DataFrame({
-                'factor': factor_data['factor'].values,
-                'return': factor_data[period_col].values,
-            }, index=dates)
+            merged = pd.DataFrame(
+                {
+                    "factor": factor_data["factor"].values,
+                    "return": factor_data[period_col].values,
+                },
+                index=dates,
+            )
             merged = merged.replace([np.inf, -np.inf], np.nan).dropna()
             if len(merged) < 2:
                 continue
-            daily_ic = merged.groupby(merged.index).apply(
-                lambda g: g['factor'].corr(g['return'], method='pearson') if len(g) >= 2 else np.nan
-            ).dropna()
+            daily_ic = (
+                merged.groupby(merged.index)
+                .apply(lambda g: g["factor"].corr(g["return"], method="pearson") if len(g) >= 2 else np.nan)
+                .dropna()
+            )
             if len(daily_ic) > 0:
                 ic_results[period_col] = daily_ic
         if ic_results:
@@ -230,7 +234,7 @@ class AlphalensAnalysisService:
                 p_value = float(2 * (1 - scipy_stats.t.cdf(abs(t_stat), df=n - 1)))
             elif n > 1 and ic_std <= 1e-10 and abs(ic_mean) > 1e-10:
                 # 规则7.10：ic_std≈0但ic_mean显著非零时，因子极其稳定，t_stat→∞
-                t_stat = float('inf')
+                t_stat = float("inf")
                 p_value = 0.0
             else:
                 t_stat = 0.0
@@ -331,9 +335,7 @@ class AlphalensAnalysisService:
 
             if by_group and "group" in factor_data.columns:
                 if isinstance(mean_ret_by_q, tuple) and len(mean_ret_by_q) > 1:
-                    results["quantile_returns_by_group"] = self._extract_quantile_returns(
-                        mean_ret_by_q[1]
-                    )
+                    results["quantile_returns_by_group"] = self._extract_quantile_returns(mean_ret_by_q[1])
 
             logger.info("收益分析完成")
             return results
@@ -490,14 +492,18 @@ class AlphalensAnalysisService:
                 warnings.simplefilter("ignore")
 
                 turnover = alphalens.performance.quantile_turnover(
-                    factor_data['factor_quantile'], quantile=factor_data['factor_quantile'].max()
+                    factor_data["factor_quantile"], quantile=factor_data["factor_quantile"].max()
                 )
 
                 autocorr = alphalens.performance.factor_rank_autocorrelation(factor_data)
 
-            results["quantile_turnover"] = self._extract_turnover(turnover) if turnover is not None else {"error": "换手率数据为空"}
+            results["quantile_turnover"] = (
+                self._extract_turnover(turnover) if turnover is not None else {"error": "换手率数据为空"}
+            )
 
-            results["factor_autocorrelation"] = self._extract_autocorrelation(autocorr) if autocorr is not None else {"error": "自相关数据为空"}
+            results["factor_autocorrelation"] = (
+                self._extract_autocorrelation(autocorr) if autocorr is not None else {"error": "自相关数据为空"}
+            )
 
             logger.info("换手率分析完成")
             return results
@@ -532,7 +538,7 @@ class AlphalensAnalysisService:
                 },
             }
 
-        if not hasattr(turnover_data, 'columns') or turnover_data.empty:
+        if not hasattr(turnover_data, "columns") or turnover_data.empty:
             return {"error": "换手率数据为空或格式不正确"}
 
         if isinstance(turnover_data.index, pd.MultiIndex):
@@ -609,7 +615,7 @@ class AlphalensAnalysisService:
                 },
             }
 
-        if not hasattr(autocorr_df, 'columns') or autocorr_df.empty:
+        if not hasattr(autocorr_df, "columns") or autocorr_df.empty:
             return {"error": "自相关数据为空或格式不正确"}
 
         for period_col in autocorr_df.columns:

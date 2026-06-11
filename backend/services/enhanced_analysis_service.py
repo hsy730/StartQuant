@@ -1,6 +1,7 @@
 """
 阶段3增强分析服务 - 扩展AnalysisService功能
 """
+
 import pandas as pd
 import numpy as np
 from typing import Dict, List, Any
@@ -24,10 +25,7 @@ class EnhancedAnalysisService:
         pass
 
     def calculate_ic_significance(
-        self,
-        factor_values: pd.Series,
-        return_values: pd.Series,
-        confidence_level: float = 0.95
+        self, factor_values: pd.Series, return_values: pd.Series, confidence_level: float = 0.95
     ) -> Dict:
         """
         计算IC的显著性t检验
@@ -43,16 +41,10 @@ class EnhancedAnalysisService:
             IC显著性检验结果
         """
         # 移除缺失值
-        valid_data = pd.DataFrame({
-            "factor": factor_values,
-            "return": return_values
-        }).dropna()
+        valid_data = pd.DataFrame({"factor": factor_values, "return": return_values}).dropna()
 
         if len(valid_data) < 10:
-            return {
-                "error": "有效数据不足（至少需要10个数据点）",
-                "n_samples": len(valid_data)
-            }
+            return {"error": "有效数据不足（至少需要10个数据点）", "n_samples": len(valid_data)}
 
         # 尝试按横截面（日期）计算IC，再对IC序列做t检验
         # 如果数据有日期索引（MultiIndex或DatetimeIndex），按日期分组
@@ -82,7 +74,7 @@ class EnhancedAnalysisService:
                     "method": "spearman",
                     "n_samples": len(valid_data),
                     "n_cross_sections": len(ic_list),
-                    "error": "有效截面不足（至少需要2个截面）"
+                    "error": "有效截面不足（至少需要2个截面）",
                 }
 
             ic_series = pd.Series(ic_list)
@@ -102,9 +94,9 @@ class EnhancedAnalysisService:
                 "p_value": float(p_value),
                 "is_significant": p_value < 0.05,
                 "significance_level": (
-                    "极高显著性 (p<0.01)" if p_value < 0.01 else
-                    "显著性 (p<0.05)" if p_value < 0.05 else
-                    "不显著 (p>=0.05)"
+                    "极高显著性 (p<0.01)"
+                    if p_value < 0.01
+                    else "显著性 (p<0.05)" if p_value < 0.05 else "不显著 (p>=0.05)"
                 ),
                 "confidence_interval": {
                     "lower": float(ci_lower),
@@ -277,7 +269,7 @@ class EnhancedAnalysisService:
                     else:
                         # IC标准差接近0时（规则7.10/7.15）
                         if abs(mean_ic) > 1e-10:
-                            t_stat = float('inf')
+                            t_stat = float("inf")
                             p_value = 0.0
                             is_significant = True
                         else:
@@ -342,7 +334,11 @@ class EnhancedAnalysisService:
                                     "method": "市值中性化",
                                     "ic_before": ic_before,
                                     "ic_after": ic_after_mc,
-                                    "improvement": (ic_after_mc - ic_before) if ic_after_mc is not None and ic_before is not None else None,
+                                    "improvement": (
+                                        (ic_after_mc - ic_before)
+                                        if ic_after_mc is not None and ic_before is not None
+                                        else None
+                                    ),
                                 }
 
                         # 行业中性化
@@ -360,13 +356,15 @@ class EnhancedAnalysisService:
                                     "method": "行业中性化",
                                     "ic_before": ic_before,
                                     "ic_after": ic_after_ind,
-                                    "improvement": (ic_after_ind - ic_before) if ic_after_ind is not None and ic_before is not None else None,
+                                    "improvement": (
+                                        (ic_after_ind - ic_before)
+                                        if ic_after_ind is not None and ic_before is not None
+                                        else None
+                                    ),
                                 }
 
                 except Exception as e:
-                    results["neutralization"][factor_name] = {
-                        "error": str(e)
-                    }
+                    results["neutralization"][factor_name] = {"error": str(e)}
 
             # 稳定性分析
             if enable_stability:
@@ -387,9 +385,7 @@ class EnhancedAnalysisService:
                         combined_factor = pd.Series(dtype=float)
 
                     if len(combined_factor) >= 504:
-                        dist_stability = factor_stability_service.calculate_distribution_stability(
-                            combined_factor
-                        )
+                        dist_stability = factor_stability_service.calculate_distribution_stability(combined_factor)
                     else:
                         dist_stability = {
                             "warning": f"数据不足504个点(当前{len(combined_factor)})，跳过分布稳定性检验",
@@ -421,9 +417,7 @@ class EnhancedAnalysisService:
                     }
 
                 except Exception as e:
-                    results["stability"][factor_name] = {
-                        "error": str(e)
-                    }
+                    results["stability"][factor_name] = {"error": str(e)}
 
             # 生成摘要
             if enable_summary:
@@ -439,17 +433,12 @@ class EnhancedAnalysisService:
 
                     if first_stock_df is not None:
                         summary = factor_summary_service.generate_factor_summary(
-                            factor_name,
-                            first_stock_df,
-                            ic_analysis,
-                            stability_analysis
+                            factor_name, first_stock_df, ic_analysis, stability_analysis
                         )
                         results["summary"][factor_name] = summary
 
                 except Exception as e:
-                    results["summary"][factor_name] = {
-                        "error": str(e)
-                    }
+                    results["summary"][factor_name] = {"error": str(e)}
 
         return results
 

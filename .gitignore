@@ -74,3 +74,6 @@ vite-naive-ui/
 
 CLAUDE.md
 scripts/
+
+# Stock ranker temporary test-generated files
+models/stock_ranker/stock_ranker_*.json

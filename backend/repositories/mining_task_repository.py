@@ -1,6 +1,7 @@
 """
 挖掘任务数据访问层
 """
+
 import json
 from typing import List, Optional, Dict
 from sqlalchemy.orm import Session
@@ -24,9 +25,7 @@ class MiningTaskRepository:
 
     def get_by_task_id(self, task_id: str) -> Optional[MiningTaskModel]:
         """根据task_id获取挖掘任务"""
-        return self.db.scalar(
-            select(MiningTaskModel).where(MiningTaskModel.task_id == task_id)
-        )
+        return self.db.scalar(select(MiningTaskModel).where(MiningTaskModel.task_id == task_id))
 
     def get_by_id(self, id: int) -> Optional[MiningTaskModel]:
         """根据主键ID获取挖掘任务"""
@@ -46,19 +45,15 @@ class MiningTaskRepository:
         """获取挖掘历史记录（分页）"""
         return list(
             self.db.scalars(
-                select(MiningTaskModel)
-                .order_by(MiningTaskModel.created_at.desc())
-                .limit(limit)
-                .offset(offset)
+                select(MiningTaskModel).order_by(MiningTaskModel.created_at.desc()).limit(limit).offset(offset)
             ).all()
         )
 
     def get_history_count(self) -> int:
         """获取挖掘历史总数"""
         from sqlalchemy import func
-        return self.db.scalar(
-            select(func.count(MiningTaskModel.id))
-        )
+
+        return self.db.scalar(select(func.count(MiningTaskModel.id)))
 
     def update_status(self, task_id: str, **kwargs) -> Optional[MiningTaskModel]:
         """更新任务状态"""
@@ -72,9 +67,16 @@ class MiningTaskRepository:
         self.db.refresh(task)
         return task
 
-    def update_progress(self, task_id: str, progress: int, current_generation: int,
-                        total_generations: int, best_fitness: float, avg_fitness: float,
-                        fitness_history: dict = None) -> Optional[MiningTaskModel]:
+    def update_progress(
+        self,
+        task_id: str,
+        progress: int,
+        current_generation: int,
+        total_generations: int,
+        best_fitness: float,
+        avg_fitness: float,
+        fitness_history: dict = None,
+    ) -> Optional[MiningTaskModel]:
         """更新挖掘进度"""
         task = self.get_by_task_id(task_id)
         if not task:
@@ -94,6 +96,7 @@ class MiningTaskRepository:
     def complete_task(self, task_id: str, result: dict, fitness_history: dict = None) -> Optional[MiningTaskModel]:
         """标记任务完成"""
         from datetime import datetime
+
         task = self.get_by_task_id(task_id)
         if not task:
             return None
@@ -113,6 +116,7 @@ class MiningTaskRepository:
     def fail_task(self, task_id: str, error: str) -> Optional[MiningTaskModel]:
         """标记任务失败"""
         from datetime import datetime
+
         task = self.get_by_task_id(task_id)
         if not task:
             return None

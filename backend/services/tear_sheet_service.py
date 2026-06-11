@@ -13,6 +13,7 @@ Tear Sheet 全貌报告生成器 - 专业因子分析报告系统
 - 包含统计检验结果和专业解读
 - 符合量化研究的报告标准
 """
+
 import pandas as pd
 import math
 from typing import Dict, List, Optional, Any, Tuple
@@ -27,7 +28,7 @@ logger = logging.getLogger(__name__)
 class TearSheetConfig:
     """
     Tear Sheet 配置
-    
+
     Attributes:
         include_quantile_analysis: 是否包含分组收益分析
         include_cumulative_returns: 是否包含累计收益曲线
@@ -36,25 +37,28 @@ class TearSheetConfig:
         include_interpretation: 是否包含专业解读
         scoring_weights: 各维度评分权重
     """
+
     include_quantile_analysis: bool = True
     include_cumulative_returns: bool = True
     include_turnover: bool = True
     include_bootstrap: bool = True
     include_interpretation: bool = True
-    scoring_weights: Dict[str, float] = field(default_factory=lambda: {
-        "ic_strength": 25,
-        "ir_quality": 20,
-        "quantile_monotonicity": 20,
-        "stability": 15,
-        "turnover_efficiency": 10,
-        "significance": 10,
-    })
+    scoring_weights: Dict[str, float] = field(
+        default_factory=lambda: {
+            "ic_strength": 25,
+            "ir_quality": 20,
+            "quantile_monotonicity": 20,
+            "stability": 15,
+            "turnover_efficiency": 10,
+            "significance": 10,
+        }
+    )
 
 
 class TearSheetService:
     """
     Tear Sheet 服务类
-    
+
     生成完整的因子分析报告，包含：
     - 因子概览
     - IC/IR 分析
@@ -70,7 +74,7 @@ class TearSheetService:
     ):
         """
         初始化服务
-        
+
         Args:
             config: 报告配置
         """
@@ -85,21 +89,21 @@ class TearSheetService:
     ) -> Dict[str, Any]:
         """
         创建完整的Tear Sheet报告
-        
+
         这是主要入口方法，整合所有分析模块的结果。
-        
+
         Args:
             factor_data: {stock_code: DataFrame} 格式的因子数据
             factor_name: 因子名称
             price_column: 价格列名
             return_series: 收益率序列（可选）
-            
+
         Returns:
             完整的Tear Sheet报告字典
         """
         try:
             report_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            
+
             report = {
                 "metadata": {
                     "report_type": "full_tear_sheet",
@@ -110,82 +114,70 @@ class TearSheetService:
                 "summary": None,
                 "sections": {},
             }
-            
+
             sections_completed = []
             errors = []
-            
+
             if self.config.include_quantile_analysis:
                 try:
-                    from backend.services.factor_return_analysis_service import (
-                        factor_return_analysis_service
+                    from backend.services.factor_return_analysis_service import factor_return_analysis_service
+
+                    quantile_result = factor_return_analysis_service.calculate_quantile_returns(
+                        factor_data=factor_data,
+                        factor_name=factor_name,
+                        price_column=price_column,
                     )
-                    
-                    quantile_result = (
-                        factor_return_analysis_service.calculate_quantile_returns(
-                            factor_data=factor_data,
-                            factor_name=factor_name,
-                            price_column=price_column,
-                        )
-                    )
-                    
+
                     if "error" not in quantile_result:
                         report["sections"]["quantile_returns"] = quantile_result
                         sections_completed.append("quantile_returns")
                     else:
                         errors.append(f"分组收益分析: {quantile_result['error']}")
-                        
+
                 except Exception as e:
                     logger.warning(f"分组收益分析失败: {e}")
                     errors.append(f"分组收益分析: {str(e)}")
-            
+
             if self.config.include_cumulative_returns:
                 try:
-                    from backend.services.factor_return_analysis_service import (
-                        factor_return_analysis_service
+                    from backend.services.factor_return_analysis_service import factor_return_analysis_service
+
+                    cumulative_result = factor_return_analysis_service.calculate_cumulative_returns(
+                        factor_data=factor_data,
+                        factor_name=factor_name,
+                        price_column=price_column,
+                        long_short=True,
                     )
-                    
-                    cumulative_result = (
-                        factor_return_analysis_service.calculate_cumulative_returns(
-                            factor_data=factor_data,
-                            factor_name=factor_name,
-                            price_column=price_column,
-                            long_short=True,
-                        )
-                    )
-                    
+
                     if "error" not in cumulative_result:
                         report["sections"]["cumulative_returns"] = cumulative_result
                         sections_completed.append("cumulative_returns")
                     else:
                         errors.append(f"累计收益分析: {cumulative_result['error']}")
-                        
+
                 except Exception as e:
                     logger.warning(f"累计收益分析失败: {e}")
                     errors.append(f"累计收益分析: {str(e)}")
-            
+
             if self.config.include_turnover:
                 try:
-                    from backend.services.factor_return_analysis_service import (
-                        factor_return_analysis_service
+                    from backend.services.factor_return_analysis_service import factor_return_analysis_service
+
+                    turnover_result = factor_return_analysis_service.calculate_turnover_analysis(
+                        factor_data=factor_data,
+                        factor_name=factor_name,
                     )
-                    
-                    turnover_result = (
-                        factor_return_analysis_service.calculate_turnover_analysis(
-                            factor_data=factor_data,
-                            factor_name=factor_name,
-                        )
-                    )
-                    
+
                     if "error" not in turnover_result:
                         report["sections"]["turnover_analysis"] = turnover_result
                         sections_completed.append("turnover_analysis")
                     else:
                         errors.append(f"换手率分析: {turnover_result['error']}")
-                        
+
                 except Exception as e:
                     logger.warning(f"换手率分析失败: {e}")
                     errors.append(f"换手率分析: {str(e)}")
-            
+
             try:
                 ic_ir_section = self._extract_ic_ir_summary(factor_data, factor_name)
                 if ic_ir_section:
@@ -194,9 +186,9 @@ class TearSheetService:
             except Exception as e:
                 logger.warning(f"IC/IR摘要提取失败: {e}")
                 errors.append(f"IC/IR分析: {str(e)}")
-            
+
             overall_score, score_breakdown = self._calculate_overall_score(report["sections"])
-            
+
             report["summary"] = {
                 "overall_score": float(overall_score),
                 "grade": self._score_to_grade(overall_score),
@@ -206,26 +198,20 @@ class TearSheetService:
                 "completion_rate": len(sections_completed) / 4,
                 "warnings": errors if errors else None,
             }
-            
+
             if self.config.include_interpretation:
-                report["interpretation"] = self._generate_interpretation(
-                    report["sections"], 
-                    overall_score
-                )
-            
-            report["recommendations"] = self._generate_recommendations(
-                report["sections"],
-                overall_score
-            )
-            
+                report["interpretation"] = self._generate_interpretation(report["sections"], overall_score)
+
+            report["recommendations"] = self._generate_recommendations(report["sections"], overall_score)
+
             logger.info(
                 f"Tear Sheet生成完成: 因子={factor_name}, "
                 f"得分={overall_score:.1f}, "
                 f"完成{len(sections_completed)}/4个板块"
             )
-            
+
             return {"success": True, "tear_sheet": report}
-            
+
         except Exception as e:
             logger.error(f"Tear Sheet生成失败: {e}", exc_info=True)
             return {"success": False, "error": str(e)}
@@ -238,7 +224,7 @@ class TearSheetService:
         """提取IC/IR分析的摘要信息（委托Alphalens）"""
         try:
             from backend.services.alphalens_analysis_service import alphalens_analysis_service
-            
+
             # 构建alphalens所需的输入格式
             factor_values_dict = {}
             all_dates = set()
@@ -248,36 +234,36 @@ class TearSheetService:
                     if len(series) > 0:
                         factor_values_dict[stock_code] = series
                         all_dates.update(series.index)
-            
+
             if len(factor_values_dict) < 2:
                 logger.warning("有效股票数不足2只，无法进行横截面IC分析")
                 return None
-            
+
             # 构建pricing_df
             combined_dates = sorted(all_dates)
             for stock_code, df in factor_data.items():
                 if "close" in df.columns:
                     combined_dates = sorted(set(combined_dates) | set(df.index))
-            
+
             prices = pd.DataFrame(index=combined_dates)
             for stock_code, df in factor_data.items():
                 if "close" in df.columns:
                     prices[stock_code] = df["close"]
             prices = prices.dropna(how="all")
-            
+
             if prices.empty:
                 return None
-            
+
             al_result = alphalens_analysis_service.full_analysis(
                 factor_values_dict=factor_values_dict,
                 pricing_df=prices,
                 max_loss=1.0,
             )
-            
+
             if "error" in al_result:
                 logger.warning(f"Alphalens分析失败: {al_result['error']}")
                 return None
-            
+
             # 从alphalens结果中提取IC摘要
             ic_analysis = al_result.get("ic_analysis", {})
             spearman_data = ic_analysis.get("spearman_ic", {})
@@ -301,7 +287,7 @@ class TearSheetService:
                     result = current
 
             return result if result is not None else None
-            
+
         except Exception as e:
             logger.warning(f"IC/IR摘要提取异常: {e}")
             return None
@@ -315,6 +301,7 @@ class TearSheetService:
 
         基于各分析维度的加权评分。
         """
+
         def _safe_val(val, default=0.0):
             """Convert NaN/None/Inf to default value for scoring"""
             if val is None:
@@ -346,9 +333,7 @@ class TearSheetService:
             spread = qr.get("spread", {})
 
             mono_ratio = _safe_val(
-                mono.get("monotonicity_ratio", 0)
-                if isinstance(mono.get("monotonicity_ratio"), (int, float))
-                else 0
+                mono.get("monotonicity_ratio", 0) if isinstance(mono.get("monotonicity_ratio"), (int, float)) else 0
             )
             mono_score = mono_ratio * 100
             scores["quantile_monotonicity"] = max(0, min(mono_score, 100))
@@ -376,10 +361,7 @@ class TearSheetService:
             scores["stability"] = 0
             scores["turnover_efficiency"] = 0
 
-        total_score = sum(
-            scores.get(key, 0) * weight / 100
-            for key, weight in weights.items()
-        )
+        total_score = sum(scores.get(key, 0) * weight / 100 for key, weight in weights.items())
 
         return total_score, scores
 
@@ -403,7 +385,7 @@ class TearSheetService:
     ) -> Dict[str, str]:
         """生成专业解读"""
         interpretations = {}
-        
+
         if "ic_ir_analysis" in sections:
             ic_ir = sections["ic_ir_analysis"]
             ir = ic_ir.get("ir")
@@ -415,12 +397,9 @@ class TearSheetService:
             pos_ratio = ic_ir.get("ic_positive_ratio")
             if pos_ratio is None:
                 pos_ratio = 0.5
-            
-            interpretations["ic_ir"] = (
-                f"该因子的IC均值为{mean_ic:.4f}，IR为{ir:.3f}，"
-                f"IC正方向占比{pos_ratio:.1%}。"
-            )
-            
+
+            interpretations["ic_ir"] = f"该因子的IC均值为{mean_ic:.4f}，IR为{ir:.3f}，" f"IC正方向占比{pos_ratio:.1%}。"
+
             if ir > 1.0:
                 interpretations["ic_ir"] += "IC表现优秀，因子具有很强的预测能力和稳定性。"
             elif ir > 0.5:
@@ -429,53 +408,48 @@ class TearSheetService:
                 interpretations["ic_ir"] += "IC表现一般，预测能力有限。"
             else:
                 interpretations["ic_ir"] += "IC表现较差，可能需要优化或更换因子。"
-        
+
         if "quantile_returns" in sections:
             qr = sections["quantile_returns"]
             spread = qr.get("spread", {})
             mono = qr.get("monotonicity_test", {})
-            
+
             spread_val = spread.get("long_short_spread", 0)
             is_sig = spread.get("is_significant", False)
             is_mono = mono.get("is_monotonic", False)
-            
+
             interpretations["quantile"] = (
                 f"多空利差为{spread_val:.4%}"
                 f"{'（显著）' if is_sig else '（不显著）'}"
                 f"，分组收益{'呈现' if is_mono else '未呈现'}单调性。"
             )
-            
+
             if is_sig and is_mono and spread_val > 0.01:
                 interpretations["quantile"] += "因子选股能力强，适合构建多头组合。"
             elif is_sig and spread_val > 0:
                 interpretations["quantile"] += "因子具有一定的选股价值。"
             else:
                 interpretations["quantile"] += "因子选股效果不明显，建议谨慎使用。"
-        
+
         if "turnover_analysis" in sections:
             ta = sections["turnover_analysis"]
             stability = ta.get("stability_analysis", {})
             turnover_stats = ta.get("turnover_stats", {})
-            
+
             mean_to = turnover_stats.get("mean_turnover", 0.5)
             is_stable = stability.get("is_stable", False)
-            
-            interpretations["turnover"] = (
-                f"平均换手率为{mean_to:.2%}"
-                f"，因子{'稳定' if is_stable else '不稳定'}。"
-            )
-            
+
+            interpretations["turnover"] = f"平均换手率为{mean_to:.2%}" f"，因子{'稳定' if is_stable else '不稳定'}。"
+
             if is_stable and mean_to < 0.3:
                 interpretations["turnover"] += "低换手率+高稳定性，交易成本低。"
             elif is_stable:
                 interpretations["turnover"] += "因子较稳定，但需关注交易成本。"
             else:
                 interpretations["turnover"] += "因子变动频繁，可能产生较高交易成本。"
-        
-        interpretations["overall"] = (
-            f"综合评分为{overall_score:.1f}/100（{self._score_to_grade(overall_score)}）。"
-        )
-        
+
+        interpretations["overall"] = f"综合评分为{overall_score:.1f}/100（{self._score_to_grade(overall_score)}）。"
+
         if overall_score >= 70:
             interpretations["overall"] += "该因子质量优秀，推荐用于实盘策略。"
         elif overall_score >= 50:
@@ -484,7 +458,7 @@ class TearSheetService:
             interpretations["overall"] += "该因子质量一般，建议优化后使用。"
         else:
             interpretations["overall"] += "该因子质量较差，不建议直接使用。"
-        
+
         return interpretations
 
     def _generate_recommendations(
@@ -494,7 +468,7 @@ class TearSheetService:
     ) -> List[Dict[str, Any]]:
         """生成改进建议"""
         recommendations = []
-        
+
         if "ic_ir_analysis" in sections:
             ic_ir = sections["ic_ir_analysis"]
             ir = ic_ir.get("ir")
@@ -502,86 +476,94 @@ class TearSheetService:
                 ir = 0
 
             if ir < 0.5:
-                recommendations.append({
-                    "priority": "high",
-                    "category": "IC/IR提升",
-                    "suggestion": (
-                        "因子IR较低(<0.5)，建议："
-                        "1) 检查因子逻辑是否合理 "
-                        "2) 尝试不同的时间周期 "
-                        "3) 考虑与其他因子组合"
-                    ),
-                })
-            
+                recommendations.append(
+                    {
+                        "priority": "high",
+                        "category": "IC/IR提升",
+                        "suggestion": (
+                            "因子IR较低(<0.5)，建议："
+                            "1) 检查因子逻辑是否合理 "
+                            "2) 尝试不同的时间周期 "
+                            "3) 考虑与其他因子组合"
+                        ),
+                    }
+                )
+
             positive_ratio = ic_ir.get("ic_positive_ratio", 0.5)
             if positive_ratio < 0.55 and positive_ratio > 0.45:
-                recommendations.append({
-                    "priority": "medium",
-                    "category": "方向一致性",
-                    "suggestion": (
-                        f"IC正方向占比仅{positive_ratio:.1%}(接近随机)，"
-                        "建议检查因子在不同市场环境下的表现"
-                    ),
-                })
-        
+                recommendations.append(
+                    {
+                        "priority": "medium",
+                        "category": "方向一致性",
+                        "suggestion": (
+                            f"IC正方向占比仅{positive_ratio:.1%}(接近随机)，" "建议检查因子在不同市场环境下的表现"
+                        ),
+                    }
+                )
+
         if "quantile_returns" in sections:
             qr = sections["quantile_returns"]
             mono = qr.get("monotonicity_test", {})
-            
+
             if not mono.get("is_monotonic", False):
-                recommendations.append({
-                    "priority": "high",
-                    "category": "单调性改善",
-                    "suggestion": (
-                        "分组收益不满足单调性，建议："
-                        "1) 优化因子计算方式 "
-                        "2) 尝试非线性变换 "
-                        "3) 检查是否存在极端值干扰"
-                    ),
-                })
-        
+                recommendations.append(
+                    {
+                        "priority": "high",
+                        "category": "单调性改善",
+                        "suggestion": (
+                            "分组收益不满足单调性，建议："
+                            "1) 优化因子计算方式 "
+                            "2) 尝试非线性变换 "
+                            "3) 检查是否存在极端值干扰"
+                        ),
+                    }
+                )
+
         if "turnover_analysis" in sections:
             ta = sections["turnover_analysis"]
             turnover_stats = ta.get("turnover_stats", {})
             mean_to = turnover_stats.get("mean_turnover", 0)
-            
+
             if mean_to > 0.5:
-                recommendations.append({
-                    "priority": "medium",
-                    "category": "换手率控制",
-                    "suggestion": (
-                        f"换手率过高({mean_to:.2%})，建议："
-                        "1) 降低调仓频率 "
-                        "2) 对因子值进行平滑处理 "
-                        "3) 设置换手率约束"
-                    ),
-                })
-        
+                recommendations.append(
+                    {
+                        "priority": "medium",
+                        "category": "换手率控制",
+                        "suggestion": (
+                            f"换手率过高({mean_to:.2%})，建议："
+                            "1) 降低调仓频率 "
+                            "2) 对因子值进行平滑处理 "
+                            "3) 设置换手率约束"
+                        ),
+                    }
+                )
+
         if overall_score < 50:
-            recommendations.append({
-                "priority": "high",
-                "category": "整体优化",
-                "suggestion": (
-                    "综合评分偏低，建议进行全面审查："
-                    "1) 回顾因子构造逻辑 "
-                    "2) 检查数据处理流程 "
-                    "3) 对比同类基准因子 "
-                    "4) 考虑使用因子合成方法"
-                ),
-            })
-        
+            recommendations.append(
+                {
+                    "priority": "high",
+                    "category": "整体优化",
+                    "suggestion": (
+                        "综合评分偏低，建议进行全面审查："
+                        "1) 回顾因子构造逻辑 "
+                        "2) 检查数据处理流程 "
+                        "3) 对比同类基准因子 "
+                        "4) 考虑使用因子合成方法"
+                    ),
+                }
+            )
+
         if not recommendations:
-            recommendations.append({
-                "priority": "low",
-                "category": "持续监控",
-                "suggestion": (
-                    "因子表现良好，建议定期监控："
-                    "1) 跟踪IC衰减情况 "
-                    "2) 关注市场环境变化 "
-                    "3) 定期更新参数"
-                ),
-            })
-        
+            recommendations.append(
+                {
+                    "priority": "low",
+                    "category": "持续监控",
+                    "suggestion": (
+                        "因子表现良好，建议定期监控：" "1) 跟踪IC衰减情况 " "2) 关注市场环境变化 " "3) 定期更新参数"
+                    ),
+                }
+            )
+
         return recommendations
 
 

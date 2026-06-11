@@ -2,6 +2,7 @@
 基于 vectorbt 的回测服务
 更准确、更高效的回测引擎
 """
+
 import pandas as pd
 import numpy as np
 from typing import Dict, List, Optional, Tuple
@@ -11,12 +12,15 @@ import gc
 
 import vectorbt as vbt
 
-from backend.services.risk_metrics import calculate_risk_metrics, calculate_volatility as _calc_volatility, _empty_metrics
+from backend.services.risk_metrics import (
+    calculate_risk_metrics,
+    calculate_volatility as _calc_volatility,
+    _empty_metrics,
+)
 from backend.services.smart_slippage_detector import smart_slippage_detector, SlippageRecommendation
 from backend.utils.return_calculator import calculate_future_return
 from backend.utils.safe_math import safe_divide, safe_series_divide
 from backend.utils.ic_calculator import calculate_rolling_ic
-from scipy.stats import spearmanr
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +36,7 @@ _FREQ_CONFIG = {
     },
     "5min": {
         "vbt_freq": "5T",
-        "annual_bars": 252 * 48,       # 每交易日48根5分钟K线(4h/5min)
+        "annual_bars": 252 * 48,  # 每交易日48根5分钟K线(4h/5min)
         "rolling_window": 252 * 48,
         "rolling_min_periods": 150 * 48,
         "description": "5分钟",
@@ -148,7 +152,7 @@ class VectorBTBacktestService:
                     "confidence": self._slippage_recommendation.confidence,
                     "reasoning": self._slippage_recommendation.reasoning,
                     "sensitivity": self._slippage_recommendation.sensitivity_analysis,
-                }
+                },
             }
         else:
             return {
@@ -264,7 +268,9 @@ class VectorBTBacktestService:
         factor_raw = df[factor_name]
         if tradable_mask is not None:
             factor_clean = factor_raw.where(tradable_mask)
-            factor_rank = factor_clean.rolling(fc["rolling_window"], min_periods=fc["rolling_min_periods"]).rank(pct=True)
+            factor_rank = factor_clean.rolling(fc["rolling_window"], min_periods=fc["rolling_min_periods"]).rank(
+                pct=True
+            )
         else:
             factor_rank = factor_raw.rolling(fc["rolling_window"], min_periods=1).rank(pct=True)
 
@@ -543,7 +549,11 @@ class VectorBTBacktestService:
                     if trades_readable is not None and len(trades_readable) > 0:
                         # 过滤掉 warmup 区的交易
                         if "Entry Timestamp" in trades_readable.columns:
-                            warmup_cutoff = df.index[cr["chunk_start"] + overlap_size] if cr["chunk_start"] + overlap_size < len(df.index) else None
+                            warmup_cutoff = (
+                                df.index[cr["chunk_start"] + overlap_size]
+                                if cr["chunk_start"] + overlap_size < len(df.index)
+                                else None
+                            )
                             if warmup_cutoff is not None:
                                 trades_readable = trades_readable[trades_readable["Entry Timestamp"] >= warmup_cutoff]
                         trades_dfs.append(trades_readable)
@@ -567,7 +577,9 @@ class VectorBTBacktestService:
         returns_series = pd.Series(returns) if not isinstance(returns, pd.Series) else returns
 
         if n_bars > 0:
-            metrics = calculate_risk_metrics(returns_series, risk_free_rate=risk_free_rate, annual_trading_days=fc["annual_bars"])
+            metrics = calculate_risk_metrics(
+                returns_series, risk_free_rate=risk_free_rate, annual_trading_days=fc["annual_bars"]
+            )
             total_return = metrics["total_return"]
             annual_return = metrics["annual_return"]
             volatility = metrics["volatility"]
@@ -594,7 +606,11 @@ class VectorBTBacktestService:
 
         logger.info(
             f"✅ 分块回测完成: {len(chunk_results)} 块 → "
-            + (f"净值曲线 {len(equity_curve)} bars, 年化收益 {annual_return:.2%}" if annual_return is not None else f"净值曲线 {len(equity_curve)} bars, 年化收益 N/A")
+            + (
+                f"净值曲线 {len(equity_curve)} bars, 年化收益 {annual_return:.2%}"
+                if annual_return is not None
+                else f"净值曲线 {len(equity_curve)} bars, 年化收益 N/A"
+            )
         )
 
         return {
@@ -618,9 +634,15 @@ class VectorBTBacktestService:
                 "total_days": len(df),
                 "tradable_days": int(df["tradable_mask"].sum()) if "tradable_mask" in df.columns else len(df),
                 "tradable_ratio": float(df["tradable_mask"].mean()) if "tradable_mask" in df.columns else 1.0,
-                "limit_up_days": int((df.get("limit_up_mask", pd.Series(dtype=bool)) == True).sum()) if "limit_up_mask" in df.columns else 0,
-                "limit_down_days": int((df.get("limit_down_mask", pd.Series(dtype=bool)) == True).sum()) if "limit_down_mask" in df.columns else 0,
-                "suspended_days": int((df["tradable_mask"] == False).sum()) if "tradable_mask" in df.columns else 0,
+                "limit_up_days": (
+                    int((df.get("limit_up_mask", pd.Series(dtype=bool))).sum()) if "limit_up_mask" in df.columns else 0
+                ),
+                "limit_down_days": (
+                    int((df.get("limit_down_mask", pd.Series(dtype=bool))).sum())
+                    if "limit_down_mask" in df.columns
+                    else 0
+                ),
+                "suspended_days": int((not df["tradable_mask"]).sum()) if "tradable_mask" in df.columns else 0,
                 "mask_applied": "tradable_mask" in df.columns,
             },
             "chunking_info": {
@@ -666,10 +688,14 @@ class VectorBTBacktestService:
             if use_chunking == "force" or len(df) > chunk_size * 1.5:
                 logger.info(f"📊 数据量 {len(df)} bars > {int(chunk_size * 1.5)} 阈值，自动启用分块回测")
                 return self.chunked_single_factor_backtest(
-                    df=df, factor_name=factor_name,
-                    percentile=percentile, direction=direction,
-                    n_quantiles=n_quantiles, shares_per_trade=shares_per_trade,
-                    use_tradable_mask=use_tradable_mask, freq=freq,
+                    df=df,
+                    factor_name=factor_name,
+                    percentile=percentile,
+                    direction=direction,
+                    n_quantiles=n_quantiles,
+                    shares_per_trade=shares_per_trade,
+                    use_tradable_mask=use_tradable_mask,
+                    freq=freq,
                 )
 
         # 获取频率配置
@@ -732,10 +758,10 @@ class VectorBTBacktestService:
                 return val / 100.0
             return val
 
-        total_return = _safe_stat('Total Return [%]', divide_by_100=True)
+        total_return = _safe_stat("Total Return [%]", divide_by_100=True)
 
         # 年化收益率：如果VectorBT返回None/NaN，则手动计算
-        annual_return = _safe_stat('Annual Return [%]', divide_by_100=True)
+        annual_return = _safe_stat("Annual Return [%]", divide_by_100=True)
         if annual_return is None:
             # 手动计算年化收益率 = (1 + 总收益率)^(年化bar数/交易bar数) - 1
             n_days = len(returns_clean)
@@ -748,18 +774,20 @@ class VectorBTBacktestService:
 
         # 使用统一的calculate_metrics计算Sharpe/Sortino（扣除无风险利率3%）
         # VectorBT默认rf=0，此处统一为rf=3%以保持与分块回测一致
-        metrics = self.calculate_metrics(returns_clean, equity_curve=(1 + returns_clean).cumprod(), annual_trading_days=fc["annual_bars"])
+        metrics = self.calculate_metrics(
+            returns_clean, equity_curve=(1 + returns_clean).cumprod(), annual_trading_days=fc["annual_bars"]
+        )
         sharpe_ratio = metrics["sharpe_ratio"]
         sortino_ratio = metrics["sortino_ratio"]
-        max_drawdown = _safe_stat('Max Drawdown [%]', divide_by_100=True)
-        calmar_ratio = _safe_stat('Calmar Ratio')
-        win_rate = _safe_stat('Win Rate [%]', divide_by_100=True)
+        max_drawdown = _safe_stat("Max Drawdown [%]", divide_by_100=True)
+        calmar_ratio = _safe_stat("Calmar Ratio")
+        win_rate = _safe_stat("Win Rate [%]", divide_by_100=True)
 
         # VaR 和 CVaR 需要自己计算
         var_95, cvar_95 = self._calculate_var_cvar(returns_clean)
 
         # 计算交易次数
-        trades_count = stats.get('Total Trades', 0) or 0
+        trades_count = stats.get("Total Trades", 0) or 0
 
         # 提取交易记录
         trades_df = self._format_trades_df(pf)
@@ -867,8 +895,7 @@ class VectorBTBacktestService:
                 # forward_return 也需 shift(1)，确保 t 日窗口只用到 t-1→t 的已知收益
                 shifted_factor = df[norm_factor].shift(1)
                 rolling_ic = calculate_rolling_ic(
-                    shifted_factor, forward_return_shifted,
-                    window=ic_window, method='spearman', min_periods=10
+                    shifted_factor, forward_return_shifted, window=ic_window, method="spearman", min_periods=10
                 )
                 ic_abs = rolling_ic.abs()
                 ic_weight_frames.append(ic_abs)
@@ -976,7 +1003,7 @@ class VectorBTBacktestService:
         price_df.index = pd.to_datetime(price_df.index)
 
         # 1. 计算收益率
-        _returns_df = price_df.pct_change()
+        _returns_df = price_df.pct_change()  # noqa: F841
 
         # 2. 向量化选择股票（替代逐日循环，性能提升数十倍）
         # Mask-First: 因子排名前先应用tradable_mask
@@ -1057,10 +1084,10 @@ class VectorBTBacktestService:
                 return val / 100.0
             return val
 
-        total_return = _safe_stat('Total Return [%]', divide_by_100=True)
+        total_return = _safe_stat("Total Return [%]", divide_by_100=True)
 
         # 年化收益率：如果VectorBT返回None/NaN，则手动计算
-        annual_return = _safe_stat('Annual Return [%]', divide_by_100=True)
+        annual_return = _safe_stat("Annual Return [%]", divide_by_100=True)
         if annual_return is None:
             # 手动计算年化收益率 = (1 + 总收益率)^(年化bar数/交易bar数) - 1
             n_days = len(returns_clean)
@@ -1073,18 +1100,20 @@ class VectorBTBacktestService:
 
         # 使用统一的calculate_metrics计算Sharpe/Sortino（扣除无风险利率3%）
         # VectorBT默认rf=0，此处统一为rf=3%以保持与分块回测一致
-        metrics = self.calculate_metrics(returns_clean, equity_curve=(1 + returns_clean).cumprod(), annual_trading_days=fc["annual_bars"])
+        metrics = self.calculate_metrics(
+            returns_clean, equity_curve=(1 + returns_clean).cumprod(), annual_trading_days=fc["annual_bars"]
+        )
         sharpe_ratio = metrics["sharpe_ratio"]
         sortino_ratio = metrics["sortino_ratio"]
-        max_drawdown = _safe_stat('Max Drawdown [%]', divide_by_100=True)
-        calmar_ratio = _safe_stat('Calmar Ratio')
-        win_rate = _safe_stat('Win Rate [%]', divide_by_100=True)
+        max_drawdown = _safe_stat("Max Drawdown [%]", divide_by_100=True)
+        calmar_ratio = _safe_stat("Calmar Ratio")
+        win_rate = _safe_stat("Win Rate [%]", divide_by_100=True)
 
         # VaR 和 CVaR 需要自己计算
         var_95, cvar_95 = self._calculate_var_cvar(returns_clean)
 
         # 计算交易次数（每日调仓次数）
-        trades_count = stats.get('Total Trades', len(price_df.columns)) or len(price_df.columns)
+        trades_count = stats.get("Total Trades", len(price_df.columns)) or len(price_df.columns)
 
         # 提取交易记录
         trades_df = self._format_trades_df(pf)
@@ -1192,7 +1221,11 @@ class VectorBTBacktestService:
                 return {"error": f"权重回测失败: {e2}", "success": False}
 
     def calculate_metrics(
-        self, returns: pd.Series, equity_curve: pd.Series = None, annual_trading_days: int = 252, risk_free_rate: float = 0.03
+        self,
+        returns: pd.Series,
+        equity_curve: pd.Series = None,
+        annual_trading_days: int = 252,
+        risk_free_rate: float = 0.03,
     ) -> Dict:
         """
         计算性能指标（委托risk_metrics + empyrical）
@@ -1228,7 +1261,7 @@ class VectorBTBacktestService:
         """
         trades_df = None
         try:
-            if hasattr(pf, 'trades') and hasattr(pf.trades, 'records_readable'):
+            if hasattr(pf, "trades") and hasattr(pf.trades, "records_readable"):
                 trades_readable = pf.trades.records_readable
 
                 if trades_readable is not None and len(trades_readable) > 0:
@@ -1236,72 +1269,66 @@ class VectorBTBacktestService:
 
                     # 创建列名映射（英文 -> 中文）
                     column_mapping = {
-                        'Trade Id': '交易ID',
-                        'Column': '股票代码',
-                        'Size': '数量',
-                        'Entry Timestamp': '入场时间',
-                        'Avg Entry Price': '入场价格',
-                        'Entry Fees': '入场手续费',
-                        'Exit Timestamp': '出场时间',
-                        'Avg Exit Price': '出场价格',
-                        'Exit Fees': '出场手续费',
-                        'PnL': '收益',
-                        'Return': '收益率',
-                        'Direction': '方向',
-                        'Status': '状态',
-                        'Parent Id': '父ID'
+                        "Trade Id": "交易ID",
+                        "Column": "股票代码",
+                        "Size": "数量",
+                        "Entry Timestamp": "入场时间",
+                        "Avg Entry Price": "入场价格",
+                        "Entry Fees": "入场手续费",
+                        "Exit Timestamp": "出场时间",
+                        "Avg Exit Price": "出场价格",
+                        "Exit Fees": "出场手续费",
+                        "PnL": "收益",
+                        "Return": "收益率",
+                        "Direction": "方向",
+                        "Status": "状态",
+                        "Parent Id": "父ID",
                     }
 
                     # 重命名列
                     trades_df.rename(columns=column_mapping, inplace=True)
 
                     # 转换方向和状态为中文
-                    if '方向' in trades_df.columns:
-                        trades_df['方向'] = trades_df['方向'].map({
-                            'Long': '做多',
-                            'Short': '做空'
-                        }).fillna('未知')
+                    if "方向" in trades_df.columns:
+                        trades_df["方向"] = trades_df["方向"].map({"Long": "做多", "Short": "做空"}).fillna("未知")
 
-                    if '状态' in trades_df.columns:
-                        trades_df['状态'] = trades_df['状态'].map({
-                            'Open': '持仓中',
-                            'Closed': '已平仓'
-                        }).fillna('未知')
+                    if "状态" in trades_df.columns:
+                        trades_df["状态"] = trades_df["状态"].map({"Open": "持仓中", "Closed": "已平仓"}).fillna("未知")
 
                     # 将入场时间设为索引
-                    if '入场时间' in trades_df.columns:
+                    if "入场时间" in trades_df.columns:
                         try:
-                            trades_df['入场时间'] = pd.to_datetime(trades_df['入场时间'], errors='coerce')
+                            trades_df["入场时间"] = pd.to_datetime(trades_df["入场时间"], errors="coerce")
                         except Exception as e:
                             logger.debug(f"入场时间转换失败: {e}")
-                        trades_df.set_index('入场时间', inplace=True)
+                        trades_df.set_index("入场时间", inplace=True)
 
                     # 转换出场时间为可读格式
-                    if '出场时间' in trades_df.columns:
+                    if "出场时间" in trades_df.columns:
                         try:
-                            exit_time_series = trades_df['出场时间'].copy()
+                            exit_time_series = trades_df["出场时间"].copy()
                             mask = exit_time_series.notna()
                             if mask.any():
-                                formatted = exit_time_series[mask].dt.strftime('%Y-%m-%d')
-                                trades_df['出场时间'] = exit_time_series.astype(object)
-                                trades_df.loc[mask, '出场时间'] = formatted.values
+                                formatted = exit_time_series[mask].dt.strftime("%Y-%m-%d")
+                                trades_df["出场时间"] = exit_time_series.astype(object)
+                                trades_df.loc[mask, "出场时间"] = formatted.values
                         except Exception as e:
                             logger.warning(f"出场时间格式化失败: {e}")
 
                     # 对于单股票回测，如果股票代码列全是0，则删除该列
-                    if '股票代码' in trades_df.columns:
-                        unique_codes = trades_df['股票代码'].unique()
-                        if len(unique_codes) == 1 and (unique_codes[0] == 0 or unique_codes[0] == '0'):
-                            trades_df = trades_df.drop(columns=['股票代码'])
+                    if "股票代码" in trades_df.columns:
+                        unique_codes = trades_df["股票代码"].unique()
+                        if len(unique_codes) == 1 and (unique_codes[0] == 0 or unique_codes[0] == "0"):
+                            trades_df = trades_df.drop(columns=["股票代码"])
 
                     # 删除不需要的列
-                    for col in ['Exit Trade Id', 'Position Id']:
+                    for col in ["Exit Trade Id", "Position Id"]:
                         if col in trades_df.columns:
                             trades_df = trades_df.drop(columns=[col])
 
                     # 计算交易价值（入场价格 * 数量）
-                    if '入场价格' in trades_df.columns and '数量' in trades_df.columns:
-                        trades_df['价值'] = trades_df['入场价格'] * trades_df['数量'].abs()
+                    if "入场价格" in trades_df.columns and "数量" in trades_df.columns:
+                        trades_df["价值"] = trades_df["入场价格"] * trades_df["数量"].abs()
         except Exception as e:
             logger.warning(f"提取VectorBT交易记录失败: {e}")
             logger.debug(traceback.format_exc())

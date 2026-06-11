@@ -1,6 +1,7 @@
 """
 因子服务模块 - 因子计算与管理
 """
+
 import ast
 import numpy as np
 import pandas as pd
@@ -26,30 +27,105 @@ class FactorCalculator:
 
     # AST 节点白名单：只允许安全的操作
     _SAFE_AST_NODES = {
-        ast.Module, ast.FunctionDef, ast.Return, ast.Assign, ast.AugAssign,
-        ast.For, ast.While, ast.If, ast.Expr, ast.Pass, ast.Break, ast.Continue,
-        ast.BoolOp, ast.BinOp, ast.UnaryOp, ast.Lambda, ast.IfExp,
-        ast.Dict, ast.List, ast.Tuple, ast.Set,
-        ast.Compare, ast.Call, ast.Constant, ast.Name, ast.Subscript,
-        ast.Attribute, ast.Index, ast.Slice, ast.ExtSlice,
-        ast.Starred, ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp,
-        ast.comprehension, ast.Num, ast.Str, ast.NameConstant, ast.FormattedValue,
+        ast.Module,
+        ast.FunctionDef,
+        ast.Return,
+        ast.Assign,
+        ast.AugAssign,
+        ast.For,
+        ast.While,
+        ast.If,
+        ast.Expr,
+        ast.Pass,
+        ast.Break,
+        ast.Continue,
+        ast.BoolOp,
+        ast.BinOp,
+        ast.UnaryOp,
+        ast.Lambda,
+        ast.IfExp,
+        ast.Dict,
+        ast.List,
+        ast.Tuple,
+        ast.Set,
+        ast.Compare,
+        ast.Call,
+        ast.Constant,
+        ast.Name,
+        ast.Subscript,
+        ast.Attribute,
+        ast.Index,
+        ast.Slice,
+        ast.ExtSlice,
+        ast.Starred,
+        ast.ListComp,
+        ast.SetComp,
+        ast.DictComp,
+        ast.GeneratorExp,
+        ast.comprehension,
+        ast.Num,
+        ast.Str,
+        ast.NameConstant,
+        ast.FormattedValue,
         ast.JoinedStr,
         # 算术/逻辑/比较操作符节点（ast.walk 会遍历到这些）
-        ast.Add, ast.Sub, ast.Mult, ast.Div, ast.FloorDiv, ast.Mod, ast.Pow,
-        ast.LShift, ast.RShift, ast.BitOr, ast.BitXor, ast.BitAnd, ast.MatMult,
-        ast.And, ast.Or, ast.Not, ast.Invert,
-        ast.Eq, ast.NotEq, ast.Lt, ast.LtE, ast.Gt, ast.GtE, ast.Is, ast.IsNot, ast.In, ast.NotIn,
+        ast.Add,
+        ast.Sub,
+        ast.Mult,
+        ast.Div,
+        ast.FloorDiv,
+        ast.Mod,
+        ast.Pow,
+        ast.LShift,
+        ast.RShift,
+        ast.BitOr,
+        ast.BitXor,
+        ast.BitAnd,
+        ast.MatMult,
+        ast.And,
+        ast.Or,
+        ast.Not,
+        ast.Invert,
+        ast.Eq,
+        ast.NotEq,
+        ast.Lt,
+        ast.LtE,
+        ast.Gt,
+        ast.GtE,
+        ast.Is,
+        ast.IsNot,
+        ast.In,
+        ast.NotIn,
         # 其他安全节点
-        ast.Store, ast.Load, ast.Del, ast.arg, ast.arguments,
+        ast.Store,
+        ast.Load,
+        ast.Del,
+        ast.arg,
+        ast.arguments,
     }
 
     # 禁止访问的属性名（防止沙箱逃逸）
     _FORBIDDEN_ATTRS = {
-        "__builtins__", "__import__", "__class__", "__bases__", "__subclasses__",
-        "__globals__", "__code__", "__closure__", "__dict__", "__mro__",
-        "exec", "eval", "compile", "open", "input", "globals", "locals",
-        "__getattribute__", "__setattr__", "delattr",
+        "__builtins__",
+        "__import__",
+        "__class__",
+        "__bases__",
+        "__subclasses__",
+        "__globals__",
+        "__code__",
+        "__closure__",
+        "__dict__",
+        "__mro__",
+        "exec",
+        "eval",
+        "compile",
+        "open",
+        "input",
+        "globals",
+        "locals",
+        "__getattribute__",
+        "__setattr__",
+        "delattr",
     }
 
     def _validate_code_safety(self, code: str) -> None:
@@ -70,34 +146,23 @@ class FactorCalculator:
         for node in ast.walk(tree):
             # 检查是否包含不允许的 AST 节点类型
             if type(node) not in self._SAFE_AST_NODES:
-                raise ValueError(
-                    f"因子代码包含不安全的操作: {type(node).__name__}，"
-                    f"仅允许数学运算和数据处理操作"
-                )
+                raise ValueError(f"因子代码包含不安全的操作: {type(node).__name__}，" f"仅允许数学运算和数据处理操作")
 
             # 检查属性访问是否安全
             if isinstance(node, ast.Attribute):
                 if node.attr in self._FORBIDDEN_ATTRS:
-                    raise ValueError(
-                        f"因子代码禁止访问属性: {node.attr}，"
-                        f"不允许使用反射和系统调用"
-                    )
+                    raise ValueError(f"因子代码禁止访问属性: {node.attr}，" f"不允许使用反射和系统调用")
 
             # 检查变量名是否安全（如直接引用 __builtins__）
             if isinstance(node, ast.Name):
                 if node.id in self._FORBIDDEN_ATTRS:
-                    raise ValueError(
-                        f"因子代码禁止访问: {node.id}，"
-                        f"不允许使用反射和系统调用"
-                    )
+                    raise ValueError(f"因子代码禁止访问: {node.id}，" f"不允许使用反射和系统调用")
 
             # 检查函数名是否安全
             if isinstance(node, ast.Call):
                 if isinstance(node.func, ast.Name):
                     if node.func.id in ("exec", "eval", "compile", "open", "__import__", "input"):
-                        raise ValueError(
-                            f"因子代码禁止调用函数: {node.func.id}"
-                        )
+                        raise ValueError(f"因子代码禁止调用函数: {node.func.id}")
 
     def __init__(self):
         # TALib 函数（注意：SMA 在 mylanguage_funcs 中定义，支持命名参数）
@@ -129,6 +194,7 @@ class FactorCalculator:
         def SMA(series, timeperiod=30, **kwargs):
             """简单移动平均"""
             import talib
+
             if isinstance(series, pd.Series):
                 result = talib.SMA(series.values, timeperiod=timeperiod, **kwargs)
                 return pd.Series(result, index=series.index)
@@ -264,7 +330,7 @@ class FactorCalculator:
                 return pd.Series(float(n), index=condition.index)
 
             positions = np.arange(n)
-            insert_points = np.searchsorted(true_indices, positions, side='right')
+            insert_points = np.searchsorted(true_indices, positions, side="right")
 
             result = np.full(n, float(n), dtype=float)
             has_prior = insert_points > 0
@@ -283,8 +349,10 @@ class FactorCalculator:
                 return series.rolling(window=n, min_periods=1).apply(
                     lambda x: pd.Series(x).rank(pct=True).iloc[-1], raw=False
                 )
-            return pd.Series(series).rolling(window=n, min_periods=1).apply(
-                lambda x: pd.Series(x).rank(pct=True).iloc[-1], raw=False
+            return (
+                pd.Series(series)
+                .rolling(window=n, min_periods=1)
+                .apply(lambda x: pd.Series(x).rank(pct=True).iloc[-1], raw=False)
             )
 
         def CORR(x, y, n=10):
@@ -357,7 +425,7 @@ class FactorCalculator:
             weights = np.arange(1, n + 1, dtype=float)
 
             def weighted_avg(x):
-                w = weights[-len(x):]
+                w = weights[-len(x) :]  # noqa: E203
                 return np.dot(x, w) / w.sum()
 
             return series.rolling(window=n, min_periods=1).apply(weighted_avg, raw=True)
@@ -412,8 +480,8 @@ class FactorCalculator:
         import pandas as pd
 
         # 检测是否是函数形式（去除注释和空行后再检查）
-        lines = factor_code.strip().split('\n')
-        code_lines = [line for line in lines if line.strip() and not line.strip().startswith('#')]
+        lines = factor_code.strip().split("\n")
+        code_lines = [line for line in lines if line.strip() and not line.strip().startswith("#")]
         is_function = len(code_lines) > 0 and code_lines[0].strip().startswith("def ")
 
         if is_function:
@@ -425,14 +493,32 @@ class FactorCalculator:
             global_vars = {
                 "__builtins__": {
                     # 安全的内置函数（不含__import__、exec、eval、open、getattr、hasattr等）
-                    "abs": abs, "min": min, "max": max, "len": len,
-                    "range": range, "float": float, "int": int, "bool": bool,
-                    "list": list, "tuple": tuple, "dict": dict, "sum": sum,
-                    "any": any, "all": all, "enumerate": enumerate, "zip": zip,
-                    "round": round, "pow": pow, "divmod": divmod,
-                    "sorted": sorted, "reversed": reversed, "map": map, "filter": filter,
+                    "abs": abs,
+                    "min": min,
+                    "max": max,
+                    "len": len,
+                    "range": range,
+                    "float": float,
+                    "int": int,
+                    "bool": bool,
+                    "list": list,
+                    "tuple": tuple,
+                    "dict": dict,
+                    "sum": sum,
+                    "any": any,
+                    "all": all,
+                    "enumerate": enumerate,
+                    "zip": zip,
+                    "round": round,
+                    "pow": pow,
+                    "divmod": divmod,
+                    "sorted": sorted,
+                    "reversed": reversed,
+                    "map": map,
+                    "filter": filter,
                     "isinstance": isinstance,
-                    "str": str, "set": set,
+                    "str": str,
+                    "set": set,
                 },
                 "pd": pd,
                 "np": np,
@@ -483,16 +569,20 @@ class FactorCalculator:
                 "volume": df["volume"],
                 # 麦语言价格别名（大写）
                 "C": df["close"],  # CLOSE
-                "O": df["open"],   # OPEN
-                "H": df["high"],   # HIGH
-                "L": df["low"],    # LOW
-                "V": df["volume"], # VOLUME
+                "O": df["open"],  # OPEN
+                "H": df["high"],  # HIGH
+                "L": df["low"],  # LOW
+                "V": df["volume"],  # VOLUME
                 "CLOSE": df["close"],
                 "OPEN": df["open"],
                 "HIGH": df["high"],
                 "LOW": df["low"],
                 "VOL": df["volume"],
-                "VWAP": safe_divide(df["amount"], df["volume"], default=np.nan) if "amount" in df.columns else (df["high"] + df["low"] + df["close"]) / 3,
+                "VWAP": (
+                    safe_divide(df["amount"], df["volume"], default=np.nan)
+                    if "amount" in df.columns
+                    else (df["high"] + df["low"] + df["close"]) / 3
+                ),
                 # Python内置函数
                 "int": int,
                 "float": float,
@@ -519,8 +609,9 @@ class FactorCalculator:
                 # 2. 只提供预定义的local_vars
                 # 3. 使用ast验证代码语法
                 import ast
+
                 try:
-                    ast.parse(factor_code, mode='eval')
+                    ast.parse(factor_code, mode="eval")
                 except SyntaxError:
                     raise ValueError(f"因子表达式语法错误: {factor_code}")
 
@@ -542,9 +633,7 @@ class FactorCalculator:
                 logger.error(f"因子表达式计算失败: {factor_code}", exc_info=True)
                 raise ValueError(f"因子表达式计算失败: {e}")
 
-    def calculate_multiple(
-        self, df: pd.DataFrame, factors: List[FactorModel]
-    ) -> pd.DataFrame:
+    def calculate_multiple(self, df: pd.DataFrame, factors: List[FactorModel]) -> pd.DataFrame:
         """
         计算多个因子
 
@@ -583,7 +672,6 @@ class FactorCalculator:
             rolling_mean = df[col].rolling(window=window, min_periods=1).mean()
             rolling_std = df[col].rolling(window=window, min_periods=1).std()
             # 使用 safe_series_divide 统一除零保护，替代 .replace(0, np.nan) hack
-            from backend.utils.safe_math import safe_series_divide
             result[col] = safe_series_divide(df[col] - rolling_mean, rolling_std)
             # 将无穷大值替换为NaN
             result[col] = result[col].replace([np.inf, -np.inf], np.nan)
@@ -674,6 +762,7 @@ class FactorService:
     def _get_default_factors(self) -> Dict[str, List[Dict]]:
         """获取默认预置因子定义"""
         from backend.services.alpha101_factors import get_alpha101_factors
+
         alpha101_factors = get_alpha101_factors()
         base_factors = {
             "价格收益率": [
@@ -768,12 +857,19 @@ class FactorService:
                 },
                 {
                     "name": "bollinger_bandwidth",
-                    "code": "(BBANDS(close, timeperiod=20)[0] - BBANDS(close, timeperiod=20)[2]) / pd.Series(BBANDS(close, timeperiod=20)[1], index=close.index).replace(0, np.nan)",
+                    "code": (
+                        "(BBANDS(close, timeperiod=20)[0] - BBANDS(close, timeperiod=20)[2]) "
+                        "/ pd.Series(BBANDS(close, timeperiod=20)[1], index=close.index).replace(0, np.nan)"
+                    ),
                     "description": "布林带宽度",
                 },
                 {
                     "name": "bollinger_position",
-                    "code": "(close - BBANDS(close, timeperiod=20)[2]) / pd.Series(BBANDS(close, timeperiod=20)[0] - BBANDS(close, timeperiod=20)[2], index=close.index).replace(0, np.nan)",
+                    "code": (
+                        "(close - BBANDS(close, timeperiod=20)[2]) "
+                        "/ pd.Series(BBANDS(close, timeperiod=20)[0] - BBANDS(close, timeperiod=20)[2], "
+                        "index=close.index).replace(0, np.nan)"
+                    ),
                     "description": "价格在布林带中的相对位置",
                 },
             ],
@@ -802,12 +898,22 @@ class FactorService:
                 },
                 {
                     "name": "regime_volatility",
-                    "code": "(np.log(close / close.shift(1).replace(0, np.nan)).rolling(window=20).std() > np.log(close / close.shift(1).replace(0, np.nan)).rolling(window=20).std().shift(1).expanding().max()).astype(int)",
+                    "code": (
+                        "(np.log(close / close.shift(1).replace(0, np.nan))"
+                        ".rolling(window=20).std() "
+                        "> np.log(close / close.shift(1).replace(0, np.nan))"
+                        ".rolling(window=20).std().shift(1).expanding().max()"
+                        ").astype(int)"
+                    ),
                     "description": "高波动regime标记（当前波动大于历史最大值）",
                 },
                 {
                     "name": "regime_trend",
-                    "code": "((ADX(high, low, close, timeperiod=14) > 25) & (SMA(close, timeperiod=20) > SMA(close, timeperiod=60))).astype(int)",
+                    "code": (
+                        "((ADX(high, low, close, timeperiod=14) > 25) "
+                        "& (SMA(close, timeperiod=20) > SMA(close, timeperiod=60))"
+                        ").astype(int)"
+                    ),
                     "description": "趋势市标记",
                 },
             ],
@@ -824,7 +930,10 @@ class FactorService:
                 },
                 {
                     "name": "momentum_acceleration",
-                    "code": "(close / close.shift(10).replace(0, np.nan) - 1) - (close.shift(10) / close.shift(20).replace(0, np.nan) - 1)",
+                    "code": (
+                        "(close / close.shift(10).replace(0, np.nan) - 1) "
+                        "- (close.shift(10) / close.shift(20).replace(0, np.nan) - 1)"
+                    ),
                     "description": "动量加速度（近期动量减去前期动量）",
                 },
                 {
@@ -861,7 +970,11 @@ class FactorService:
                 },
                 {
                     "name": "stochastic_d",
-                    "code": "SMA(safe_divide(close - LLV(low, 14), HHV(high, 14) - LLV(low, 14), default=np.nan) * 100, timeperiod=3)",
+                    "code": (
+                        "SMA(safe_divide(close - LLV(low, 14), "
+                        "HHV(high, 14) - LLV(low, 14), default=np.nan) * 100, "
+                        "timeperiod=3)"
+                    ),
                     "description": "随机指标D值（K值的3日平滑）",
                 },
             ],
@@ -920,7 +1033,12 @@ class FactorService:
                 },
                 {
                     "name": "volatility_change",
-                    "code": "np.log(close / close.shift(1).replace(0, np.nan)).rolling(window=10).std() - np.log(close / close.shift(1).replace(0, np.nan)).rolling(window=10).std().shift(5)",
+                    "code": (
+                        "np.log(close / close.shift(1).replace(0, np.nan))"
+                        ".rolling(window=10).std() "
+                        "- np.log(close / close.shift(1).replace(0, np.nan))"
+                        ".rolling(window=10).std().shift(5)"
+                    ),
                     "description": "波动率变化（当前10日波动率减去5日前波动率）",
                 },
                 {
@@ -937,7 +1055,10 @@ class FactorService:
             "风险指标": [
                 {
                     "name": "downside_risk",
-                    "code": "np.log(close / close.shift(1).replace(0, np.nan)).where(lambda x: x < 0).rolling(window=20).std()",
+                    "code": (
+                        "np.log(close / close.shift(1).replace(0, np.nan))"
+                        ".where(lambda x: x < 0).rolling(window=20).std()"
+                    ),
                     "description": "下行风险（仅计算负收益的标准差，半离差）",
                 },
                 {
@@ -952,7 +1073,10 @@ class FactorService:
                 },
                 {
                     "name": "max_drawdown_20",
-                    "code": "close.rolling(window=20).apply(lambda x: ((x - x.cummax()) / x.cummax().replace(0, np.nan)).min())",
+                    "code": (
+                        "close.rolling(window=20).apply("
+                        "lambda x: ((x - x.cummax()) / x.cummax().replace(0, np.nan)).min())"
+                    ),
                     "description": "20日最大回撤（百分比）",
                 },
                 {
@@ -999,29 +1123,45 @@ class FactorService:
                 },
                 {
                     "name": "ma_bias_5_20",
-                    "code": "(SMA(close, timeperiod=5) - SMA(close, timeperiod=20)) / SMA(close, timeperiod=20).replace(0, np.nan)",
+                    "code": (
+                        "(SMA(close, timeperiod=5) - SMA(close, timeperiod=20)) "
+                        "/ SMA(close, timeperiod=20).replace(0, np.nan)"
+                    ),
                     "description": "5日均线乖离率（相对20日均线）",
                 },
                 {
                     "name": "ma_bias_10_60",
-                    "code": "(SMA(close, timeperiod=10) - SMA(close, timeperiod=60)) / SMA(close, timeperiod=60).replace(0, np.nan)",
+                    "code": (
+                        "(SMA(close, timeperiod=10) - SMA(close, timeperiod=60)) "
+                        "/ SMA(close, timeperiod=60).replace(0, np.nan)"
+                    ),
                     "description": "10日均线乖离率（相对60日均线）",
                 },
                 {
                     "name": "ma_multi_align",
-                    "code": "((SMA(close, timeperiod=5) > SMA(close, timeperiod=10)).astype(int) + (SMA(close, timeperiod=10) > SMA(close, timeperiod=20)).astype(int) + (SMA(close, timeperiod=20) > SMA(close, timeperiod=60)).astype(int))",
+                    "code": (
+                        "((SMA(close, timeperiod=5) > SMA(close, timeperiod=10)).astype(int) "
+                        "+ (SMA(close, timeperiod=10) > SMA(close, timeperiod=20)).astype(int) "
+                        "+ (SMA(close, timeperiod=20) > SMA(close, timeperiod=60)).astype(int))"
+                    ),
                     "description": "均线多头排列得分（短中长期均线的多头排列程度）",
                 },
             ],
             "价格位置": [
                 {
                     "name": "percentile_20",
-                    "code": "close.rolling(window=20).apply(lambda x: safe_divide(x.iloc[-1] - x.min(), x.max() - x.min(), default=np.nan))",
+                    "code": (
+                        "close.rolling(window=20).apply("
+                        "lambda x: safe_divide(x.iloc[-1] - x.min(), x.max() - x.min(), default=np.nan))"
+                    ),
                     "description": "20日价格分位数（当前价格在20日区间中的位置）",
                 },
                 {
                     "name": "percentile_60",
-                    "code": "close.rolling(window=60).apply(lambda x: safe_divide(x.iloc[-1] - x.min(), x.max() - x.min(), default=np.nan))",
+                    "code": (
+                        "close.rolling(window=60).apply("
+                        "lambda x: safe_divide(x.iloc[-1] - x.min(), x.max() - x.min(), default=np.nan))"
+                    ),
                     "description": "60日价格分位数（当前价格在60日区间中的位置）",
                 },
                 {
@@ -1053,12 +1193,18 @@ class FactorService:
                 },
                 {
                     "name": "money_flow",
-                    "code": "IF(close > open, (close + open + high + low) / 4 * volume, -(close + open + high + low) / 4 * volume)",
+                    "code": (
+                        "IF(close > open, (close + open + high + low) / 4 * volume, "
+                        "-(close + open + high + low) / 4 * volume)"
+                    ),
                     "description": "资金流（阳线为正，阴线为负）",
                 },
                 {
                     "name": "money_flow_ma",
-                    "code": "SMA(IF(close > open, (close + open + high + low) / 4 * volume, -(close + open + high + low) / 4 * volume), timeperiod=5)",
+                    "code": (
+                        "SMA(IF(close > open, (close + open + high + low) / 4 * volume, "
+                        "-(close + open + high + low) / 4 * volume), timeperiod=5)"
+                    ),
                     "description": "5日资金流均值",
                 },
                 {
@@ -1068,7 +1214,10 @@ class FactorService:
                 },
                 {
                     "name": "price_vwma_ratio",
-                    "code": "safe_divide(close, safe_divide(SUM(close * volume, 20), SUM(volume, 20), default=np.nan), default=np.nan)",
+                    "code": (
+                        "safe_divide(close, safe_divide(SUM(close * volume, 20), "
+                        "SUM(volume, 20), default=np.nan), default=np.nan)"
+                    ),
                     "description": "价格相对VWMA的位置",
                 },
             ],
@@ -1090,6 +1239,7 @@ class FactorService:
 
             # 获取缓存统计
             from backend.services.cache_service import cache_service
+
             cache_stats = cache_service.get_stats()
             stock_cache_count = cache_stats.get("total_count", 0)
 
@@ -1097,12 +1247,10 @@ class FactorService:
             akshare_healthy = True
             try:
                 import akshare as ak
+
                 # 使用用户指定的接口验证连接
-                _stock_zh_a_daily_qfq_df = ak.stock_zh_a_daily(
-                    symbol="sz000001",
-                    start_date="20230903",
-                    end_date="20231027",
-                    adjust="qfq"
+                _stock_zh_a_daily_qfq_df = ak.stock_zh_a_daily(  # noqa: F841
+                    symbol="sz000001", start_date="20230903", end_date="20231027", adjust="qfq"
                 )
             except Exception as e:
                 logger.warning(f"akshare健康检查失败: {e}")
@@ -1119,9 +1267,14 @@ class FactorService:
             return stats
 
     def create_factor(
-        self, name: str, code: str, description: str = "",
-        category: str = "自定义", formula_type: str = "expression",
-        generated_factor_id: int = None, skip_validation: bool = False
+        self,
+        name: str,
+        code: str,
+        description: str = "",
+        category: str = "自定义",
+        formula_type: str = "expression",
+        generated_factor_id: int = None,
+        skip_validation: bool = False,
     ) -> Dict:
         """创建用户自定义因子
 
@@ -1140,6 +1293,7 @@ class FactorService:
             # 验证门控：挖掘因子必须通过验证才能入库
             if not skip_validation and generated_factor_id is not None:
                 from backend.repositories.generated_factor_repository import GeneratedFactorRepository
+
                 gen_repo = GeneratedFactorRepository(db)
                 gen_factor = gen_repo.get_by_id(generated_factor_id)
                 if gen_factor is None:
@@ -1167,6 +1321,7 @@ class FactorService:
                     # 已软删除的因子，硬删除旧记录后创建新记录
                     logger.info(f"因子 '{name}' 已存在但已删除，将替换为新记录")
                     from sqlalchemy import delete
+
                     stmt = delete(FactorModel).where(FactorModel.id == existing_factor.id)
                     db.execute(stmt)
                     db.commit()
@@ -1183,8 +1338,14 @@ class FactorService:
             return result.to_dict()
 
     def update_factor(
-        self, factor_id: int, name: str = None, code: str = None, description: str = None,
-        category: str = None, create_version: bool = True, change_reason: str = ""
+        self,
+        factor_id: int,
+        name: str = None,
+        code: str = None,
+        description: str = None,
+        category: str = None,
+        create_version: bool = True,
+        change_reason: str = "",
     ) -> Dict:
         """
         更新因子
@@ -1258,14 +1419,17 @@ class FactorService:
 
         # 创建更真实的测试数据（避免全相同值）
         import numpy as np
-        test_df = pd.DataFrame({
-            "open": np.linspace(10.0, 11.0, 100),
-            "high": np.linspace(11.0, 12.0, 100),
-            "low": np.linspace(9.0, 10.0, 100),
-            "close": np.linspace(10.5, 11.5, 100),
-            "volume": np.linspace(1000000, 1100000, 100),
-            "amount": np.linspace(1e7, 1.2e7, 100),
-        })
+
+        test_df = pd.DataFrame(
+            {
+                "open": np.linspace(10.0, 11.0, 100),
+                "high": np.linspace(11.0, 12.0, 100),
+                "low": np.linspace(9.0, 10.0, 100),
+                "close": np.linspace(10.5, 11.5, 100),
+                "volume": np.linspace(1000000, 1100000, 100),
+                "amount": np.linspace(1e7, 1.2e7, 100),
+            }
+        )
 
         try:
             calculator = FactorCalculator()
@@ -1307,6 +1471,7 @@ class FactorService:
             if "is not defined" in error_msg:
                 # 提取未定义的变量名
                 import re
+
                 match = re.search(r"name '(\w+)' is not defined", error_msg)
                 if match:
                     undefined_name = match.group(1)
@@ -1314,7 +1479,7 @@ class FactorService:
                     suggestions = []
 
                     # 检查是否是常见变量名的拼写错误
-                    common_vars = {'close', 'open', 'high', 'low', 'volume', 'np'}
+                    common_vars = {"close", "open", "high", "low", "volume", "np"}
                     for var in common_vars:
                         if undefined_name.lower() == var.lower() or undefined_name.lower() in var:
                             suggestions.append(f"变量名：{var}")
@@ -1322,46 +1487,46 @@ class FactorService:
                     # 检查是否是常见函数的拼写错误
                     common_funcs = {
                         # TALib 函数
-                        'SMA': 'SMA (简单移动平均)',
-                        'MA': 'SMA 或 MA (简单移动平均)',
-                        'EMA': 'EMA (指数移动平均)',
-                        'RSI': 'RSI (相对强弱指标)',
-                        'MACD': 'MACD (移动平均收敛散度)',
-                        'ATR': 'ATR (平均真实波幅)',
-                        'BBANDS': 'BBANDS (布林带)',
-                        'OBV': 'OBV (能量潮)',
+                        "SMA": "SMA (简单移动平均)",
+                        "MA": "SMA 或 MA (简单移动平均)",
+                        "EMA": "EMA (指数移动平均)",
+                        "RSI": "RSI (相对强弱指标)",
+                        "MACD": "MACD (移动平均收敛散度)",
+                        "ATR": "ATR (平均真实波幅)",
+                        "BBANDS": "BBANDS (布林带)",
+                        "OBV": "OBV (能量潮)",
                         # 麦语言函数
-                        'REF': 'REF (引用n日前的值)',
-                        'HHV': 'HHV (n日内最高值)',
-                        'LLV': 'LLV (n日内最低值)',
-                        'SUM': 'SUM (n日总和)',
-                        'AVE': 'AVE (n日平均值)',
-                        'STD': 'STD (n日标准差)',
-                        'COUNT': 'COUNT (n日内满足条件的次数)',
-                        'EVERY': 'EVERY (n日内是否一直满足条件)',
-                        'EXIST': 'EXIST (n日内是否存在满足条件)',
-                        'CROSS': 'CROSS (金叉：x上穿y)',
-                        'LONGCROSS': 'LONGCROSS (n日内金叉)',
-                        'UP': 'UP (上涨：今日大于n日前)',
-                        'DOWN': 'DOWN (下跌：今日小于n日前)',
-                        'IF': 'IF (条件选择函数)',
-                        'BETWEEN': 'BETWEEN (区间判断)',
-                        'MAX': 'MAX (最大值)',
-                        'MIN': 'MIN (最小值)',
-                        'BARSLAST': 'BARSLAST (上一次满足条件到当前的周期数)',
-                        'CONST': 'CONST (常量序列)',
-                        'TSRANK': 'TSRANK (时序排名百分位)',
-                        'CORR': 'CORR (滚动相关系数)',
-                        'COV': 'COV (滚动协方差)',
-                        'DELTA': 'DELTA (差值：当前值减去n天前的值)',
-                        'SIGN': 'SIGN (符号函数)',
-                        'SIGNEDPOWER': 'SIGNEDPOWER (带符号的幂函数)',
-                        'RETURNS': 'RETURNS (日收益率)',
-                        'TS_PRODUCT': 'TS_PRODUCT (滚动乘积)',
-                        'TS_ARGMAX': 'TS_ARGMAX (滚动窗口内最大值距今天数)',
-                        'TS_ARGMIN': 'TS_ARGMIN (滚动窗口内最小值距今天数)',
-                        'SCALE': 'SCALE (标准化)',
-                        'DECAY_LINEAR': 'DECAY_LINEAR (线性衰减加权移动平均)'
+                        "REF": "REF (引用n日前的值)",
+                        "HHV": "HHV (n日内最高值)",
+                        "LLV": "LLV (n日内最低值)",
+                        "SUM": "SUM (n日总和)",
+                        "AVE": "AVE (n日平均值)",
+                        "STD": "STD (n日标准差)",
+                        "COUNT": "COUNT (n日内满足条件的次数)",
+                        "EVERY": "EVERY (n日内是否一直满足条件)",
+                        "EXIST": "EXIST (n日内是否存在满足条件)",
+                        "CROSS": "CROSS (金叉：x上穿y)",
+                        "LONGCROSS": "LONGCROSS (n日内金叉)",
+                        "UP": "UP (上涨：今日大于n日前)",
+                        "DOWN": "DOWN (下跌：今日小于n日前)",
+                        "IF": "IF (条件选择函数)",
+                        "BETWEEN": "BETWEEN (区间判断)",
+                        "MAX": "MAX (最大值)",
+                        "MIN": "MIN (最小值)",
+                        "BARSLAST": "BARSLAST (上一次满足条件到当前的周期数)",
+                        "CONST": "CONST (常量序列)",
+                        "TSRANK": "TSRANK (时序排名百分位)",
+                        "CORR": "CORR (滚动相关系数)",
+                        "COV": "COV (滚动协方差)",
+                        "DELTA": "DELTA (差值：当前值减去n天前的值)",
+                        "SIGN": "SIGN (符号函数)",
+                        "SIGNEDPOWER": "SIGNEDPOWER (带符号的幂函数)",
+                        "RETURNS": "RETURNS (日收益率)",
+                        "TS_PRODUCT": "TS_PRODUCT (滚动乘积)",
+                        "TS_ARGMAX": "TS_ARGMAX (滚动窗口内最大值距今天数)",
+                        "TS_ARGMIN": "TS_ARGMIN (滚动窗口内最小值距今天数)",
+                        "SCALE": "SCALE (标准化)",
+                        "DECAY_LINEAR": "DECAY_LINEAR (线性衰减加权移动平均)",
                     }
 
                     for func, desc in common_funcs.items():
@@ -1371,7 +1536,10 @@ class FactorService:
                     if suggestions:
                         return False, f"未定义的名称 '{undefined_name}'。您是否想使用：{', '.join(suggestions)}？"
 
-                    return False, f"未定义的名称 '{undefined_name}'，请检查拼写。常见变量名：close, open, high, low, volume"
+                    return (
+                        False,
+                        f"未定义的名称 '{undefined_name}'，请检查拼写。常见变量名：close, open, high, low, volume",
+                    )
 
             return False, f"验证失败: {error_msg}"
 
@@ -1446,9 +1614,7 @@ class FactorService:
 
         def _calc_one(code):
             try:
-                return code, self.calculate_factors_for_stock(
-                    code, factor_names, start_date, end_date, rolling_window
-                )
+                return code, self.calculate_factors_for_stock(code, factor_names, start_date, end_date, rolling_window)
             except Exception as e:
                 logger.warning(f"为股票 {code} 计算因子失败: {e}")
                 return code, None

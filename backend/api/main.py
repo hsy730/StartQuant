@@ -1,6 +1,7 @@
 """
 FastAPI主应用
 """
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
@@ -19,11 +20,11 @@ logger = logging.getLogger(__name__)
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from backend.core.database import init_db
-from backend.services.factor_service import factor_service
+from backend.core.database import init_db  # noqa: E402
+from backend.services.factor_service import factor_service  # noqa: E402
 
 # 导入路由
-from .routers import (
+from .routers import (  # noqa: E402
     factors,
     analysis,
     mining,
@@ -54,6 +55,7 @@ async def lifespan(app: FastAPI):
 # 自定义JSON编码器来处理numpy浮点数值
 class NumpyJSONEncoder(json.JSONEncoder):
     """自定义JSON编码器"""
+
     def default(self, obj):
         if isinstance(obj, np.integer):
             return int(obj)
@@ -83,7 +85,7 @@ app = FastAPI(
     lifespan=lifespan,
     docs_url="/docs",
     redoc_url="/redoc",
-    default_response_class=JSONResponse
+    default_response_class=JSONResponse,
 )
 
 # 配置CORS
@@ -95,7 +97,7 @@ app.add_middleware(
         "http://localhost:3000",
         "http://127.0.0.1:3000",
         "http://localhost:3001",
-        "http://127.0.0.1:3001"
+        "http://127.0.0.1:3001",
     ],  # 允许的前端来源
     allow_credentials=True,
     allow_methods=["*"],
@@ -120,10 +122,7 @@ async def spa_fallback(request, exc):
     # Only handle non-API routes for HTML requests
     if FRONTEND_DIST.exists() and not request.url.path.startswith(("/api", "/docs", "/redoc", "/openapi.json")):
         return FileResponse(FRONTEND_DIST / "index.html")
-    return JSONResponse(
-        status_code=404,
-        content={"detail": "Not Found"}
-    )
+    return JSONResponse(status_code=404, content={"detail": "Not Found"})
 
 
 # 注册路由
@@ -141,12 +140,7 @@ app.include_router(preprocessing_api.router)
 @app.get("/api")
 async def api_root():
     """API 根路径"""
-    return {
-        "message": "FactorFlow API",
-        "version": "1.0.0",
-        "docs": "/docs",
-        "status": "running"
-    }
+    return {"message": "FactorFlow API", "version": "1.0.0", "docs": "/docs", "status": "running"}
 
 
 @app.get("/health")
@@ -161,21 +155,10 @@ async def health_check():
 async def global_exception_handler(request, exc):
     """全局异常处理"""
     logger.error(f"请求错误: {exc}")
-    return JSONResponse(
-        status_code=500,
-        content={
-            "success": False,
-            "message": str(exc),
-            "detail": "服务器内部错误"
-        }
-    )
+    return JSONResponse(status_code=500, content={"success": False, "message": str(exc), "detail": "服务器内部错误"})
 
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(
-        "backend.api.main:app",
-        host="0.0.0.0",
-        port=8000,
-        reload=True
-    )
+
+    uvicorn.run("backend.api.main:app", host="0.0.0.0", port=8000, reload=True)

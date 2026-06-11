@@ -1,6 +1,7 @@
 """
 数据预处理服务 - 异常值检测、数据清洗、增量更新
 """
+
 import pandas as pd
 import numpy as np
 from scipy.stats import zscore
@@ -34,7 +35,7 @@ class DataPreprocessingService:
 
         if method == "std":
             # 3σ原则检测 — 使用 scipy.stats.zscore
-            z = zscore(df[column].dropna(), nan_policy='omit')
+            z = zscore(df[column].dropna(), nan_policy="omit")
             # zscore 返回的数组对应 dropna 后的数据，需要映射回原始索引
             valid_idx = df[column].dropna().index
             outliers = pd.Series(False, index=df.index)

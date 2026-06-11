@@ -3,6 +3,7 @@
 
 消除 portfolio.py 中 /optimize-weights 和 /compare-methods 的代码重复
 """
+
 import logging
 import numpy as np
 import pandas as pd
@@ -88,25 +89,22 @@ class WeightOptimizer:
                     continue
 
                 # 回退：自实现IC计算
-                aligned_data = pd.DataFrame({
-                    'factor': values,
-                    'returns': returns
-                }).dropna()
+                aligned_data = pd.DataFrame({"factor": values, "returns": returns}).dropna()
 
                 if len(aligned_data) > 10:
                     if isinstance(aligned_data.index, pd.MultiIndex):
                         daily_ics = []
                         for date, group in aligned_data.groupby(level=0):
                             if len(group) >= 5:
-                                ic_val, _ = spearmanr(group['factor'], group['returns'])
+                                ic_val, _ = spearmanr(group["factor"], group["returns"])
                                 if not np.isnan(ic_val):
                                     daily_ics.append(ic_val)
                         ic = float(np.mean(daily_ics)) if daily_ics else 0.0
                     else:
                         from backend.utils.ic_calculator import calculate_rolling_ic
+
                         rolling_ic = calculate_rolling_ic(
-                            aligned_data['factor'], aligned_data['returns'],
-                            window=20, method='spearman'
+                            aligned_data["factor"], aligned_data["returns"], window=20, method="spearman"
                         )
                         ic = float(rolling_ic.dropna().mean()) if len(rolling_ic.dropna()) > 0 else 0.0
 
@@ -120,12 +118,13 @@ class WeightOptimizer:
         if total_ic < 1e-10:
             return self._equal_weight(factor_names)
 
-        weights = {k: safe_divide(v, total_ic, default=1.0/len(factor_names)) for k, v in ic_values.items()}
+        weights = {k: safe_divide(v, total_ic, default=1.0 / len(factor_names)) for k, v in ic_values.items()}
         return {"weights": weights, "method": "ic_weight"}
 
     def _ir_weight(self, factor_values, factor_names, returns, factor_data_dict=None) -> Dict:
         """IR加权 — 优先使用alphalens横截面IC序列计算IR，回退到自实现"""
         from backend.utils.safe_math import safe_ir
+
         if returns is None or len(returns.dropna()) < 20:
             logger.debug("IR加权数据不足，回退到等权")
             return self._equal_weight(factor_names)
@@ -141,12 +140,10 @@ class WeightOptimizer:
                     continue
 
                 # 回退：自实现滚动Spearman IC → IR
-                aligned_data = pd.DataFrame({
-                    'factor': values,
-                    'returns': returns
-                }).dropna()
+                aligned_data = pd.DataFrame({"factor": values, "returns": returns}).dropna()
 
                 if len(aligned_data) > 20:
+
                     def _rolling_spearman_ic(window_factor, returns_series):
                         y_aligned = returns_series.loc[window_factor.index]
                         valid = window_factor.notna() & y_aligned.notna()
@@ -154,11 +151,10 @@ class WeightOptimizer:
                             return np.nan
                         return spearmanr(window_factor[valid], y_aligned[valid])[0]
 
-                    ic_series = aligned_data['factor'].rolling(
-                        window=20, min_periods=10
-                    ).apply(
-                        lambda x: _rolling_spearman_ic(x, aligned_data['returns']),
-                        raw=False
+                    ic_series = (
+                        aligned_data["factor"]
+                        .rolling(window=20, min_periods=10)
+                        .apply(lambda x: _rolling_spearman_ic(x, aligned_data["returns"]), raw=False)
                     )
                     ic_mean = ic_series.mean()
                     ic_std = ic_series.std()
@@ -180,7 +176,7 @@ class WeightOptimizer:
         if total_ir < 1e-10:
             return self._equal_weight(factor_names)
 
-        weights = {k: safe_divide(v, total_ir, default=1.0/len(factor_names)) for k, v in ir_values.items()}
+        weights = {k: safe_divide(v, total_ir, default=1.0 / len(factor_names)) for k, v in ir_values.items()}
         return {"weights": weights, "method": "ir_weight"}
 
     @staticmethod
@@ -199,6 +195,7 @@ class WeightOptimizer:
         try:
             import alphalens
             import warnings
+
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
                 ic_df = alphalens.performance.factor_information_coefficient(factor_data)
@@ -230,6 +227,7 @@ class WeightOptimizer:
             import alphalens
             import warnings
             from backend.utils.safe_math import safe_ir
+
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
                 ic_df = alphalens.performance.factor_information_coefficient(factor_data)
@@ -276,6 +274,7 @@ class WeightOptimizer:
         """
         try:
             from pypfopt import EfficientFrontier, risk_models, expected_returns
+
             # 构建因子收益矩阵
             # 因子值不是价格，不能对因子值求pct_change（如Z-score从-1到1，pct_change=-200%无意义）
             # 使用diff()（一阶差分）作为因子收益的代理指标
@@ -292,7 +291,7 @@ class WeightOptimizer:
             mu = expected_returns.mean_historical_return(factor_returns, returns_data=True)
             S = risk_models.sample_cov(factor_returns, returns_data=True)
             ef = EfficientFrontier(mu, S)
-            _raw_weights = ef.max_sharpe()
+            _raw_weights = ef.max_sharpe()  # noqa: F841
             clean_weights = ef.clean_weights()
 
             weights = {k: v for k, v in clean_weights.items() if k in factor_names}
@@ -308,6 +307,7 @@ class WeightOptimizer:
         """
         try:
             from pypfopt import EfficientFrontier, risk_models
+
             # 标准化后再diff，确保尺度不变性（避免大数值因子主导优化）
             aligned_values = self._align_factor_indices(factor_values)
             factor_df = pd.DataFrame(aligned_values)
@@ -320,7 +320,7 @@ class WeightOptimizer:
 
             S = risk_models.sample_cov(factor_returns, returns_data=True)
             ef = EfficientFrontier(None, S)
-            _raw_weights = ef.min_volatility()
+            _raw_weights = ef.min_volatility()  # noqa: F841
             clean_weights = ef.clean_weights()
 
             weights = {k: v for k, v in clean_weights.items() if k in factor_names}
@@ -336,6 +336,7 @@ class WeightOptimizer:
         """
         try:
             from pypfopt import HRPOpt
+
             # 标准化后再diff，确保尺度不变性（避免大数值因子主导优化）
             aligned_values = self._align_factor_indices(factor_values)
             factor_df = pd.DataFrame(aligned_values)
@@ -347,7 +348,7 @@ class WeightOptimizer:
                 return self._equal_weight(factor_names)
 
             hrp = HRPOpt(factor_returns)
-            _raw_weights = hrp.optimize()
+            _raw_weights = hrp.optimize()  # noqa: F841
             clean_weights = hrp.clean_weights()
 
             weights = {k: v for k, v in clean_weights.items() if k in factor_names}

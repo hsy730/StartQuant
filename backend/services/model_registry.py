@@ -27,6 +27,7 @@ ML 模型注册中心（Model Registry）— ML 模型的版本管理和生命�
     # 版本管理
     versions = registry.get_version_history(model_base_name="stock_ranker")
 """
+
 import logging
 import os
 import json
@@ -42,6 +43,7 @@ logger = logging.getLogger(__name__)
 
 class ModelFramework(str, Enum):
     """支持的 ML 框架"""
+
     XGBOOST = "xgboost"
     LIGHTGBM = "lightgbm"
     PYTORCH = "pytorch"
@@ -51,15 +53,17 @@ class ModelFramework(str, Enum):
 
 class ModelStage(str, Enum):
     """模型生命周期阶段"""
+
     DEVELOPMENT = "development"  # 开发中
-    STAGING = "staging"          # 预发布
-    PRODUCTION = "production"    # 生产环境
-    ARCHIVED = "archived"        # 已归档
+    STAGING = "staging"  # 预发布
+    PRODUCTION = "production"  # 生产环境
+    ARCHIVED = "archived"  # 已归档
 
 
 @dataclass
 class ModelMetadata:
     """模型元数据"""
+
     model_id: str
     model_name: str
     framework: ModelFramework
@@ -137,9 +141,7 @@ class ModelRegistry:
             use_database: 是否使用数据库后端（需要 SQLAlchemy 配置）
         """
         if base_path is None:
-            base_path = os.path.join(
-                os.path.dirname(os.path.abspath(__file__)), "..", "..", "models", "registry"
-            )
+            base_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "models", "registry")
         self.base_path = Path(base_path)
         self.base_path.mkdir(parents=True, exist_ok=True)
         self.use_database = use_database
@@ -320,11 +322,9 @@ class ModelRegistry:
 
         # 按 created_at 降序
         results.sort(key=lambda x: x.get("created_at", ""), reverse=True)
-        return results[offset:offset + limit]
+        return results[offset : offset + limit]  # noqa: E203
 
-    def get_version_history(
-        self, model_name: str
-    ) -> List[Dict[str, Any]]:
+    def get_version_history(self, model_name: str) -> List[Dict[str, Any]]:
         """
         获取指定模型的版本历史
 
@@ -334,11 +334,7 @@ class ModelRegistry:
         Returns:
             按版本号升序排列的元数据列表
         """
-        versions = [
-            m.to_dict()
-            for m in self._index.values()
-            if m.model_name == model_name
-        ]
+        versions = [m.to_dict() for m in self._index.values() if m.model_name == model_name]
         versions.sort(key=lambda x: x.get("version", 0))
         return versions
 
@@ -364,11 +360,7 @@ class ModelRegistry:
         # 如果目标是 production，先将同名的其他 production 模型降级
         if target_stage == ModelStage.PRODUCTION.value:
             for m in self._index.values():
-                if (
-                    m.model_name == meta.model_name
-                    and m.stage == ModelStage.PRODUCTION
-                    and m.model_id != model_id
-                ):
+                if m.model_name == meta.model_name and m.stage == ModelStage.PRODUCTION and m.model_id != model_id:
                     m.stage = ModelStage.STAGING
                     self._persist_metadata(m)
 
@@ -376,9 +368,7 @@ class ModelRegistry:
         meta.updated_at = datetime.now().isoformat()
         self._persist_metadata(meta)
 
-        logger.info(
-            f"[ModelRegistry] 模型 {model_id} 已提升至 {target_stage}"
-        )
+        logger.info(f"[ModelRegistry] 模型 {model_id} 已提升至 {target_stage}")
         return True
 
     def compare_models(
@@ -457,11 +447,7 @@ class ModelRegistry:
 
     def _get_latest_version(self, model_name: str) -> int:
         """获取指定模型的最新版本号"""
-        versions = [
-            m.version
-            for m in self._index.values()
-            if m.model_name == model_name
-        ]
+        versions = [m.version for m in self._index.values() if m.model_name == model_name]
         return max(versions) if versions else 0
 
     def _persist_metadata(self, meta: ModelMetadata):
@@ -500,13 +486,16 @@ class ModelRegistry:
             model.save_model(path)
         elif framework == ModelFramework.SKLEARN:
             import joblib
+
             joblib.dump(model, path)
         elif framework == ModelFramework.PYTORCH:
             import torch
+
             torch.save(model.state_dict(), path)
         else:
             # Generic: 尝试 pickle
             import pickle
+
             with open(path, "wb") as f:
                 pickle.dump(model, f)
 
@@ -517,20 +506,25 @@ class ModelRegistry:
         """根据框架反序列化模型"""
         if framework == ModelFramework.XGBOOST:
             import xgboost as xgb
+
             model = xgb.Booster()
             model.load_model(path)
             return model
         elif framework == ModelFramework.LIGHTGBM:
             import lightgbm as lgb
+
             return lgb.Booster(model_file=path)
         elif framework == ModelFramework.SKLEARN:
             import joblib
+
             return joblib.load(path)
         elif framework == ModelFramework.PYTORCH:
             import torch
+
             return torch.load(path, weights_only=False)
         else:
             import pickle
+
             with open(path, "rb") as f:
                 return pickle.load(f)
 

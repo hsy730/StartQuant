@@ -3,6 +3,7 @@
 
 项目规范5：未来收益率计算在15处各自实现，提取统一入口
 """
+
 import pandas as pd
 
 
@@ -30,8 +31,6 @@ def calculate_future_return(
     # MultiIndex (date, asset) 下需按资产分组计算，否则 pct_change 会跨资产比较
     # 使用 transform 而非 apply+droplevel，保留原始 MultiIndex 结构
     if isinstance(df.index, pd.MultiIndex):
-        return prices.groupby(level=1).transform(
-            lambda s: s.pct_change(period).shift(-period)
-        )
+        return prices.groupby(level=1).transform(lambda s: s.pct_change(period).shift(-period))
 
     return prices.pct_change(period).shift(-period)

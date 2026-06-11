@@ -4,6 +4,7 @@
 项目规则3：所有除法/标准差必须处理零值
 所有需要除法保护的地方应使用此模块，禁止各自发明保护模式（如 +1e-10 hack）
 """
+
 import numpy as np
 import pandas as pd
 from typing import Optional, Union
@@ -155,7 +156,11 @@ def safe_series_divide(
         return result
     else:
         # 标量分母
-        if denominator is None or (isinstance(denominator, (float, np.floating)) and np.isnan(denominator)) or abs(denominator) < 1e-10:
+        if (
+            denominator is None
+            or (isinstance(denominator, (float, np.floating)) and np.isnan(denominator))
+            or abs(denominator) < 1e-10
+        ):
             # 保持与分子相同的类型：Series分子→Series全fill_value，ndarray分子→ndarray全fill_value
             if isinstance(numerator, pd.Series):
                 return pd.Series(fill_value, index=numerator.index, dtype=float)

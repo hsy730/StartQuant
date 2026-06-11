@@ -1,6 +1,7 @@
 """
 高级统计分析服务
 """
+
 import pandas as pd
 import numpy as np
 from typing import Dict, List
@@ -61,7 +62,7 @@ class StatisticsService:
         if ic_clean.std() < 1e-10:
             mean_val = float(ic_clean.mean())
             if abs(mean_val) > 1e-10:
-                t_stat = float('inf')
+                t_stat = float("inf")
                 p_value = 0.0
                 is_sig = True
             else:
@@ -96,9 +97,7 @@ class StatisticsService:
             "confidence_interval": ci,
         }
 
-    def test_monotonicity(
-        self, quantile_returns: Dict[str, pd.Series], alternative: str = "increasing"
-    ) -> Dict:
+    def test_monotonicity(self, quantile_returns: Dict[str, pd.Series], alternative: str = "increasing") -> Dict:
         """
         检验因子分层的单调性
 
@@ -131,9 +130,7 @@ class StatisticsService:
                 expected_direction = "正相关"
             else:
                 # 负相关
-                correlation, p_value = stats.spearmanr(
-                    layer_ranks, layer_means, alternative="less"
-                )
+                correlation, p_value = stats.spearmanr(layer_ranks, layer_means, alternative="less")
                 expected_direction = "负相关"
 
         return {
@@ -145,9 +142,7 @@ class StatisticsService:
             "expected_direction": expected_direction,
         }
 
-    def calculate_factor_decay(
-        self, df: pd.DataFrame, factor_name: str, max_periods: int = 10
-    ) -> Dict:
+    def calculate_factor_decay(self, df: pd.DataFrame, factor_name: str, max_periods: int = 10) -> Dict:
         """
         计算因子衰减（预测能力随时间的变化）
 
@@ -167,7 +162,8 @@ class StatisticsService:
         for period in periods:
             col = f"future_return_{period}"
             ic = calculate_ic(
-                df[factor_name], df[col],
+                df[factor_name],
+                df[col],
                 method="spearman",
                 min_samples=10,
             )
@@ -216,8 +212,10 @@ class StatisticsService:
                 aligned_idx = factor_group.index.intersection(return_group.index)
                 if len(aligned_idx) > 10:
                     ic = calculate_ic(
-                        factor_group.loc[aligned_idx], return_group.loc[aligned_idx],
-                        method="spearman", min_samples=10,
+                        factor_group.loc[aligned_idx],
+                        return_group.loc[aligned_idx],
+                        method="spearman",
+                        min_samples=10,
                     )
                     ic = ic if ic is not None else np.nan
                 else:
@@ -226,9 +224,7 @@ class StatisticsService:
 
         return periodic_ic
 
-    def calculate_rolling_ic_stability(
-        self, ic_series: pd.Series, windows: List[int] = [20, 60, 120, 252]
-    ) -> Dict:
+    def calculate_rolling_ic_stability(self, ic_series: pd.Series, windows: List[int] = [20, 60, 120, 252]) -> Dict:
         """
         计算不同滚动窗口下的IC统计量，评估因子稳定性
 
@@ -279,8 +275,10 @@ class StatisticsService:
                 aligned_idx = factor_df.index.intersection(return_df.index)
                 if len(aligned_idx) > 10:
                     ic = calculate_ic(
-                        factor_df.loc[aligned_idx], return_df.loc[aligned_idx],
-                        method="spearman", min_samples=10,
+                        factor_df.loc[aligned_idx],
+                        return_df.loc[aligned_idx],
+                        method="spearman",
+                        min_samples=10,
                     )
                     ic = ic if ic is not None else np.nan
                 else:
@@ -291,9 +289,7 @@ class StatisticsService:
 
     # ==================== 因子交互效应分析 ====================
 
-    def analyze_factor_interactions(
-        self, df: pd.DataFrame, factor_names: List[str], degree: int = 2
-    ) -> Dict:
+    def analyze_factor_interactions(self, df: pd.DataFrame, factor_names: List[str], degree: int = 2) -> Dict:
         """
         分析因子交互效应
 
@@ -317,7 +313,7 @@ class StatisticsService:
         with _suppress_scipy_warnings():
             # 创建多项式特征（包含交互项）
             poly = PolynomialFeatures(degree=degree, include_bias=False)
-            _poly_features = poly.fit_transform(factor_df)
+            _poly_features = poly.fit_transform(factor_df)  # noqa: F841
 
             # 获取特征名称
             feature_names = poly.get_feature_names_out(factor_names)
@@ -336,9 +332,7 @@ class StatisticsService:
             "feature_info": interaction_results,
         }
 
-    def calculate_factor_correlation_matrix(
-        self, df: pd.DataFrame, factor_names: List[str]
-    ) -> pd.DataFrame:
+    def calculate_factor_correlation_matrix(self, df: pd.DataFrame, factor_names: List[str]) -> pd.DataFrame:
         """
         计算因子相关性矩阵
 
@@ -360,9 +354,7 @@ class StatisticsService:
 
     # ==================== 因子拥挤度分析 ====================
 
-    def calculate_factor_crowding(
-        self, df: pd.DataFrame, factor_name: str, window: int = 20
-    ) -> pd.Series:
+    def calculate_factor_crowding(self, df: pd.DataFrame, factor_name: str, window: int = 20) -> pd.Series:
         """
         计算因子拥挤度（因子值的标准差，越小越拥挤）
 
@@ -384,9 +376,7 @@ class StatisticsService:
 
         return crowding
 
-    def calculate_turnover(
-        self, signals: pd.Series, lag: int = 1
-    ) -> Dict:
+    def calculate_turnover(self, signals: pd.Series, lag: int = 1) -> Dict:
         """
         计算因子换手率
 
@@ -414,8 +404,7 @@ class StatisticsService:
     # ==================== 因子分层收益分析 ====================
 
     def analyze_quantile_returns(
-        self, quantile_returns: Dict[str, pd.Series], annual_trading_days: int = 252,
-        risk_free_rate: float = 0.03
+        self, quantile_returns: Dict[str, pd.Series], annual_trading_days: int = 252, risk_free_rate: float = 0.03
     ) -> Dict:
         """
         分析各分层收益的统计特性
@@ -429,7 +418,7 @@ class StatisticsService:
             Dict: 各分层收益统计
         """
         results = {}
-        _daily_rf = risk_free_rate / annual_trading_days
+        _daily_rf = risk_free_rate / annual_trading_days  # noqa: F841
 
         with _suppress_scipy_warnings():
             for quantile_name, returns in quantile_returns.items():
@@ -448,7 +437,9 @@ class StatisticsService:
                 mean = returns_clean.mean()
                 std = returns_clean.std()
                 # 委托risk_metrics统一入口计算年化收益和Sharpe（符合规则2）
-                metrics = calculate_risk_metrics(returns_clean, risk_free_rate=risk_free_rate, annual_trading_days=annual_trading_days)
+                metrics = calculate_risk_metrics(
+                    returns_clean, risk_free_rate=risk_free_rate, annual_trading_days=annual_trading_days
+                )
                 annual_return = metrics.get("annual_return")
                 sharpe = metrics.get("sharpe_ratio")
                 win_rate = (returns_clean > 0).mean()
@@ -465,9 +456,7 @@ class StatisticsService:
 
     # ==================== 因子IC预测能力分析 ====================
 
-    def calculate_ic_predictability(
-        self, ic_series: pd.Series, lag: int = 5
-    ) -> Dict:
+    def calculate_ic_predictability(self, ic_series: pd.Series, lag: int = 5) -> Dict:
         """
         计算IC的自相关性和可预测性
 
@@ -479,8 +468,8 @@ class StatisticsService:
             Dict: 自相关分析结果
         """
         autocorrs = []
-        for l in range(1, lag + 1):
-            autocorr = ic_series.autocorr(lag=l)
+        for lag_val in range(1, lag + 1):
+            autocorr = ic_series.autocorr(lag=lag_val)
             if autocorr is not None and not (isinstance(autocorr, float) and math.isnan(autocorr)):
                 autocorrs.append(autocorr)
 

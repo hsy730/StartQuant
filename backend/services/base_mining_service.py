@@ -9,6 +9,7 @@
 - 适应度路由
 - Z-Score归一化
 """
+
 import logging
 import random
 from abc import ABC, abstractmethod
@@ -20,8 +21,8 @@ from scipy.stats import spearmanr
 
 logger = logging.getLogger(__name__)
 
-from backend.services.data_service import data_service
-from backend.utils.safe_math import safe_divide, safe_ir
+from backend.services.data_service import data_service  # noqa: E402
+from backend.utils.safe_math import safe_divide, safe_ir  # noqa: E402
 
 
 class BaseMiningService(ABC):
@@ -114,6 +115,7 @@ class BaseMiningService(ABC):
         """预计算基础因子值"""
         if self.factor_calculator is None:
             from backend.services.factor_service import factor_service
+
             self.factor_calculator = factor_service.calculator
 
         logger.info(f"[{self._service_name}] 预计算 {len(self.base_factor_codes)} 个基础因子...")
@@ -149,12 +151,11 @@ class BaseMiningService(ABC):
         for code, df in self.stock_pool_data.items():
             if "close" in df.columns:
                 df["return"] = df["close"].pct_change()
-            self.stock_pool_return_values[code] = (
-                df[self.return_column] if self.return_column in df.columns else None
-            )
+            self.stock_pool_return_values[code] = df[self.return_column] if self.return_column in df.columns else None
 
             if self.factor_calculator is None:
                 from backend.services.factor_service import factor_service
+
                 self.factor_calculator = factor_service.calculator
 
             stock_base_factors = {}
@@ -313,8 +314,14 @@ class BaseMiningService(ABC):
             return best_ir
         elif self.fitness_objective == "combined":
             # Z-Score归一化使用上一代的统计量（含先验冷启动）
-            z_ic = max(-3.0, min(safe_divide(float(best_ic - self._zscore_ic_mean), float(self._zscore_ic_std), default=0.0), 3.0))
-            z_ir = max(-3.0, min(safe_divide(float(best_ir - self._zscore_ir_mean), float(self._zscore_ir_std), default=0.0), 3.0))
+            z_ic = max(
+                -3.0,
+                min(safe_divide(float(best_ic - self._zscore_ic_mean), float(self._zscore_ic_std), default=0.0), 3.0),
+            )
+            z_ir = max(
+                -3.0,
+                min(safe_divide(float(best_ir - self._zscore_ir_mean), float(self._zscore_ir_std), default=0.0), 3.0),
+            )
             # 映射 [-3, 3] → [0, 1]
             norm_ic = (z_ic + 3.0) / 6.0
             norm_ir = (z_ir + 3.0) / 6.0
@@ -348,8 +355,7 @@ class BaseMiningService(ABC):
 
             if ic_std < self._zscore_ic_std * 0.1 or ir_std < self._zscore_ir_std * 0.1:
                 logger.warning(
-                    f"Z-Score σ very small (IC σ={ic_std:.6f}, IR σ={ir_std:.6f}), "
-                    f"search may be stagnating"
+                    f"Z-Score σ very small (IC σ={ic_std:.6f}, IR σ={ir_std:.6f}), " f"search may be stagnating"
                 )
 
             self._zscore_ic_mean = ic_mean

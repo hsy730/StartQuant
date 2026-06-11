@@ -1,6 +1,7 @@
 """
 综合评分服务 - 多维度综合评分系统
 """
+
 from typing import Dict, List, Optional
 import logging
 
@@ -16,11 +17,11 @@ class ComprehensiveScoringService:
     def __init__(self):
         # 默认评分配置
         self.default_weights = {
-            "return": 0.3,          # 收益率权重
-            "risk": 0.25,            # 风险权重
-            "efficiency": 0.2,       # 效率权重（夏普、IR等）
-            "stability": 0.15,       # 稳定性权重
-            "cost": 0.1,             # 成本权重（换手率）
+            "return": 0.3,  # 收益率权重
+            "risk": 0.25,  # 风险权重
+            "efficiency": 0.2,  # 效率权重（夏普、IR等）
+            "stability": 0.15,  # 稳定性权重
+            "cost": 0.1,  # 成本权重（换手率）
         }
 
     def score_factor(
@@ -150,9 +151,9 @@ class ComprehensiveScoringService:
             annual_cost = slip * turnover * 2
             net_return = annual_return - annual_cost
             if annual_return is None or abs(annual_return) < 1e-10:
-                return_decay = float('inf')
+                return_decay = float("inf")
             else:
-                return_decay = safe_divide(float(annual_cost), float(annual_return), default=float('inf')) * 100
+                return_decay = safe_divide(float(annual_cost), float(annual_return), default=float("inf")) * 100
 
             scenario = {
                 "slippage_rate": slip,
@@ -166,7 +167,7 @@ class ComprehensiveScoringService:
 
         # 敏感性等级评估
         base_cost = base_slippage * turnover * 2
-        sensitivity_ratio = safe_divide(float(abs(base_cost)), float(annual_return), default=float('inf'))
+        sensitivity_ratio = safe_divide(float(abs(base_cost)), float(annual_return), default=float("inf"))
 
         if sensitivity_ratio < 0.1:
             sensitivity_level = "low"
@@ -225,68 +226,81 @@ class ComprehensiveScoringService:
         recommendations = []
 
         if sensitivity_level in ["high", "very_high"]:
-            recommendations.append({
-                "priority": "critical",
-                "category": "execution",
-                "title": "优化交易执行",
-                "description": f"当前策略对滑点{sensitivity_level.replace('_', ' ')}敏感，年化成本可能达到{base_slippage * turnover * 2 * 100:.1f}%",
-                "actions": [
-                    "使用算法交易（VWAP/TWAP）降低冲击成本",
-                    "分批建仓/平仓，避免大额单笔交易",
-                    "选择流动性较好的时段交易（开盘后30分钟或收盘前30分钟）",
-                    "考虑使用限价单而非市价单",
-                ]
-            })
+            recommendations.append(
+                {
+                    "priority": "critical",
+                    "category": "execution",
+                    "title": "优化交易执行",
+                    "description": (
+                        f"当前策略对滑点{sensitivity_level.replace('_', ' ')}敏感，"
+                        f"年化成本可能达到{base_slippage * turnover * 2 * 100:.1f}%"
+                    ),
+                    "actions": [
+                        "使用算法交易（VWAP/TWAP）降低冲击成本",
+                        "分批建仓/平仓，避免大额单笔交易",
+                        "选择流动性较好的时段交易（开盘后30分钟或收盘前30分钟）",
+                        "考虑使用限价单而非市价单",
+                    ],
+                }
+            )
 
             if turnover > 24:
-                recommendations.append({
-                    "priority": "critical",
-                    "category": "strategy",
-                    "title": "降低换手频率",
-                    "description": f"年化换手率{turnover:.0f}倍过高，导致交易成本累积严重",
-                    "actions": [
-                        "增加持仓周期，减少不必要的调仓",
-                        "设置调仓阈值（如因子排名变化>20%才调仓）",
-                        "考虑使用因子平滑或信号过滤降低噪声交易",
-                    ]
-                })
+                recommendations.append(
+                    {
+                        "priority": "critical",
+                        "category": "strategy",
+                        "title": "降低换手频率",
+                        "description": f"年化换手率{turnover:.0f}倍过高，导致交易成本累积严重",
+                        "actions": [
+                            "增加持仓周期，减少不必要的调仓",
+                            "设置调仓阈值（如因子排名变化>20%才调仓）",
+                            "考虑使用因子平滑或信号过滤降低噪声交易",
+                        ],
+                    }
+                )
         elif sensitivity_level == "medium":
-            recommendations.append({
-                "priority": "moderate",
-                "category": "optimization",
-                "title": "适度优化执行质量",
-                "description": "滑点成本适中，可通过简单优化改善",
-                "actions": [
-                    "监控实际成交价与预期价格的偏差",
-                    "在波动剧烈时减少交易频率",
-                    "优先选择流动性好的标的",
-                ]
-            })
+            recommendations.append(
+                {
+                    "priority": "moderate",
+                    "category": "optimization",
+                    "title": "适度优化执行质量",
+                    "description": "滑点成本适中，可通过简单优化改善",
+                    "actions": [
+                        "监控实际成交价与预期价格的偏差",
+                        "在波动剧烈时减少交易频率",
+                        "优先选择流动性好的标的",
+                    ],
+                }
+            )
         else:
-            recommendations.append({
-                "priority": "low",
-                "category": "monitoring",
-                "title": "保持当前策略",
-                "description": "滑点影响较小，当前参数设置合理",
-                "actions": [
-                    "定期回顾实际滑点与假设的差异",
-                    "关注市场微观结构变化",
-                ]
-            })
+            recommendations.append(
+                {
+                    "priority": "low",
+                    "category": "monitoring",
+                    "title": "保持当前策略",
+                    "description": "滑点影响较小，当前参数设置合理",
+                    "actions": [
+                        "定期回顾实际滑点与假设的差异",
+                        "关注市场微观结构变化",
+                    ],
+                }
+            )
 
         # 针对不同换手率的通用建议
         if turnover > 12 and sensitivity_level != "low":
-            recommendations.append({
-                "priority": "moderate",
-                "category": "cost_control",
-                "title": "建立交易成本预算",
-                "description": f"建议将年化交易成本控制在{annual_return * 0.1 * 100:.1f}%以内（目标收益的10%）",
-                "actions": [
-                    "设定单笔交易成本上限",
-                    "定期统计实际执行滑点",
-                    "将交易成本纳入策略绩效归因分析",
-                ]
-            })
+            recommendations.append(
+                {
+                    "priority": "moderate",
+                    "category": "cost_control",
+                    "title": "建立交易成本预算",
+                    "description": f"建议将年化交易成本控制在{annual_return * 0.1 * 100:.1f}%以内（目标收益的10%）",
+                    "actions": [
+                        "设定单笔交易成本上限",
+                        "定期统计实际执行滑点",
+                        "将交易成本纳入策略绩效归因分析",
+                    ],
+                }
+            )
 
         return recommendations
 
@@ -476,12 +490,14 @@ class ComprehensiveScoringService:
             else:
                 raise ValueError(f"未知的评分类型: {scoring_type}")
 
-            scored_items.append({
-                "name": name,
-                "score": score_result["total_score"],
-                "grade": score_result["grade"],
-                "details": score_result["details"],
-            })
+            scored_items.append(
+                {
+                    "name": name,
+                    "score": score_result["total_score"],
+                    "grade": score_result["grade"],
+                    "details": score_result["details"],
+                }
+            )
 
         # 按得分排序
         scored_items.sort(key=lambda x: x["score"], reverse=True)

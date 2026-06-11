@@ -18,7 +18,7 @@ Mask-First Design (v2.0):
 使用方式：
     # 无mask（向后兼容，但会有污染警告）
     result = ts_mean(price_series, 20)
-    
+
     # 有mask（推荐，纯净计算）
     result = ts_mean_masked(price_series, 20, mask=tradable_mask)
 """
@@ -38,9 +38,10 @@ logger = logging.getLogger(__name__)
 # Protected (safe) operators – avoid division-by-zero / log-of-negative
 # ---------------------------------------------------------------------------
 
+
 def safe_div(a, b):
     """x / y with y=0 or near-zero mapped to NaN."""
-    if hasattr(b, 'replace'):
+    if hasattr(b, "replace"):
         b = b.replace(0, np.nan)
         b = b.where(b.abs() >= 1e-10, np.nan)
     else:
@@ -50,7 +51,7 @@ def safe_div(a, b):
 
 def safe_log(a):
     """log(x) with x <= 0 mapped to NaN."""
-    if hasattr(a, 'mask'):
+    if hasattr(a, "mask"):
         a = a.mask(a <= 0, np.nan)
     else:
         a = np.where(a > 0, a, np.nan)
@@ -59,7 +60,7 @@ def safe_log(a):
 
 def safe_sqrt(a):
     """sqrt(x) with x < 0 mapped to NaN."""
-    if hasattr(a, 'mask'):
+    if hasattr(a, "mask"):
         a = a.mask(a < 0, np.nan)
     else:
         a = np.where(a >= 0, a, np.nan)
@@ -75,6 +76,7 @@ def pct_rank(a):
 # Time-series window operators - Original versions (backward compatible)
 # ⚠️ 这些版本不过滤涨跌停日，仅用于向后兼容
 # ---------------------------------------------------------------------------
+
 
 def ts_mean(a, n=5):
     """Rolling mean over *n* periods.
@@ -136,15 +138,13 @@ def ts_corr(a, b, n=5):
 # 这些版本接受tradable_mask参数，自动过滤不可交易日
 # ---------------------------------------------------------------------------
 
+
 def ts_mean_masked(
-    a: pd.Series,
-    n: int = 5,
-    mask: Optional[pd.Series] = None,
-    min_valid_ratio: float = 0.6
+    a: pd.Series, n: int = 5, mask: Optional[pd.Series] = None, min_valid_ratio: float = 0.6
 ) -> pd.Series:
     """
     带掩码的滚动平均 - Mask-First设计
-    
+
     将不可交易日（涨停/跌停/停牌）设为NaN，让rolling自动忽略，
     确保移动平均不被异常价格拉高或压低。
 
@@ -160,28 +160,25 @@ def ts_mean_masked(
     if mask is None:
         logger.debug("ts_mean_masked(): 未提供mask，退化为普通ts_mean()")
         return ts_mean(a, n)
-    
+
     # 应用掩码：将不可交易日设为NaN
     a_masked = a.where(mask)
-    
+
     # 计算滚动平均，要求至少60%的数据点有效
     window = int(n)
     min_periods = max(1, int(window * min_valid_ratio))
-    
+
     result = a_masked.rolling(window=window, min_periods=min_periods).mean()
-    
+
     return result
 
 
 def ts_std_masked(
-    a: pd.Series,
-    n: int = 5,
-    mask: Optional[pd.Series] = None,
-    min_valid_ratio: float = 0.6
+    a: pd.Series, n: int = 5, mask: Optional[pd.Series] = None, min_valid_ratio: float = 0.6
 ) -> pd.Series:
     """
     带掩码的滚动标准差 - Mask-First设计
-    
+
     排除涨跌停日的波动率计算，避免被压缩或放大。
 
     Args:
@@ -196,24 +193,20 @@ def ts_std_masked(
     if mask is None:
         logger.debug("ts_std_masked(): 未提供mask，退化为普通ts_std()")
         return ts_std(a, n)
-    
+
     a_masked = a.where(mask)
     window = int(n)
     min_periods = max(2, int(window * min_valid_ratio))
-    
+
     return a_masked.rolling(window=window, min_periods=min_periods).std()
 
 
 def ts_corr_masked(
-    a: pd.Series,
-    b: pd.Series,
-    n: int = 5,
-    mask: Optional[pd.Series] = None,
-    min_valid_ratio: float = 0.6
+    a: pd.Series, b: pd.Series, n: int = 5, mask: Optional[pd.Series] = None, min_valid_ratio: float = 0.6
 ) -> pd.Series:
     """
     带掩码的滚动相关系数 - **最关键的改进！**
-    
+
     这是解决IC虚高18%问题的核心方法。
     因子值与收益率的相关系数必须排除不可交易日的虚假信号。
 
@@ -230,7 +223,7 @@ def ts_corr_masked(
     if mask is None:
         logger.debug("ts_corr_masked(): 未提供mask，IC可能虚高18%")
         return ts_corr(a, b, n)
-    
+
     # 双方都应用掩码
     a_masked = a.where(mask)
     b_masked = b.where(mask)
@@ -274,8 +267,10 @@ def _tanh(a):
 # PrimitiveSet factory
 # ---------------------------------------------------------------------------
 
-def create_pset(n_factors: int, extended: bool = True, use_masked: bool = True,
-                tradable_mask: Optional[pd.Series] = None) -> gp.PrimitiveSet:
+
+def create_pset(
+    n_factors: int, extended: bool = True, use_masked: bool = True, tradable_mask: Optional[pd.Series] = None
+) -> gp.PrimitiveSet:
     """Build a DEAP ``PrimitiveSet`` for factor expressions.
 
     Args:
@@ -341,17 +336,17 @@ def create_pset(n_factors: int, extended: bool = True, use_masked: bool = True,
 
     # ---- Base primitives (9) ----
     # binary
-    pset.addPrimitive(np.add,       2, name="add")
-    pset.addPrimitive(np.subtract,  2, name="sub")
-    pset.addPrimitive(np.multiply,  2, name="mul")
-    pset.addPrimitive(safe_div,     2, name="div")
+    pset.addPrimitive(np.add, 2, name="add")
+    pset.addPrimitive(np.subtract, 2, name="sub")
+    pset.addPrimitive(np.multiply, 2, name="mul")
+    pset.addPrimitive(safe_div, 2, name="div")
 
     # unary
-    pset.addPrimitive(np.negative,  1, name="neg")
-    pset.addPrimitive(np.abs,       1, name="abs")
-    pset.addPrimitive(safe_log,     1, name="log")
-    pset.addPrimitive(safe_sqrt,    1, name="sqrt")
-    pset.addPrimitive(pct_rank,     1, name="rank")
+    pset.addPrimitive(np.negative, 1, name="neg")
+    pset.addPrimitive(np.abs, 1, name="abs")
+    pset.addPrimitive(safe_log, 1, name="log")
+    pset.addPrimitive(safe_sqrt, 1, name="sqrt")
+    pset.addPrimitive(pct_rank, 1, name="rank")
 
     # ---- Extended primitives (Phase 7, +16) ----
     if extended:
@@ -372,59 +367,89 @@ def create_pset(n_factors: int, extended: bool = True, use_masked: bool = True,
             logger.info("✅ PrimitiveSet: 使用Mask-First版本算子（已注入tradable_mask，过滤涨跌停）")
         elif use_masked:
             # ⚠️ Mask-First版本但无mask（退化，不再spam警告）
-            ts_mean_fn = lambda a: ts_mean_masked(a, 5)
-            ts_mean_10_fn = lambda a: ts_mean_masked(a, 10)
-            ts_mean_20_fn = lambda a: ts_mean_masked(a, 20)
+            def ts_mean_fn(a):
+                return ts_mean_masked(a, 5)
 
-            ts_std_fn = lambda a: ts_std_masked(a, 5)
-            ts_std_10_fn = lambda a: ts_std_masked(a, 10)
-            ts_std_20_fn = lambda a: ts_std_masked(a, 20)
+            def ts_mean_10_fn(a):
+                return ts_mean_masked(a, 10)
 
-            ts_corr_5_fn = lambda a, b: ts_corr_masked(a, b, 5)
-            ts_corr_10_fn = lambda a, b: ts_corr_masked(a, b, 10)
-            ts_corr_20_fn = lambda a, b: ts_corr_masked(a, b, 20)
+            def ts_mean_20_fn(a):
+                return ts_mean_masked(a, 20)
+
+            def ts_std_fn(a):
+                return ts_std_masked(a, 5)
+
+            def ts_std_10_fn(a):
+                return ts_std_masked(a, 10)
+
+            def ts_std_20_fn(a):
+                return ts_std_masked(a, 20)
+
+            def ts_corr_5_fn(a, b):
+                return ts_corr_masked(a, b, 5)
+
+            def ts_corr_10_fn(a, b):
+                return ts_corr_masked(a, b, 10)
+
+            def ts_corr_20_fn(a, b):
+                return ts_corr_masked(a, b, 20)
 
             logger.info("PrimitiveSet: 使用Mask-First版本算子（无mask，退化为普通版本）")
         else:
             # ❌ 传统版本（不过滤）
-            ts_mean_fn = lambda a: ts_mean(a, 5)
-            ts_mean_10_fn = lambda a: ts_mean(a, 10)
-            ts_mean_20_fn = lambda a: ts_mean(a, 20)
+            def ts_mean_fn(a):
+                return ts_mean(a, 5)
 
-            ts_std_fn = lambda a: ts_std(a, 5)
-            ts_std_10_fn = lambda a: ts_std(a, 10)
-            ts_std_20_fn = lambda a: ts_std(a, 20)
+            def ts_mean_10_fn(a):
+                return ts_mean(a, 10)
 
-            ts_corr_5_fn = lambda a, b: ts_corr(a, b, 5)
-            ts_corr_10_fn = lambda a, b: ts_corr(a, b, 10)
-            ts_corr_20_fn = lambda a, b: ts_corr(a, b, 20)
+            def ts_mean_20_fn(a):
+                return ts_mean(a, 20)
+
+            def ts_std_fn(a):
+                return ts_std(a, 5)
+
+            def ts_std_10_fn(a):
+                return ts_std(a, 10)
+
+            def ts_std_20_fn(a):
+                return ts_std(a, 20)
+
+            def ts_corr_5_fn(a, b):
+                return ts_corr(a, b, 5)
+
+            def ts_corr_10_fn(a, b):
+                return ts_corr(a, b, 10)
+
+            def ts_corr_20_fn(a, b):
+                return ts_corr(a, b, 20)
 
             logger.warning("⚠️ PrimitiveSet: 使用传统版本算子（未过滤涨跌停，IC可能虚高）")
-        
+
         # Time-series window operations (unary, fixed window)
-        pset.addPrimitive(ts_mean_fn,        1, name="ts_mean_5")
-        pset.addPrimitive(ts_mean_10_fn,     1, name="ts_mean_10")
-        pset.addPrimitive(ts_mean_20_fn,     1, name="ts_mean_20")
-        pset.addPrimitive(ts_std_fn,          1, name="ts_std_5")
-        pset.addPrimitive(ts_std_10_fn,       1, name="ts_std_10")
-        pset.addPrimitive(ts_std_20_fn,       1, name="ts_std_20")
-        pset.addPrimitive(lambda a: ts_delay(a, 1),  1, name="ts_delay_1")
-        pset.addPrimitive(lambda a: ts_delay(a, 5),  1, name="ts_delay_5")
-        pset.addPrimitive(lambda a: ts_delta(a, 1),  1, name="ts_delta_1")
-        pset.addPrimitive(lambda a: ts_delta(a, 5),  1, name="ts_delta_5")
+        pset.addPrimitive(ts_mean_fn, 1, name="ts_mean_5")
+        pset.addPrimitive(ts_mean_10_fn, 1, name="ts_mean_10")
+        pset.addPrimitive(ts_mean_20_fn, 1, name="ts_mean_20")
+        pset.addPrimitive(ts_std_fn, 1, name="ts_std_5")
+        pset.addPrimitive(ts_std_10_fn, 1, name="ts_std_10")
+        pset.addPrimitive(ts_std_20_fn, 1, name="ts_std_20")
+        pset.addPrimitive(lambda a: ts_delay(a, 1), 1, name="ts_delay_1")
+        pset.addPrimitive(lambda a: ts_delay(a, 5), 1, name="ts_delay_5")
+        pset.addPrimitive(lambda a: ts_delta(a, 1), 1, name="ts_delta_1")
+        pset.addPrimitive(lambda a: ts_delta(a, 5), 1, name="ts_delta_5")
 
         # Time-series correlation (binary, fixed window)
-        pset.addPrimitive(ts_corr_5_fn,   2, name="ts_corr_5")
-        pset.addPrimitive(ts_corr_10_fn,  2, name="ts_corr_10")
-        pset.addPrimitive(ts_corr_20_fn,  2, name="ts_corr_20")
+        pset.addPrimitive(ts_corr_5_fn, 2, name="ts_corr_5")
+        pset.addPrimitive(ts_corr_10_fn, 2, name="ts_corr_10")
+        pset.addPrimitive(ts_corr_20_fn, 2, name="ts_corr_20")
 
         # Pairwise operations
-        pset.addPrimitive(_pair_max,  2, name="max")
-        pset.addPrimitive(_pair_min,  2, name="min")
+        pset.addPrimitive(_pair_max, 2, name="max")
+        pset.addPrimitive(_pair_min, 2, name="min")
 
         # Activation functions
-        pset.addPrimitive(_sigmoid,   1, name="sigmoid")
-        pset.addPrimitive(_tanh,      1, name="tanh")
+        pset.addPrimitive(_sigmoid, 1, name="sigmoid")
+        pset.addPrimitive(_tanh, 1, name="tanh")
 
     # rename ARG0…ARG{N-1} → factor_0…factor_{N-1}
     renames = {f"ARG{i}": f"factor_{i}" for i in range(n_factors)}
@@ -436,6 +461,7 @@ def create_pset(n_factors: int, extended: bool = True, use_masked: bool = True,
 # ---------------------------------------------------------------------------
 # Tree → expression helpers
 # ---------------------------------------------------------------------------
+
 
 def tree_to_expression(tree, base_factor_codes: dict) -> str:
     """Convert a *PrimitiveTree* to a human-readable expression.
@@ -477,6 +503,7 @@ def compile_tree(tree, pset: gp.PrimitiveSet):
 # ---------------------------------------------------------------------------
 # Expression similarity (structural) for diversity penalty
 # ---------------------------------------------------------------------------
+
 
 def expression_similarity(expr_a: str, expr_b: str) -> float:
     """Compute a simple structural similarity between two placeholder expressions.

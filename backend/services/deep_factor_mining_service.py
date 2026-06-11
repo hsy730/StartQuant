@@ -18,6 +18,7 @@
 - 模型持久化: 依赖 ModelRegistry (framework="pytorch")
 - 安全: 训练前数据清洗，NaN 处理，特征标准化
 """
+
 import logging
 import os
 import json
@@ -36,14 +37,14 @@ try:
     import torch.nn as nn
     import torch.optim as optim
     from torch.utils.data import Dataset, DataLoader
+
     DEEP_FACTOR_AVAILABLE = True
 except ImportError:
     DEEP_FACTOR_AVAILABLE = False
     logger.warning("PyTorch 未安装，深度隐式因子挖掘功能不可用。请运行: pip install torch")
 
-from backend.services.factor_validation_service import factor_validation_service
-from backend.services.data_service import data_service
-
+from backend.services.factor_validation_service import factor_validation_service  # noqa: E402
+from backend.services.data_service import data_service  # noqa: E402
 
 # ======================================================================
 # PyTorch 模型定义（仅在 PyTorch 可用时加载）
@@ -60,9 +61,7 @@ if DEEP_FACTOR_AVAILABLE:
 
             pe = torch.zeros(max_len, d_model)
             position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
-            div_term = torch.exp(
-                torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model)
-            )
+            div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
             pe[:, 0::2] = torch.sin(position * div_term)
             pe[:, 1::2] = torch.cos(position * div_term)
             pe = pe.unsqueeze(0)  # (1, max_len, d_model)
@@ -70,7 +69,7 @@ if DEEP_FACTOR_AVAILABLE:
 
         def forward(self, x: torch.Tensor) -> torch.Tensor:
             # x: (batch, seq_len, d_model)
-            x = x + self.pe[:, :x.size(1), :]
+            x = x + self.pe[:, : x.size(1), :]
             return self.dropout(x)
 
     class TransformerFactorModel(nn.Module):
@@ -112,9 +111,7 @@ if DEEP_FACTOR_AVAILABLE:
                 dropout=dropout,
                 batch_first=True,
             )
-            self.transformer_encoder = nn.TransformerEncoder(
-                encoder_layer, num_layers=n_layers
-            )
+            self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=n_layers)
 
             # 隐因子提取头: d_model → n_latent_factors
             self.factor_head = nn.Linear(d_model, n_latent_factors)
@@ -135,9 +132,7 @@ if DEEP_FACTOR_AVAILABLE:
                 if p.dim() > 1:
                     nn.init.xavier_uniform_(p)
 
-        def forward(
-            self, x: torch.Tensor
-        ) -> Tuple[torch.Tensor, torch.Tensor]:
+        def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
             """
             Args:
                 x: (batch, seq_len, n_features)
@@ -185,7 +180,7 @@ if DEEP_FACTOR_AVAILABLE:
             return len(self.features) - self.seq_length
 
         def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
-            x = self.features[idx: idx + self.seq_length]  # (seq_len, n_features)
+            x = self.features[idx : idx + self.seq_length]  # noqa: E203  # (seq_len, n_features)
             y = self.targets[idx + self.seq_length]  # 标量
             return x, y
 
@@ -193,6 +188,7 @@ if DEEP_FACTOR_AVAILABLE:
 # ======================================================================
 # 服务主类
 # ======================================================================
+
 
 class DeepFactorMiningService:
     """深度隐式因子挖掘服务（基于 Transformer）
@@ -291,10 +287,11 @@ class DeepFactorMiningService:
         """释放GPU模型和张量资源"""
         try:
             import torch
-            if hasattr(self, '_trained_model') and self._trained_model is not None:
+
+            if hasattr(self, "_trained_model") and self._trained_model is not None:
                 del self._trained_model
                 self._trained_model = None
-            if hasattr(self, 'data') and self.data is not None:
+            if hasattr(self, "data") and self.data is not None:
                 # Don't delete self.data as it may be shared, just remove reference
                 self.data = None
             if torch.cuda.is_available():
@@ -314,12 +311,11 @@ class DeepFactorMiningService:
         for code, df in self.stock_pool_data.items():
             if "close" in df.columns:
                 df["return"] = df["close"].pct_change()
-            self.stock_pool_return_values[code] = (
-                df[self.return_column] if self.return_column in df.columns else None
-            )
+            self.stock_pool_return_values[code] = df[self.return_column] if self.return_column in df.columns else None
 
             if self.factor_calculator is None:
                 from backend.services.factor_service import factor_service
+
                 self.factor_calculator = factor_service.calculator
 
             stock_base_factors = {}
@@ -338,8 +334,7 @@ class DeepFactorMiningService:
 
         self._refresh_stock_sample()
         logger.info(
-            f"深度因子股票池已设置: {len(self.stock_pool_data)} 只股票, "
-            f"评估样本={len(self._sampled_stock_codes)}"
+            f"深度因子股票池已设置: {len(self.stock_pool_data)} 只股票, " f"评估样本={len(self._sampled_stock_codes)}"
         )
 
     def _refresh_stock_sample(self):
@@ -348,6 +343,7 @@ class DeepFactorMiningService:
             self._sampled_stock_codes = available
         else:
             import random
+
             self._sampled_stock_codes = random.sample(available, self.max_eval_stocks)
 
     def set_progress_callback(self, callback):
@@ -371,6 +367,7 @@ class DeepFactorMiningService:
         """预计算所有基础因子值"""
         if self.factor_calculator is None:
             from backend.services.factor_service import factor_service
+
             self.factor_calculator = factor_service.calculator
 
         logger.info(f"深度因子预计算 {len(self.base_factor_codes)} 个基础因子...")
@@ -385,17 +382,12 @@ class DeepFactorMiningService:
                         "values": fv,
                     }
                     logger.info(
-                        f"  [{i+1}/{len(self.base_factor_codes)}] {factor_code}: "
-                        f"{len(fv.dropna())} 个有效值"
+                        f"  [{i+1}/{len(self.base_factor_codes)}] {factor_code}: " f"{len(fv.dropna())} 个有效值"
                     )
                 else:
-                    logger.warning(
-                        f"  [{i+1}/{len(self.base_factor_codes)}] {factor_code}: 计算失败或无有效值"
-                    )
+                    logger.warning(f"  [{i+1}/{len(self.base_factor_codes)}] {factor_code}: 计算失败或无有效值")
             except Exception as e:
-                logger.warning(
-                    f"  [{i+1}/{len(self.base_factor_codes)}] {factor_code}: 计算出错 - {e}"
-                )
+                logger.warning(f"  [{i+1}/{len(self.base_factor_codes)}] {factor_code}: 计算出错 - {e}")
 
         logger.info(f"深度因子成功预计算 {len(self.base_factor_values)} 个基础因子")
 
@@ -429,9 +421,7 @@ class DeepFactorMiningService:
 
         combined = combined.dropna()
         if len(combined) < self.seq_length + 10:
-            raise ValueError(
-                f"有效数据点不足 ({len(combined)})，至少需要 {self.seq_length + 10} 个"
-            )
+            raise ValueError(f"有效数据点不足 ({len(combined)})，至少需要 {self.seq_length + 10} 个")
 
         X = combined[feature_names].values
         y = combined["__target__"].values
@@ -478,9 +468,7 @@ class DeepFactorMiningService:
         y_train, y_val = y[:split_idx], y[split_idx:]
 
         # 标准化
-        X_train_norm, X_val_norm, feature_mean, feature_std = self._normalize_features(
-            X_train, X_val
-        )
+        X_train_norm, X_val_norm, feature_mean, feature_std = self._normalize_features(X_train, X_val)
         self._feature_mean = feature_mean
         self._feature_std = feature_std
 
@@ -630,10 +618,7 @@ class DeepFactorMiningService:
             model.load_state_dict(best_model_state)
             model.to(self.device)
 
-        logger.info(
-            f"训练完成: best_val_loss={best_val_loss:.6f}, "
-            f"实际训练轮数={len(history['train_loss'])}"
-        )
+        logger.info(f"训练完成: best_val_loss={best_val_loss:.6f}, " f"实际训练轮数={len(history['train_loss'])}")
 
         return model, history
 
@@ -680,10 +665,12 @@ class DeepFactorMiningService:
             with torch.no_grad():
                 for chunk_start in range(0, n_samples, chunk_size):
                     chunk_end = min(chunk_start + chunk_size, n_samples)
-                    chunk_windows = torch.stack([
-                        X_tensor[start: start + self.seq_length]
-                        for start in range(chunk_start, chunk_end)
-                    ])
+                    chunk_windows = torch.stack(
+                        [
+                            X_tensor[start : start + self.seq_length]  # noqa: E203
+                            for start in range(chunk_start, chunk_end)
+                        ]
+                    )
                     _, chunk_latent = self._trained_model(chunk_windows.to(self.device))
                     all_factors.append(chunk_latent[:, -1, :].cpu())
                     del chunk_windows
@@ -701,20 +688,19 @@ class DeepFactorMiningService:
 
         # 构建索引: 对齐到原始数据的时间索引
         combined = pd.DataFrame(
-            {name: self.base_factor_values[name]["values"]
-             for name in sorted(self.base_factor_values.keys())}
+            {name: self.base_factor_values[name]["values"] for name in sorted(self.base_factor_values.keys())}
         )
         if self.return_values is not None:
             combined["__target__"] = self.return_values
         combined = combined.dropna()
-        valid_index = combined.index[self.seq_length - 1: self.seq_length - 1 + len(factor_array)]
+        valid_index = combined.index[self.seq_length - 1 : self.seq_length - 1 + len(factor_array)]  # noqa: E203
 
         factor_series = {}
         for k in range(self.n_latent_factors):
             factor_name = f"DeepFactor_{k + 1}"
             factor_series[factor_name] = pd.Series(
                 factor_array[:, k],
-                index=valid_index[:len(factor_array)],
+                index=valid_index[: len(factor_array)],
                 name=factor_name,
             )
 
@@ -827,9 +813,8 @@ class DeepFactorMiningService:
         # 尝试使用 ModelRegistry
         try:
             from backend.services.model_registry import model_registry
-            model_id = model_registry.save(
-                model, metadata, framework="pytorch", model_name=model_name
-            )
+
+            model_id = model_registry.save(model, metadata, framework="pytorch", model_name=model_name)
             logger.info(f"模型已保存到 ModelRegistry: {model_id}")
             return model_id
         except Exception as e:
@@ -845,9 +830,7 @@ class DeepFactorMiningService:
         metadata: Dict,
     ) -> str:
         """文件系统存储回退"""
-        model_dir = os.path.join(
-            os.path.dirname(__file__), "..", "..", "models", "deep_factor"
-        )
+        model_dir = os.path.join(os.path.dirname(__file__), "..", "..", "models", "deep_factor")
         os.makedirs(model_dir, exist_ok=True)
 
         model_path = os.path.join(model_dir, f"{model_id}.pt")
@@ -930,7 +913,9 @@ class DeepFactorMiningService:
                         "architecture": "Transformer",
                         "n_parameters": sum(p.numel() for p in model.parameters()),
                         "training_epochs": len(training_history["train_loss"]),
-                        "best_val_loss": min(training_history["val_loss"]) if training_history["val_loss"] else float("inf"),
+                        "best_val_loss": (
+                            min(training_history["val_loss"]) if training_history["val_loss"] else float("inf")
+                        ),
                     },
                 }
 
@@ -955,8 +940,8 @@ class DeepFactorMiningService:
 
             # fitness_history: 兼容前端展示（用 val_loss 的负值作为 fitness 代理）
             fitness_history = {
-                "best": [-l for l in training_history["val_loss"]],
-                "average": [-l for l in training_history["train_loss"]],
+                "best": [-loss_val for loss_val in training_history["val_loss"]],
+                "average": [-loss_val for loss_val in training_history["train_loss"]],
             }
 
             arch_str = (
@@ -1002,6 +987,7 @@ class DeepFactorMiningService:
 # ======================================================================
 # 工厂函数
 # ======================================================================
+
 
 def create_deep_factor_mining_service(
     base_factors: List[str],

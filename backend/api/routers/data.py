@@ -1,6 +1,7 @@
 """
 数据管理API路由
 """
+
 import logging
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from fastapi import APIRouter, HTTPException
@@ -22,6 +23,7 @@ def _call_akshare_with_timeout(func, *args, **kwargs):
         except FuturesTimeoutError:
             logger.warning(f"akshare API调用超时: {func.__name__}")
             return None
+
 
 router = APIRouter()
 
@@ -77,8 +79,10 @@ STOCK_POOLS = {
 
 # ========== 数据模型 ==========
 
+
 class StockDataRequest(BaseModel):
     """获取股票数据请求"""
+
     code: str
     start_date: str
     end_date: str
@@ -86,12 +90,9 @@ class StockDataRequest(BaseModel):
 
 # ========== API端点 ==========
 
+
 @router.get("/stock/{code}")
-async def get_stock_data(
-    code: str,
-    start_date: str,
-    end_date: str
-):
+async def get_stock_data(code: str, start_date: str, end_date: str):
     """
     获取股票数据
 
@@ -101,11 +102,7 @@ async def get_stock_data(
     - end_date: 结束日期 (YYYY-MM-DD)
     """
     try:
-        data = data_service.get_stock_data(
-            stock_code=code,
-            start_date=start_date,
-            end_date=end_date
-        )
+        data = data_service.get_stock_data(stock_code=code, start_date=start_date, end_date=end_date)
 
         if data is None or len(data) == 0:
             raise HTTPException(status_code=404, detail="未获取到数据")
@@ -114,13 +111,10 @@ async def get_stock_data(
         data_dict = {
             "index": data.index.astype(str).tolist(),
             "columns": data.columns.tolist(),
-            "data": data.values.tolist()
+            "data": data.values.tolist(),
         }
 
-        return sanitize_dict({
-            "success": True,
-            "data": data_dict
-        })
+        return sanitize_dict({"success": True, "data": data_dict})
     except HTTPException:
         raise
     except Exception as e:
@@ -132,11 +126,13 @@ async def get_stock_pools():
     """获取可用的预设股票池列表"""
     pools = []
     for pool_id, pool_info in STOCK_POOLS.items():
-        pools.append({
-            "id": pool_id,
-            "name": pool_info["name"],
-            "description": pool_info["description"],
-        })
+        pools.append(
+            {
+                "id": pool_id,
+                "name": pool_info["name"],
+                "description": pool_info["description"],
+            }
+        )
     return {"success": True, "data": pools}
 
 
@@ -258,10 +254,7 @@ async def get_cache_stats():
     """获取缓存统计"""
     try:
         stats = data_service.get_cache_stats()
-        return {
-            "success": True,
-            "data": stats
-        }
+        return {"success": True, "data": stats}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -271,13 +264,7 @@ async def cleanup_cache():
     """清理过期缓存"""
     try:
         cleaned = data_service.cleanup_cache()
-        return {
-            "success": True,
-            "data": {
-                "cleaned_count": cleaned
-            },
-            "message": f"已清理 {cleaned} 个过期缓存"
-        }
+        return {"success": True, "data": {"cleaned_count": cleaned}, "message": f"已清理 {cleaned} 个过期缓存"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -287,12 +274,6 @@ async def clear_cache():
     """清空全部缓存"""
     try:
         cleared = data_service.clear_cache()
-        return {
-            "success": True,
-            "data": {
-                "cleared_count": cleared
-            },
-            "message": f"已清空 {cleared} 个缓存"
-        }
+        return {"success": True, "data": {"cleared_count": cleared}, "message": f"已清空 {cleared} 个缓存"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

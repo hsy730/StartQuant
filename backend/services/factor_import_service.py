@@ -1,16 +1,17 @@
 """
 因子导入服务 - 从CSV文件导入因子
 """
+
 import logging
 
 logger = logging.getLogger(__name__)
-import pandas as pd
-from typing import Dict
-from pathlib import Path
+import pandas as pd  # noqa: E402
+from typing import Dict  # noqa: E402
+from pathlib import Path  # noqa: E402
 
-from backend.core.database import get_db
-from backend.repositories.factor_repository import FactorRepository
-from backend.models.factor import FactorModel
+from backend.core.database import get_db  # noqa: E402
+from backend.repositories.factor_repository import FactorRepository  # noqa: E402
+from backend.models.factor import FactorModel  # noqa: E402
 
 
 class FactorImportService:
@@ -290,10 +291,12 @@ class FactorImportService:
         dates = [datetime(2024, 1, 1) + timedelta(days=i) for i in range(10)]
         factor_values = [0.5 + i * 0.1 for i in range(10)]
 
-        df = pd.DataFrame({
-            "date": dates,
-            "factor_value": factor_values,
-        })
+        df = pd.DataFrame(
+            {
+                "date": dates,
+                "factor_value": factor_values,
+            }
+        )
 
         return df
 

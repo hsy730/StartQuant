@@ -1,6 +1,7 @@
 """
 动量策略 - 买入动量强的股票
 """
+
 import pandas as pd
 from .base_strategy import BaseStrategy
 from backend.utils.safe_math import safe_divide
@@ -23,7 +24,7 @@ class MomentumStrategy(BaseStrategy):
         momentum_window: int = 20,
         buy_threshold: float = 0.03,
         sell_threshold: float = -0.03,
-        **kwargs
+        **kwargs,
     ):
         """
         初始化动量策略
@@ -105,11 +106,7 @@ class MomentumStrategy(BaseStrategy):
 
         return signals
 
-    def calculate_weights(
-        self,
-        df: pd.DataFrame,
-        signals: pd.Series
-    ) -> pd.Series:
+    def calculate_weights(self, df: pd.DataFrame, signals: pd.Series) -> pd.Series:
         """
         计算权重
 

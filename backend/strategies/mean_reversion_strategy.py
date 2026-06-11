@@ -1,6 +1,7 @@
 """
 均值回归策略 - 价格偏离均值时回归
 """
+
 import pandas as pd
 import numpy as np
 from .base_strategy import BaseStrategy
@@ -24,7 +25,7 @@ class MeanReversionStrategy(BaseStrategy):
         lookback_window: int = 20,
         entry_threshold: float = 2.0,
         exit_threshold: float = 0.5,
-        **kwargs
+        **kwargs,
     ):
         """
         初始化均值回归策略
@@ -56,12 +57,10 @@ class MeanReversionStrategy(BaseStrategy):
         # 计算移动平均和标准差
         # MultiIndex 下必须按资产分组计算，否则跨资产混合统计量
         if isinstance(df.index, pd.MultiIndex):
-            rolling_mean = df["close"].groupby(level=1).transform(
-                lambda s: s.rolling(window=self.lookback_window).mean()
+            rolling_mean = (
+                df["close"].groupby(level=1).transform(lambda s: s.rolling(window=self.lookback_window).mean())
             )
-            rolling_std = df["close"].groupby(level=1).transform(
-                lambda s: s.rolling(window=self.lookback_window).std()
-            )
+            rolling_std = df["close"].groupby(level=1).transform(lambda s: s.rolling(window=self.lookback_window).std())
         else:
             rolling_mean = df["close"].rolling(window=self.lookback_window).mean()
             rolling_std = df["close"].rolling(window=self.lookback_window).std()
@@ -114,11 +113,7 @@ class MeanReversionStrategy(BaseStrategy):
 
         return signals
 
-    def calculate_weights(
-        self,
-        df: pd.DataFrame,
-        signals: pd.Series
-    ) -> pd.Series:
+    def calculate_weights(self, df: pd.DataFrame, signals: pd.Series) -> pd.Series:
         """
         计算权重
 

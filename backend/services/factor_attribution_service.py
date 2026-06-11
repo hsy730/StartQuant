@@ -1,6 +1,7 @@
 """
 因子贡献度分解服务
 """
+
 import logging
 import numpy as np
 import pandas as pd
@@ -38,8 +39,8 @@ class FactorAttributionService:
             benchmark_df = ak.stock_zh_index_daily(symbol="sh000001")
 
             # 转换日期格式
-            benchmark_df['date'] = pd.to_datetime(benchmark_df['date'])
-            benchmark_df.set_index('date', inplace=True)
+            benchmark_df["date"] = pd.to_datetime(benchmark_df["date"])
+            benchmark_df.set_index("date", inplace=True)
 
             # 过滤日期范围
             if start_date is not None:
@@ -55,10 +56,7 @@ class FactorAttributionService:
             return None
 
     def analyze_attribution(
-        self,
-        factor_data: Dict[str, pd.DataFrame],
-        factor_name: str,
-        benchmark_data: Optional[pd.DataFrame] = None
+        self, factor_data: Dict[str, pd.DataFrame], factor_name: str, benchmark_data: Optional[pd.DataFrame] = None
     ) -> Dict[str, Any]:
         """
         因子贡献度分解
@@ -78,9 +76,7 @@ class FactorAttributionService:
         results = {}
 
         # 1. 因子收益贡献（基于因子暴露度与收益的关系）
-        results["factor_contribution"] = self._calculate_contribution(
-            factor_data, factor_name
-        )
+        results["factor_contribution"] = self._calculate_contribution(factor_data, factor_name)
 
         # 2. Alpha-Beta分解（相对于基准的超额收益）
         # 如果没有提供基准数据，自动获取上证指数
@@ -92,27 +88,16 @@ class FactorAttributionService:
                     all_dates.append(df.index.min())
                     all_dates.append(df.index.max())
             if all_dates:
-                benchmark_data = self._get_benchmark_data(
-                    start_date=min(all_dates),
-                    end_date=max(all_dates)
-                )
+                benchmark_data = self._get_benchmark_data(start_date=min(all_dates), end_date=max(all_dates))
 
-        results["alpha_beta"] = self._decompose_alpha_beta(
-            factor_data, factor_name, benchmark_data
-        )
+        results["alpha_beta"] = self._decompose_alpha_beta(factor_data, factor_name, benchmark_data)
 
         # 3. 收益分解（按时间段和股票分解）
-        results["return_decomposition"] = self._decompose_return(
-            factor_data, factor_name
-        )
+        results["return_decomposition"] = self._decompose_return(factor_data, factor_name)
 
         return results
 
-    def _calculate_contribution(
-        self,
-        factor_data: Dict[str, pd.DataFrame],
-        factor_name: str
-    ) -> Dict[str, Any]:
+    def _calculate_contribution(self, factor_data: Dict[str, pd.DataFrame], factor_name: str) -> Dict[str, Any]:
         """
         计算因子收益贡献
 
@@ -191,7 +176,7 @@ class FactorAttributionService:
             long_short_return = None
 
         # 因子贡献比例（IC解释的方差比例）
-        contribution_ratio = ic ** 2 if not np.isnan(ic) else None
+        contribution_ratio = ic**2 if not np.isnan(ic) else None
 
         # 总样本量
         total_samples = sum(len(v) for v in factor_panel.values())
@@ -203,14 +188,11 @@ class FactorAttributionService:
             "low_exposure_return": low_return,
             "long_short_return": long_short_return,
             "contribution_ratio": float(contribution_ratio) if contribution_ratio is not None else None,
-            "sample_size": total_samples
+            "sample_size": total_samples,
         }
 
     def _decompose_alpha_beta(
-        self,
-        factor_data: Dict[str, pd.DataFrame],
-        factor_name: str,
-        benchmark_data: Optional[pd.DataFrame] = None
+        self, factor_data: Dict[str, pd.DataFrame], factor_name: str, benchmark_data: Optional[pd.DataFrame] = None
     ) -> Dict[str, Any]:
         """
         Alpha-Beta分解
@@ -258,7 +240,6 @@ class FactorAttributionService:
             return {"error": "有效交易日不足，无法构建因子组合"}
 
         portfolio_returns = pd.Series(portfolio_daily_returns)
-        common_index = portfolio_returns.index
 
         # 如果没有提供基准数据
         if benchmark_data is None:
@@ -267,10 +248,10 @@ class FactorAttributionService:
                 "message": "未提供基准数据（如市场指数），无法计算Alpha-Beta",
                 "portfolio_return": {
                     "daily_mean": float(portfolio_returns.mean()),
-                    "annual_return": float(empyrical.annual_return(portfolio_returns, period='daily')),
+                    "annual_return": float(empyrical.annual_return(portfolio_returns, period="daily")),
                     "volatility": calculate_volatility(portfolio_returns),
-                    "sharpe": calculate_sharpe(portfolio_returns, risk_free_rate=0.03)
-                }
+                    "sharpe": calculate_sharpe(portfolio_returns, risk_free_rate=0.03),
+                },
             }
 
         # 有基准数据的情况
@@ -285,18 +266,15 @@ class FactorAttributionService:
         benchmark_returns = benchmark_data["close"].pct_change(1).dropna()
 
         # 通过 dropna 对齐组合和基准，只保留两者都有数据的日期
-        aligned_data = pd.DataFrame({
-            'portfolio': portfolio_returns,
-            'benchmark': benchmark_returns
-        }).dropna()
+        aligned_data = pd.DataFrame({"portfolio": portfolio_returns, "benchmark": benchmark_returns}).dropna()
 
         if len(aligned_data) < 10:
             return {"error": "对齐后数据不足"}
 
         # 使用统一入口计算 Alpha/Beta（委托 empyrical，符合规则0和规则2）
         relative_metrics = calculate_relative_metrics(
-            strategy_returns=aligned_data['portfolio'],
-            benchmark_returns=aligned_data['benchmark'],
+            strategy_returns=aligned_data["portfolio"],
+            benchmark_returns=aligned_data["benchmark"],
             risk_free_rate=0.03,
         )
 
@@ -311,7 +289,7 @@ class FactorAttributionService:
                 "beta": None,
                 "r_squared": None,
                 "daily_alpha": None,
-                "interpretation": "基准方差为0，无法计算Beta和Alpha"
+                "interpretation": "基准方差为0，无法计算Beta和Alpha",
             }
 
         # 计算日频 alpha（年化 alpha / 252）
@@ -319,18 +297,14 @@ class FactorAttributionService:
 
         # R² = correlation²（规则7.18：ss_tot=0 时 correlation 为 None，R² 返回 None）
         if correlation is not None:
-            r_squared = correlation ** 2
+            r_squared = correlation**2
         else:
             r_squared = None
 
         alpha_str = f"{alpha_annual:.4f}" if alpha_annual is not None else "不可计算"
         beta_str = f"{beta:.4f}" if beta is not None else "不可计算"
         r2_str = f"{r_squared:.4f}" if r_squared is not None else "不可计算"
-        interpretation = (
-            f"相对于基准的年化Alpha: {alpha_str}, "
-            f"Beta: {beta_str}, "
-            f"拟合度(R²): {r2_str}"
-        )
+        interpretation = f"相对于基准的年化Alpha: {alpha_str}, " f"Beta: {beta_str}, " f"拟合度(R²): {r2_str}"
 
         return {
             "has_benchmark": True,
@@ -338,14 +312,10 @@ class FactorAttributionService:
             "beta": float(beta) if beta is not None else None,
             "r_squared": float(r_squared) if r_squared is not None else None,
             "daily_alpha": float(daily_alpha) if daily_alpha is not None else None,
-            "interpretation": interpretation
+            "interpretation": interpretation,
         }
 
-    def _decompose_return(
-        self,
-        factor_data: Dict[str, pd.DataFrame],
-        factor_name: str
-    ) -> Dict[str, Any]:
+    def _decompose_return(self, factor_data: Dict[str, pd.DataFrame], factor_name: str) -> Dict[str, Any]:
         """
         收益分解
 
@@ -371,13 +341,13 @@ class FactorAttributionService:
 
                     returns_by_stock[stock_code] = {
                         "avg_daily_return": avg_return,
-                        "annual_return": float(empyrical.annual_return(returns, period='daily')),
+                        "annual_return": float(empyrical.annual_return(returns, period="daily")),
                         "cumulative_return": cum_return,
                         "volatility": vol_annual,
                         "daily_volatility": float(returns.std()),
                         "sharpe": calculate_sharpe(returns, risk_free_rate=0.03),
                         "win_rate": float((returns > 0).mean()),
-                        "count": len(returns)
+                        "count": len(returns),
                     }
 
         if not returns_by_stock:
@@ -397,11 +367,31 @@ class FactorAttributionService:
             per_stock_win_rates.append(stats["win_rate"])
             per_stock_avg_returns.append(stats["avg_daily_return"])
 
-        overall_avg = float(np.mean([v for v in per_stock_avg_returns if v is not None])) if any(v is not None for v in per_stock_avg_returns) else None
-        overall_vol_annual = float(np.mean([v for v in per_stock_vols if v is not None])) if any(v is not None for v in per_stock_vols) else None
-        overall_daily_vol = float(np.mean([v for v in per_stock_daily_vols if v is not None])) if any(v is not None for v in per_stock_daily_vols) else None
-        overall_sharpe = float(np.mean([v for v in per_stock_sharpes if v is not None])) if any(v is not None for v in per_stock_sharpes) else None
-        overall_win_rate = float(np.mean([v for v in per_stock_win_rates if v is not None])) if any(v is not None for v in per_stock_win_rates) else None
+        overall_avg = (
+            float(np.mean([v for v in per_stock_avg_returns if v is not None]))
+            if any(v is not None for v in per_stock_avg_returns)
+            else None
+        )
+        overall_vol_annual = (
+            float(np.mean([v for v in per_stock_vols if v is not None]))
+            if any(v is not None for v in per_stock_vols)
+            else None
+        )
+        overall_daily_vol = (
+            float(np.mean([v for v in per_stock_daily_vols if v is not None]))
+            if any(v is not None for v in per_stock_daily_vols)
+            else None
+        )
+        overall_sharpe = (
+            float(np.mean([v for v in per_stock_sharpes if v is not None]))
+            if any(v is not None for v in per_stock_sharpes)
+            else None
+        )
+        overall_win_rate = (
+            float(np.mean([v for v in per_stock_win_rates if v is not None]))
+            if any(v is not None for v in per_stock_win_rates)
+            else None
+        )
         # 先计算每只股票的累计收益再取均值，而非跨股票连乘
         stock_cum_returns = [v["cumulative_return"] for v in returns_by_stock.values()]
         overall_cum = float(np.mean(stock_cum_returns)) if stock_cum_returns else 0.0
@@ -409,16 +399,28 @@ class FactorAttributionService:
         return {
             "overall_stats": {
                 "avg_daily_return": overall_avg,
-                "annual_return": float(np.mean([v["annual_return"] for v in returns_by_stock.values() if v.get("annual_return") is not None])) if any(v.get("annual_return") is not None for v in returns_by_stock.values()) else None,
+                "annual_return": (
+                    float(
+                        np.mean(
+                            [
+                                v["annual_return"]
+                                for v in returns_by_stock.values()
+                                if v.get("annual_return") is not None
+                            ]
+                        )
+                    )
+                    if any(v.get("annual_return") is not None for v in returns_by_stock.values())
+                    else None
+                ),
                 "cumulative_return": overall_cum,
                 "volatility_annual": overall_vol_annual,
                 "daily_volatility": overall_daily_vol,
                 "sharpe_ratio": overall_sharpe,
-                "win_rate": overall_win_rate
+                "win_rate": overall_win_rate,
             },
             "return_by_stock": returns_by_stock,
             "stock_count": len(returns_by_stock),
-            "total_observations": sum(v["count"] for v in returns_by_stock.values())
+            "total_observations": sum(v["count"] for v in returns_by_stock.values()),
         }
 
 

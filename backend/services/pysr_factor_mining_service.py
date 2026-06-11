@@ -9,6 +9,7 @@ PySR符号回归因子挖掘服务
 - 多目标优化内建: Pareto frontier直接输出
 - Feynman benchmark: 59% solve rate (vs gplearn/DEAP 20%)
 """
+
 import logging
 from typing import List, Dict, Optional, Tuple
 import pandas as pd
@@ -18,16 +19,16 @@ logger = logging.getLogger(__name__)
 
 try:
     import pysr
+
     PYSR_AVAILABLE = True
 except ImportError:
     PYSR_AVAILABLE = False
     logger.warning("PySR库未安装，符号回归功能将不可用。请运行: pip install pysr")
 
-from backend.services.base_mining_service import BaseMiningService
-from backend.utils.safe_math import safe_divide
-from backend.services.factor_validation_service import factor_validation_service
-from backend.services.alphalens_analysis_service import alphalens_analysis_service
-
+from backend.services.base_mining_service import BaseMiningService  # noqa: E402
+from backend.utils.safe_math import safe_divide  # noqa: E402
+from backend.services.factor_validation_service import factor_validation_service  # noqa: E402
+from backend.services.alphalens_analysis_service import alphalens_analysis_service  # noqa: E402
 
 _PYSR_OPERATOR_MAP = {
     "+": "+",
@@ -145,11 +146,11 @@ class PySRFactorMiningService(BaseMiningService):
         Returns (X, y, feature_names, stock_factor_map) where
         stock_factor_map maps stock_code -> {var_name: pd.Series}.
         """
-        feature_names = sorted(
-            self.stock_pool_base_factor_values.get(
-                self._sampled_stock_codes[0], {}
-            ).keys()
-        ) if self._sampled_stock_codes else []
+        feature_names = (
+            sorted(self.stock_pool_base_factor_values.get(self._sampled_stock_codes[0], {}).keys())
+            if self._sampled_stock_codes
+            else []
+        )
 
         if not feature_names:
             return self._build_feature_matrix()
@@ -201,7 +202,7 @@ class PySRFactorMiningService(BaseMiningService):
         result = expr_str
 
         for var_name in sorted(feature_names, key=len, reverse=True):
-            _idx = int(var_name.replace("x", ""))
+            _idx = int(var_name.replace("x", ""))  # noqa: F841
             factor_code = self.base_factor_values.get(var_name, {}).get("code", var_name)
             result = result.replace(var_name, f"({factor_code})")
 
@@ -233,7 +234,7 @@ class PySRFactorMiningService(BaseMiningService):
                 if ret is None:
                     continue
 
-                idx = ret.index[:len(fv_array)]
+                idx = ret.index[: len(fv_array)]
                 fv = pd.Series(fv_array, index=idx)
                 fv = fv.replace([np.inf, -np.inf], np.nan)
                 if fv.notna().sum() < 10:
@@ -298,12 +299,18 @@ class PySRFactorMiningService(BaseMiningService):
                             first_period = list(ic_type_data.keys())[0] if ic_type_data else None
                             if first_period:
                                 period_stats = ic_type_data[first_period]
-                                ic_mean_val = float(period_stats.get("mean_ic")) if period_stats.get("mean_ic") is not None else 0.0
+                                ic_mean_val = (
+                                    float(period_stats.get("mean_ic"))
+                                    if period_stats.get("mean_ic") is not None
+                                    else 0.0
+                                )
                                 ir_raw = period_stats.get("ir")
                                 ir_val = float(ir_raw) if ir_raw is not None else 0.0
                                 break
 
-                    _stability = float(ic_results.get("stability")) if ic_results.get("stability") is not None else 0.0
+                    _stability = (  # noqa: F841
+                        float(ic_results.get("stability")) if ic_results.get("stability") is not None else 0.0
+                    )
 
                     ir_capped = min(ir_val, 5.0)
 
@@ -322,13 +329,19 @@ class PySRFactorMiningService(BaseMiningService):
                         "_alphalens": True,
                     }
                     alphalens_success = True
-                    logger.info(f"[PySR Eval] ✅ Alphalens SUCCESS: IC={ic_mean_val:.4f}, IR={ir_val:.4f} (capped={ir_capped:.4f})")
+                    logger.info(
+                        f"[PySR Eval] ✅ Alphalens SUCCESS: "
+                        f"IC={ic_mean_val:.4f}, IR={ir_val:.4f} (capped={ir_capped:.4f})"
+                    )
         except Exception as e:
             logger.warning(f"[PySR Eval] ❌ Alphalens FAILED: {e}")
 
         if not alphalens_success:
             logger.info("[PySR Eval] Attempting fallback to single-stock validation...")
-            logger.info(f"[PySR Eval] best_fv={'available' if best_fv is not None else 'None'}, best_ret={'available' if best_ret is not None else 'None'}")
+            logger.info(
+                f"[PySR Eval] best_fv={'available' if best_fv is not None else 'None'}, "
+                f"best_ret={'available' if best_ret is not None else 'None'}"
+            )
 
             if best_fv is not None and best_ret is not None and self.return_values is not None:
                 try:
@@ -361,7 +374,7 @@ class PySRFactorMiningService(BaseMiningService):
         X = np.column_stack(ordered_values)
         fv_array = expr_callable(X)
 
-        idx = self.base_factor_values[feature_names[0]]["values"].index[:len(fv_array)]
+        idx = self.base_factor_values[feature_names[0]]["values"].index[: len(fv_array)]
         fv = pd.Series(fv_array, index=idx)
         fv = fv.replace([np.inf, -np.inf], np.nan)
 
@@ -414,7 +427,7 @@ class PySRFactorMiningService(BaseMiningService):
     def cleanup(self):
         """释放PySR模型和Julia子进程资源"""
         try:
-            if hasattr(self, '_pysr_model') and self._pysr_model is not None:
+            if hasattr(self, "_pysr_model") and self._pysr_model is not None:
                 # PySR doesn't have explicit cleanup, but we can release the reference
                 self._pysr_model = None
             self._halloffame = None
@@ -505,6 +518,7 @@ class PySRFactorMiningService(BaseMiningService):
                 except Exception as e:
                     logger.warning(f"[Mine Factors] ❌ Equation {idx} evaluation FAILED: {e}")
                     import traceback
+
                     logger.warning(f"[Mine Factors] Traceback: {traceback.format_exc()}")
 
                 factor_info = {
@@ -543,7 +557,17 @@ class PySRFactorMiningService(BaseMiningService):
             return {
                 "success": True,
                 "best_factors": best_factors,
-                "equations": equations_df[[col for col in equations_df.columns if equations_df[col].apply(lambda x: not callable(x)).all()]].to_dict() if equations_df is not None else {},
+                "equations": (
+                    equations_df[
+                        [
+                            col
+                            for col in equations_df.columns
+                            if equations_df[col].apply(lambda x: not callable(x)).all()
+                        ]
+                    ].to_dict()
+                    if equations_df is not None
+                    else {}
+                ),
                 "source": "pysr",
             }
 
@@ -553,10 +577,7 @@ class PySRFactorMiningService(BaseMiningService):
 
 
 def create_pysr_mining_service(
-    base_factors: List[str],
-    data: pd.DataFrame,
-    factor_calculator=None,
-    **kwargs
+    base_factors: List[str], data: pd.DataFrame, factor_calculator=None, **kwargs
 ) -> PySRFactorMiningService:
     """Create a configured :class:`PySRFactorMiningService` instance.
 
@@ -576,9 +597,4 @@ def create_pysr_mining_service(
     * ``fitness_objective`` – ic_mean / ir_ratio / sharpe / combined (default ic_mean)
     * ``cv_folds`` – cross-validation folds (default 0)
     """
-    return PySRFactorMiningService(
-        base_factors=base_factors,
-        data=data,
-        factor_calculator=factor_calculator,
-        **kwargs
-    )
+    return PySRFactorMiningService(base_factors=base_factors, data=data, factor_calculator=factor_calculator, **kwargs)

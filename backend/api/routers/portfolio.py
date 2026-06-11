@@ -1,6 +1,7 @@
 """
 组合分析API路由
 """
+
 import logging
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -21,8 +22,10 @@ router = APIRouter()
 
 # ========== 数据模型 ==========
 
+
 class OptimizeWeightsRequest(BaseModel):
     """权重优化请求"""
+
     stock_code: str
     factors: List[str]
     start_date: str
@@ -33,6 +36,7 @@ class OptimizeWeightsRequest(BaseModel):
 
 class CompositeScoreRequest(BaseModel):
     """计算综合得分请求"""
+
     stock_code: str
     factors: List[str]
     start_date: str
@@ -41,6 +45,7 @@ class CompositeScoreRequest(BaseModel):
 
 class CompareMethodsRequest(BaseModel):
     """对比权重方法请求"""
+
     stock_code: str
     factors: List[str]
     start_date: str
@@ -49,6 +54,7 @@ class CompareMethodsRequest(BaseModel):
 
 
 # ========== API端点 ==========
+
 
 @router.post("/optimize-weights")
 async def optimize_weights(request: OptimizeWeightsRequest):
@@ -62,11 +68,7 @@ async def optimize_weights(request: OptimizeWeightsRequest):
         import numpy as np
 
         # 获取股票数据
-        stock_data = data_service.get_stock_data(
-            request.stock_code,
-            request.start_date,
-            request.end_date
-        )
+        stock_data = data_service.get_stock_data(request.stock_code, request.start_date, request.end_date)
 
         if stock_data is None or len(stock_data) == 0:
             raise HTTPException(status_code=404, detail="未获取到数据")
@@ -156,7 +158,7 @@ async def optimize_weights(request: OptimizeWeightsRequest):
             portfolio_return = aligned_returns.mean()
 
             # 计算组合IR (IC均值 / IC标准差)（使用Spearman，符合规则7.1/7.30）
-            ic_series = calculate_rolling_ic(aligned_factor, aligned_returns, window=20, method='spearman')
+            ic_series = calculate_rolling_ic(aligned_factor, aligned_returns, window=20, method="spearman")
             ic_mean = ic_series.mean()
             ic_std = ic_series.std()
             portfolio_ir = safe_ir(float(ic_mean), float(ic_std), default=None)
@@ -173,23 +175,21 @@ async def optimize_weights(request: OptimizeWeightsRequest):
             "metrics": {
                 "return": safe_numeric_value(portfolio_return),
                 "ic": safe_numeric_value(portfolio_ic),
-                "ir": safe_numeric_value(portfolio_ir)
-            }
+                "ir": safe_numeric_value(portfolio_ir),
+            },
         }
 
         # 计算综合得分（使用优化后的权重）
         try:
             composite_score_result = portfolio_analysis_service.calculate_combined_factor_score(
-                factor_data=factor_values,
-                weights=weights,
-                normalize=True
+                factor_data=factor_values, weights=weights, normalize=True
             )
 
             # 转换为列表格式
-            if hasattr(composite_score_result, 'index'):
+            if hasattr(composite_score_result, "index"):
                 composite_score = {
                     "dates": composite_score_result.index.astype(str).tolist(),
-                    "values": composite_score_result.values.tolist()
+                    "values": composite_score_result.values.tolist(),
                 }
             else:
                 composite_score = {"values": list(composite_score_result)}
@@ -198,11 +198,12 @@ async def optimize_weights(request: OptimizeWeightsRequest):
             values = composite_score.get("values", [])
             if len(values) > 0:
                 import numpy as np
+
                 composite_stats = {
                     "mean": float(np.mean(values)),
                     "std": float(np.std(values)),
                     "min": float(np.min(values)),
-                    "max": float(np.max(values))
+                    "max": float(np.max(values)),
                 }
             else:
                 composite_stats = {}
@@ -223,10 +224,7 @@ async def optimize_weights(request: OptimizeWeightsRequest):
         # 转换 numpy 类型为 Python 原生类型，以避免 JSON 序列化错误
         result = sanitize_dict(result)
 
-        return {
-            "success": True,
-            "data": result
-        }
+        return {"success": True, "data": result}
     except HTTPException:
         raise
     except Exception as e:
@@ -243,11 +241,7 @@ async def calculate_composite_score(request: CompositeScoreRequest):
         from backend.core.database import get_db
 
         # 获取股票数据
-        stock_data = data_service.get_stock_data(
-            request.stock_code,
-            request.start_date,
-            request.end_date
-        )
+        stock_data = data_service.get_stock_data(request.stock_code, request.start_date, request.end_date)
 
         if stock_data is None or len(stock_data) == 0:
             raise HTTPException(status_code=404, detail="未获取到数据")
@@ -279,31 +273,23 @@ async def calculate_composite_score(request: CompositeScoreRequest):
             raise HTTPException(status_code=400, detail="没有有效的因子数据")
 
         # 使用等权重（简化）
-        weights = {f: 1.0/len(factor_data) for f in factor_data.keys()}
+        weights = {f: 1.0 / len(factor_data) for f in factor_data.keys()}
 
         # 调用综合得分计算
         result = portfolio_analysis_service.calculate_combined_factor_score(
-            factor_data=factor_data,
-            weights=weights,
-            normalize=True
+            factor_data=factor_data, weights=weights, normalize=True
         )
 
         # 转换为列表
-        if hasattr(result, 'index'):
-            score_list = {
-                "dates": result.index.astype(str).tolist(),
-                "values": result.values.tolist()
-            }
+        if hasattr(result, "index"):
+            score_list = {"dates": result.index.astype(str).tolist(), "values": result.values.tolist()}
         else:
             score_list = {"values": list(result)}
 
         # 转换 numpy 类型为 Python 原生类型，以避免 JSON 序列化错误
         score_list = sanitize_dict(score_list)
 
-        return {
-            "success": True,
-            "data": score_list
-        }
+        return {"success": True, "data": score_list}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -320,11 +306,7 @@ async def compare_weight_methods(request: CompareMethodsRequest):
         import numpy as np
 
         # 获取股票数据
-        stock_data = data_service.get_stock_data(
-            request.stock_code,
-            request.start_date,
-            request.end_date
-        )
+        stock_data = data_service.get_stock_data(request.stock_code, request.start_date, request.end_date)
 
         if stock_data is None or len(stock_data) == 0:
             raise HTTPException(status_code=404, detail="未获取到数据")
@@ -390,16 +372,12 @@ async def compare_weight_methods(request: CompareMethodsRequest):
                 weighted_factor = weighted_factor.dropna()
 
                 # 3. 计算组合因子的IC/IR统计
-                aligned = pd.DataFrame({
-                    'factor': weighted_factor,
-                    'returns': returns
-                }).dropna()
+                aligned = pd.DataFrame({"factor": weighted_factor, "returns": returns}).dropna()
 
                 if len(aligned) >= 20:
                     # 计算IC时间序列（使用Spearman，符合规则7.1/7.30）
                     ic_series = calculate_rolling_ic(
-                        aligned['factor'], aligned['returns'],
-                        window=20, method='spearman'
+                        aligned["factor"], aligned["returns"], window=20, method="spearman"
                     )
 
                     # 计算统计指标
@@ -416,7 +394,7 @@ async def compare_weight_methods(request: CompareMethodsRequest):
                         "ir": float(ir) if ir is not None else None,
                         "ic_annualized": float(ic_mean * 252),  # 年化IC（非真实收益率）
                         "ic_volatility_annualized": float(ic_std * np.sqrt(252)),  # 年化IC标准差（非真实波动率）
-                        "information_ratio": float(ir) if ir is not None else None  # IR（信息比率，非夏普比率）
+                        "information_ratio": float(ir) if ir is not None else None,  # IR（信息比率，非夏普比率）
                     }
                 else:
                     results[method] = {
@@ -425,12 +403,13 @@ async def compare_weight_methods(request: CompareMethodsRequest):
                         "ir": None,
                         "ic_annualized": None,
                         "ic_volatility_annualized": None,
-                        "information_ratio": None
+                        "information_ratio": None,
                     }
 
             except Exception as e:
                 logger.warning(f"方法 {method} 计算失败: {e}")
                 import traceback
+
                 logger.debug(traceback.format_exc())
                 results[method] = {
                     "ic_mean": None,
@@ -438,17 +417,13 @@ async def compare_weight_methods(request: CompareMethodsRequest):
                     "ir": None,
                     "ic_annualized": None,
                     "ic_volatility_annualized": None,
-                    "information_ratio": None
+                    "information_ratio": None,
                 }
 
-        return sanitize_dict({
-            "success": True,
-            "data": {
-                "results": results
-            }
-        })
+        return sanitize_dict({"success": True, "data": {"results": results}})
     except Exception as e:
         import traceback
+
         logger.error(f"方法对比失败: {e}")
         logger.debug(traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))

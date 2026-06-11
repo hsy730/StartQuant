@@ -3,6 +3,7 @@
 
 项目规范5：相同逻辑出现 ≥ 2 次必须提取公共方法
 """
+
 from typing import Dict, Tuple, Generator, Optional
 import pandas as pd
 

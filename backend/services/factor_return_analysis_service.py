@@ -13,6 +13,7 @@
 - 支持横截面和时间序列两种模式
 - 提供详细的统计检验结果
 """
+
 import numpy as np
 import pandas as pd
 from typing import Dict, List, Optional, Any
@@ -29,15 +30,16 @@ logger = logging.getLogger(__name__)
 
 class QuantileMethod(str, Enum):
     """分位方法枚举"""
-    EQUAL_WEIGHT = "equal_weight"      # 等权分组
-    VALUE_WEIGHT = "value_weight"      # 值加权分组
+
+    EQUAL_WEIGHT = "equal_weight"  # 等权分组
+    VALUE_WEIGHT = "value_weight"  # 值加权分组
 
 
 @dataclass
 class FactorReturnAnalysisConfig:
     """
     因子收益分析配置
-    
+
     Attributes:
         n_quantiles: 分组数量（默认5组，符合业界标准）
         quantile_method: 分组方法
@@ -47,6 +49,7 @@ class FactorReturnAnalysisConfig:
         enable_bootstrap: 是否启用Bootstrap置信区间
         bootstrap_n: Bootstrap采样次数
     """
+
     n_quantiles: int = 5
     quantile_method: QuantileMethod = QuantileMethod.EQUAL_WEIGHT
     forward_period: int = 1
@@ -59,20 +62,20 @@ class FactorReturnAnalysisConfig:
 class FactorReturnAnalysisService:
     """
     因子收益分析服务类
-    
+
     提供专业的因子收益分析功能，包括：
     - 分组收益分析（Quantile Returns）
     - 累计收益曲线（Cumulative Returns）
     - 多空利差分析（Long-Short Spread）
     - 换手率分析（Turnover Analysis）
-    
+
     所有方法均使用pandas向量化操作，确保高性能。
     """
 
     def __init__(self, config: Optional[FactorReturnAnalysisConfig] = None):
         """
         初始化服务
-        
+
         Args:
             config: 分析配置，默认使用标准配置
         """
@@ -86,16 +89,16 @@ class FactorReturnAnalysisService:
     ) -> Dict[str, Any]:
         """
         计算因子分组收益（Quantile Returns）
-        
+
         这是因子分析中最核心的功能之一，用于验证因子的预测能力。
         将所有股票按因子值分成N组，计算每组的平均收益。
         如果因子有效，应该观察到单调性：高因子值组收益 > 低因子值组收益。
-        
+
         Args:
             factor_data: {stock_code: DataFrame} 格式的因子数据
             factor_name: 因子名称
             price_column: 价格列名（用于计算收益）
-            
+
         Returns:
             {
                 "quantile_returns": [...],  # 各组平均收益
@@ -118,8 +121,7 @@ class FactorReturnAnalysisService:
                     continue
 
                 df_copy["future_return"] = (
-                    df_copy[price_column].shift(-self.config.forward_period) /
-                    df_copy[price_column] - 1
+                    df_copy[price_column].shift(-self.config.forward_period) / df_copy[price_column] - 1
                 )
 
                 df_copy["stock_code"] = stock_code
@@ -132,8 +134,8 @@ class FactorReturnAnalysisService:
                     df_copy["date"] = pd.NaT
 
                 valid_data = df_copy[
-                    [factor_name, "future_return", "stock_code", "date"] +
-                    (["market_cap"] if "market_cap" in df_copy.columns else [])
+                    [factor_name, "future_return", "stock_code", "date"]
+                    + (["market_cap"] if "market_cap" in df_copy.columns else [])
                 ].dropna(subset=[factor_name, "future_return"])
 
                 if len(valid_data) > 0:
@@ -157,10 +159,7 @@ class FactorReturnAnalysisService:
                     if len(group) >= self.config.n_quantiles:
                         try:
                             merged_df.loc[group.index, "quantile"] = pd.qcut(
-                                group[factor_name],
-                                q=self.config.n_quantiles,
-                                labels=False,
-                                duplicates="drop"
+                                group[factor_name], q=self.config.n_quantiles, labels=False, duplicates="drop"
                             )
                         except ValueError:
                             # 分位数相同时无法切分，跳过该截面
@@ -168,38 +167,39 @@ class FactorReturnAnalysisService:
             else:
                 # 无日期信息时退化为全局分位（单股票场景）
                 merged_df["quantile"] = pd.qcut(
-                    merged_df[factor_name],
-                    q=self.config.n_quantiles,
-                    labels=False,
-                    duplicates="drop"
+                    merged_df[factor_name], q=self.config.n_quantiles, labels=False, duplicates="drop"
                 )
 
             # 排除无法分位的行
             merged_df = merged_df.dropna(subset=["quantile"])
-            
+
             quantile_returns = []
             quantile_stats = []
-            
+
             for q in range(self.config.n_quantiles):
                 group_data = merged_df[merged_df["quantile"] == q]
 
                 if len(group_data) == 0:
-                    quantile_returns.append({
-                        "group": f"Q{q+1}",
-                        "avg_return": None,
-                        "std_return": None,
-                        "n_observations": 0,
-                        "t_statistic": None,
-                        "p_value": None,
-                        "is_significant": False,
-                    })
-                    quantile_stats.append({
-                        "group": f"Q{q+1}",
-                        "mean_factor": None,
-                        "min_factor": None,
-                        "max_factor": None,
-                        "n_stocks": 0,
-                    })
+                    quantile_returns.append(
+                        {
+                            "group": f"Q{q+1}",
+                            "avg_return": None,
+                            "std_return": None,
+                            "n_observations": 0,
+                            "t_statistic": None,
+                            "p_value": None,
+                            "is_significant": False,
+                        }
+                    )
+                    quantile_stats.append(
+                        {
+                            "group": f"Q{q+1}",
+                            "mean_factor": None,
+                            "min_factor": None,
+                            "max_factor": None,
+                            "n_stocks": 0,
+                        }
+                    )
                     continue
 
                 if self.config.weight_by_market_cap and "market_cap" in group_data.columns:
@@ -212,43 +212,43 @@ class FactorReturnAnalysisService:
                         avg_return = (group_data["future_return"] * weights).sum()
                 else:
                     avg_return = group_data["future_return"].mean()
-                
+
                 std_return = group_data["future_return"].std()
                 n_obs = len(group_data)
-                
-                t_stat, p_value = scipy_stats.ttest_1samp(
-                    group_data["future_return"].dropna().values, 0
+
+                t_stat, p_value = scipy_stats.ttest_1samp(group_data["future_return"].dropna().values, 0)
+
+                quantile_returns.append(
+                    {
+                        "group": f"Q{q+1}",
+                        "avg_return": float(avg_return),
+                        "std_return": float(std_return) if not np.isnan(std_return) else None,
+                        "n_observations": n_obs,
+                        "t_statistic": float(t_stat) if not np.isnan(t_stat) else None,
+                        "p_value": float(p_value) if not np.isnan(p_value) else None,
+                        "is_significant": p_value < 0.05 if not np.isnan(p_value) else False,
+                    }
                 )
-                
-                quantile_returns.append({
-                    "group": f"Q{q+1}",
-                    "avg_return": float(avg_return),
-                    "std_return": float(std_return) if not np.isnan(std_return) else None,
-                    "n_observations": n_obs,
-                    "t_statistic": float(t_stat) if not np.isnan(t_stat) else None,
-                    "p_value": float(p_value) if not np.isnan(p_value) else None,
-                    "is_significant": p_value < 0.05 if not np.isnan(p_value) else False,
-                })
-                
-                quantile_stats.append({
-                    "group": f"Q{q+1}",
-                    "mean_factor": float(group_data[factor_name].mean()),
-                    "min_factor": float(group_data[factor_name].min()),
-                    "max_factor": float(group_data[factor_name].max()),
-                    "n_stocks": group_data["stock_code"].nunique(),
-                })
-            
+
+                quantile_stats.append(
+                    {
+                        "group": f"Q{q+1}",
+                        "mean_factor": float(group_data[factor_name].mean()),
+                        "min_factor": float(group_data[factor_name].min()),
+                        "max_factor": float(group_data[factor_name].max()),
+                        "n_stocks": group_data["stock_code"].nunique(),
+                    }
+                )
+
             spread_result = self._calculate_spread(quantile_returns)
-            
+
             monotonicity_result = self._test_monotonicity(quantile_returns)
-            
+
             if self.config.enable_bootstrap:
-                bootstrap_result = self._bootstrap_quantile_returns(
-                    merged_df, factor_name, "future_return"
-                )
+                bootstrap_result = self._bootstrap_quantile_returns(merged_df, factor_name, "future_return")
             else:
                 bootstrap_result = None
-            
+
             return {
                 "success": True,
                 "factor_name": factor_name,
@@ -261,7 +261,7 @@ class FactorReturnAnalysisService:
                 "monotonicity_test": monotonicity_result,
                 "bootstrap_ci": bootstrap_result,
             }
-            
+
         except Exception as e:
             logger.error(f"计算因子分组收益失败: {e}", exc_info=True)
             return {"error": str(e)}
@@ -275,16 +275,16 @@ class FactorReturnAnalysisService:
     ) -> Dict[str, Any]:
         """
         计算累计收益曲线（Cumulative Returns）
-        
+
         基于因子分组构建多空组合，计算其累计收益曲线。
         这是最直观展示因子有效性的方式。
-        
+
         Args:
             factor_data: {stock_code: DataFrame} 格式的因子数据
             factor_name: 因子名称
             price_column: 价格列名
             long_short: 是否计算多空组合（True=只显示多空，False=显示所有组）
-            
+
         Returns:
             {
                 "dates": [...],
@@ -294,21 +294,20 @@ class FactorReturnAnalysisService:
         """
         try:
             date_returns = {}
-            
+
             for stock_code, df in factor_data.items():
                 if factor_name not in df.columns or price_column not in df.columns:
                     continue
-                
+
                 df_copy = df.copy()
-                
+
                 if len(df_copy) < self.config.forward_period + 1:
                     continue
-                
+
                 df_copy["future_return"] = (
-                    df_copy[price_column].shift(-self.config.forward_period) / 
-                    df_copy[price_column] - 1
+                    df_copy[price_column].shift(-self.config.forward_period) / df_copy[price_column] - 1
                 )
-                
+
                 valid_rows = df_copy[[factor_name, "future_return"]].dropna()
                 if len(valid_rows) == 0:
                     continue
@@ -319,17 +318,19 @@ class FactorReturnAnalysisService:
                     if date_key not in date_returns:
                         date_returns[date_key] = []
 
-                    date_returns[date_key].append({
-                        "factor_value": valid_rows.loc[idx, factor_name],
-                        "return": valid_rows.loc[idx, "future_return"],
-                        "stock_code": stock_code,
-                    })
-            
+                    date_returns[date_key].append(
+                        {
+                            "factor_value": valid_rows.loc[idx, factor_name],
+                            "return": valid_rows.loc[idx, "future_return"],
+                            "stock_code": stock_code,
+                        }
+                    )
+
             if not date_returns:
                 return {"error": "没有有效的数据"}
-            
+
             sorted_dates = sorted(date_returns.keys())
-            
+
             group_cumreturns = {f"Q{i+1}": [] for i in range(self.config.n_quantiles)}
             group_cumulative = {f"Q{i+1}": 1.0 for i in range(self.config.n_quantiles)}
             long_short_returns = []
@@ -375,53 +376,58 @@ class FactorReturnAnalysisService:
 
                 for q in range(self.config.n_quantiles):
                     period_return = group_returns.get(q, 0.0)
-                    group_cumulative[f"Q{q+1}"] *= (1 + period_return)
+                    group_cumulative[f"Q{q+1}"] *= 1 + period_return
                     group_cumreturns[f"Q{q+1}"].append(float(group_cumulative[f"Q{q+1}"] - 1))
-                
+
                 if long_short:
                     long_return = group_returns.get(self.config.n_quantiles - 1, 0.0)
                     short_return = group_returns.get(0, 0.0)
                     ls_return = long_return - short_return
-                    cumulative_ls *= (1 + ls_return)
+                    cumulative_ls *= 1 + ls_return
                     long_short_returns.append(cumulative_ls - 1)
-                
+
                 all_dates.append(date_str)
-            
+
             result = {
                 "dates": all_dates,
                 "n_periods": len(all_dates),
             }
-            
+
             if long_short:
                 result["long_short_cumulative"] = [float(r) if r is not None else None for r in long_short_returns]
-                
+
                 valid_returns = [r for r in long_short_returns if r is not None]
                 if valid_returns:
                     final_return = valid_returns[-1]
                     max_drawdown = self._calculate_max_drawdown(valid_returns)
                     sharpe_ratio = self._calculate_sharpe_ratio(
-                        pd.Series([(long_short_returns[i+1] + 1) / (long_short_returns[i] + 1) - 1
-                                  for i in range(len(long_short_returns)-1) 
-                                  if long_short_returns[i] is not None and long_short_returns[i+1] is not None])
+                        pd.Series(
+                            [
+                                (long_short_returns[i + 1] + 1) / (long_short_returns[i] + 1) - 1
+                                for i in range(len(long_short_returns) - 1)
+                                if long_short_returns[i] is not None and long_short_returns[i + 1] is not None
+                            ]
+                        )
                     )
-                    
+
                     result["summary_statistics"] = {
                         "final_cumulative_return": float(final_return),
                         "max_drawdown": float(max_drawdown),
-                        "sharpe_ratio": float(sharpe_ratio) if sharpe_ratio is not None and not np.isnan(sharpe_ratio) else None,
+                        "sharpe_ratio": (
+                            float(sharpe_ratio) if sharpe_ratio is not None and not np.isnan(sharpe_ratio) else None
+                        ),
                         "total_periods": len(valid_returns),
                     }
-            
+
             if not long_short:
                 result["group_cumulative"] = {}
                 for q in range(self.config.n_quantiles):
                     result["group_cumulative"][f"Q{q+1}"] = [
-                        float(r) if r is not None else None 
-                        for r in group_cumreturns[f"Q{q+1}"]
+                        float(r) if r is not None else None for r in group_cumreturns[f"Q{q+1}"]
                     ]
-            
+
             return result
-            
+
         except Exception as e:
             logger.error(f"计算累计收益失败: {e}", exc_info=True)
             return {"error": str(e)}
@@ -434,15 +440,15 @@ class FactorReturnAnalysisService:
     ) -> Dict[str, Any]:
         """
         计算因子换手率分析（完善版）
-        
+
         换手率衡量因子值的稳定性，低换手率意味着因子信号稳定，
         可以降低交易成本。这是专业因子分析的重要组成部分。
-        
+
         Args:
             factor_data: {stock_code: DataFrame} 格式的因子数据
             factor_name: 因子名称
             window: 滚动窗口期
-            
+
         Returns:
             {
                 "turnover_stats": {...},
@@ -452,19 +458,19 @@ class FactorReturnAnalysisService:
         """
         try:
             all_factor_series = []
-            
+
             for stock_code, df in factor_data.items():
                 if factor_name in df.columns:
                     series = df[factor_name].dropna()
                     if len(series) > window:
                         all_factor_series.append(series)
-            
+
             if not all_factor_series:
                 return {"error": "没有有效的因子数据"}
-            
+
             turnover_rates = []
             autocorrelations = []
-            
+
             for series in all_factor_series:
                 if len(series) < window + 1:
                     continue
@@ -477,26 +483,26 @@ class FactorReturnAnalysisService:
                 rank_change = (factor_bins != factor_bins.shift(1)).astype(float)
                 turnover = rank_change.dropna().mean()
                 turnover_rates.append(turnover)
-                
+
                 auto_corr = series.autocorr(lag=1)
                 if not np.isnan(auto_corr):
                     autocorrelations.append(auto_corr)
-            
+
             if not turnover_rates:
                 return {"error": "无法计算换手率"}
-            
+
             avg_turnover = np.mean(turnover_rates)
             median_turnover = np.median(turnover_rates)
             std_turnover = np.std(turnover_rates)
-            
+
             avg_autocorr = np.mean(autocorrelations) if autocorrelations else 0.0
-            
+
             half_life = None
             if avg_autocorr > 0 and avg_autocorr < 1:
                 half_life = -np.log(2) / np.log(avg_autocorr)
-            
+
             stability_score = 1.0 - min(avg_turnover, 1.0)
-            
+
             return {
                 "success": True,
                 "factor_name": factor_name,
@@ -522,7 +528,7 @@ class FactorReturnAnalysisService:
                     "recommendation": self._generate_stability_recommendation(stability_score, avg_turnover),
                 },
             }
-            
+
         except Exception as e:
             logger.error(f"换手率分析失败: {e}", exc_info=True)
             return {"error": str(e)}
@@ -533,15 +539,15 @@ class FactorReturnAnalysisService:
     ) -> Dict[str, Any]:
         """
         计算多空利差（Long-Short Spread）
-        
+
         最高组收益减去最低组收益，这是衡量因子预测能力的核心指标。
         """
         if len(quantile_returns) < 2:
             return {"error": "分组不足"}
-        
+
         top_group = quantile_returns[-1]
         bottom_group = quantile_returns[0]
-        
+
         spread = top_group["avg_return"] - bottom_group["avg_return"]
 
         n_top = top_group["n_observations"]
@@ -564,22 +570,20 @@ class FactorReturnAnalysisService:
             }
 
         # Welch's t-test: t = spread / sqrt(std_top^2/n_top + std_bottom^2/n_bottom)
-        se = np.sqrt(
-            std_top**2 / n_top + std_bottom**2 / n_bottom
-        ) if n_top > 0 and n_bottom > 0 else 0.0
+        se = np.sqrt(std_top**2 / n_top + std_bottom**2 / n_bottom) if n_top > 0 and n_bottom > 0 else 0.0
 
         if se > 1e-10:
             t_stat = float(spread) / float(se)  # se guaranteed positive (Rule 7.34)
         elif se > 0:
             # se is very small but positive → extremely significant
-            t_stat = float('inf') if abs(spread) > 1e-10 else 0.0
+            t_stat = float("inf") if abs(spread) > 1e-10 else 0.0
         else:
             t_stat = 0.0
 
         # Welch-Satterthwaite degrees of freedom
         if se > 0 and n_top > 1 and n_bottom > 1:
-            var_top = top_group["std_return"]**2
-            var_bottom = bottom_group["std_return"]**2
+            var_top = top_group["std_return"] ** 2
+            var_bottom = bottom_group["std_return"] ** 2
             numerator = (var_top / n_top + var_bottom / n_bottom) ** 2
             denominator = (var_top / n_top) ** 2 / (n_top - 1) + (var_bottom / n_bottom) ** 2 / (n_bottom - 1)
             df = safe_divide(numerator, denominator, default=n_top + n_bottom - 2)
@@ -587,7 +591,7 @@ class FactorReturnAnalysisService:
             df = n_top + n_bottom - 2
 
         p_value = 2 * (1 - scipy_stats.t.cdf(abs(t_stat), df=df))
-        
+
         return {
             "long_short_spread": float(spread),
             "spread_std": float(se),
@@ -605,24 +609,30 @@ class FactorReturnAnalysisService:
     ) -> Dict[str, Any]:
         """
         检验分组收益的单调性
-        
+
         有效因子应该呈现单调性：Q1 < Q2 < Q3 < Q4 < Q5（或反向）
         """
         returns = [q["avg_return"] for q in quantile_returns if q["avg_return"] is not None]
         if not returns:
-            return {"is_monotonic": False, "direction": "unknown", "increasing_count": 0, "decreasing_count": 0, "monotonic_score": 0.0}
+            return {
+                "is_monotonic": False,
+                "direction": "unknown",
+                "increasing_count": 0,
+                "decreasing_count": 0,
+                "monotonic_score": 0.0,
+            }
         n = len(returns)
-        
-        increasing_count = sum(1 for i in range(n-1) if returns[i+1] > returns[i])
-        decreasing_count = sum(1 for i in range(n-1) if returns[i+1] < returns[i])
-        
+
+        increasing_count = sum(1 for i in range(n - 1) if returns[i + 1] > returns[i])
+        decreasing_count = sum(1 for i in range(n - 1) if returns[i + 1] < returns[i])
+
         monotonicity_ratio = max(increasing_count, decreasing_count) / (n - 1) if n > 1 else 0
-        
+
         spearman_corr, spearman_p = scipy_stats.spearmanr(range(n), returns)
-        
+
         is_monotonic = monotonicity_ratio >= 0.8
         direction = "increasing" if increasing_count >= decreasing_count else "decreasing"
-        
+
         return {
             "is_monotonic": is_monotonic,
             "direction": direction,
@@ -737,9 +747,13 @@ class FactorReturnAnalysisService:
             return 0.0
 
         # 将累计收益转换为日收益率
-        daily_returns = pd.Series([(returns[i+1] + 1) / (returns[i] + 1) - 1
-                                   for i in range(len(returns) - 1)
-                                   if abs(returns[i] + 1) > 1e-10])
+        daily_returns = pd.Series(
+            [
+                (returns[i + 1] + 1) / (returns[i] + 1) - 1
+                for i in range(len(returns) - 1)
+                if abs(returns[i] + 1) > 1e-10
+            ]
+        )
 
         if len(daily_returns) >= 2:
             metrics = calculate_risk_metrics(daily_returns)
@@ -815,24 +829,15 @@ class FactorReturnAnalysisService:
         else:
             return f"多空利差为负（{spread:.2%}），因子方向可能错误或需要反转"
 
-    def _interpret_monotonicity(
-        self,
-        is_monotonic: bool,
-        direction: str,
-        ratio: float
-    ) -> str:
+    def _interpret_monotonicity(self, is_monotonic: bool, direction: str, ratio: float) -> str:
         """解读单调性"""
         if not is_monotonic:
             return f"分组收益单调性不明显（{ratio:.0%}），因子预测能力不稳定"
-        
+
         direction_text = "递增" if direction == "increasing" else "递减"
         return f"分组收益呈{direction_text}趋势（{ratio:.0%}），因子具有良好的单调性"
 
-    def _generate_stability_recommendation(
-        self,
-        stability_score: float,
-        turnover: float
-    ) -> str:
+    def _generate_stability_recommendation(self, stability_score: float, turnover: float) -> str:
         """生成稳定性建议"""
         if stability_score >= 0.8:
             return "因子非常稳定，适合长期持有策略"

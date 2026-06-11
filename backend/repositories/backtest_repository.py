@@ -1,6 +1,7 @@
 """
 回测结果数据访问层
 """
+
 import logging
 from typing import Optional, List, Dict, Any
 from sqlalchemy import select, delete, desc
@@ -38,10 +39,7 @@ class BacktestRepository:
             if hasattr(value, "to_dict"):
                 serialized_quantile[key] = value.to_dict()
             elif isinstance(value, dict):
-                serialized_quantile[key] = {
-                    k: v.to_dict() if hasattr(v, "to_dict") else v
-                    for k, v in value.items()
-                }
+                serialized_quantile[key] = {k: v.to_dict() if hasattr(v, "to_dict") else v for k, v in value.items()}
             else:
                 serialized_quantile[key] = value
         result_data["quantile_returns"] = serialized_quantile
@@ -86,12 +84,7 @@ class BacktestRepository:
         Returns:
             List[BacktestResultModel]: 回测结果列表
         """
-        query = (
-            select(BacktestResultModel)
-            .order_by(desc(BacktestResultModel.created_at))
-            .limit(limit)
-            .offset(offset)
-        )
+        query = select(BacktestResultModel).order_by(desc(BacktestResultModel.created_at)).limit(limit).offset(offset)
         return list(self.db.scalars(query).all())
 
     def get_by_id(self, result_id: int) -> Optional[BacktestResultModel]:
@@ -104,9 +97,7 @@ class BacktestRepository:
         Returns:
             Optional[BacktestResultModel]: 回测结果对象或None
         """
-        return self.db.scalar(
-            select(BacktestResultModel).where(BacktestResultModel.id == result_id)
-        )
+        return self.db.scalar(select(BacktestResultModel).where(BacktestResultModel.id == result_id))
 
     def delete_by_id(self, result_id: int) -> bool:
         """
@@ -120,13 +111,9 @@ class BacktestRepository:
         """
         try:
             # 先删除关联的交易记录
-            self.db.execute(
-                delete(TradeRecordModel).where(TradeRecordModel.backtest_id == result_id)
-            )
+            self.db.execute(delete(TradeRecordModel).where(TradeRecordModel.backtest_id == result_id))
             # 删除回测结果
-            self.db.execute(
-                delete(BacktestResultModel).where(BacktestResultModel.id == result_id)
-            )
+            self.db.execute(delete(BacktestResultModel).where(BacktestResultModel.id == result_id))
             self.db.commit()
             return True
         except Exception as e:
@@ -134,9 +121,7 @@ class BacktestRepository:
             self.db.rollback()
             return False
 
-    def save_trade_records(
-        self, backtest_id: int, trades: List[Dict[str, Any]]
-    ) -> int:
+    def save_trade_records(self, backtest_id: int, trades: List[Dict[str, Any]]) -> int:
         """
         批量保存交易记录
 
@@ -176,9 +161,11 @@ class BacktestRepository:
         Returns:
             List[TradeRecordModel]: 交易记录列表
         """
-        query = select(TradeRecordModel).where(
-            TradeRecordModel.backtest_id == backtest_id
-        ).order_by(TradeRecordModel.trade_date)
+        query = (
+            select(TradeRecordModel)
+            .where(TradeRecordModel.backtest_id == backtest_id)
+            .order_by(TradeRecordModel.trade_date)
+        )
         return list(self.db.scalars(query).all())
 
     def get_statistics(self) -> Dict[str, Any]:
@@ -192,18 +179,14 @@ class BacktestRepository:
 
         # 计算平均收益
         avg_return = self.db.scalar(
-            select(BacktestResultModel.total_return).where(
-                BacktestResultModel.total_return.isnot(None)
-            )
+            select(BacktestResultModel.total_return).where(BacktestResultModel.total_return.isnot(None))
         )
         if avg_return is not None:
             avg_return = float(avg_return)
 
         # 计算平均夏普比率
         avg_sharpe = self.db.scalar(
-            select(BacktestResultModel.sharpe_ratio).where(
-                BacktestResultModel.sharpe_ratio.isnot(None)
-            )
+            select(BacktestResultModel.sharpe_ratio).where(BacktestResultModel.sharpe_ratio.isnot(None))
         )
         if avg_sharpe is not None:
             avg_sharpe = float(avg_sharpe)

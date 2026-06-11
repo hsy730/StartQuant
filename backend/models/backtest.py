@@ -1,6 +1,7 @@
 """
 回测结果数据模型
 """
+
 from datetime import datetime
 from sqlalchemy import String, DateTime, Integer, Float, JSON, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column
@@ -9,6 +10,7 @@ from backend.core.database import Base
 
 class BacktestResultModel(Base):
     """回测结果模型"""
+
     __tablename__ = "backtest_results"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -39,10 +41,13 @@ class BacktestResultModel(Base):
 
 class TradeRecordModel(Base):
     """交易记录模型"""
+
     __tablename__ = "trade_records"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    backtest_id: Mapped[int] = mapped_column(Integer, ForeignKey("backtest_results.id"), nullable=False, comment="回测结果ID")
+    backtest_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("backtest_results.id"), nullable=False, comment="回测结果ID"
+    )
     stock_code: Mapped[str] = mapped_column(String(20), nullable=False, comment="股票代码")
     trade_date: Mapped[str] = mapped_column(String(20), nullable=False, comment="交易日期")
     action: Mapped[str] = mapped_column(String(10), nullable=False, comment="交易动作（buy/sell）")

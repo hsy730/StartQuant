@@ -1,6 +1,7 @@
 """
 因子版本服务 - 因子版本管理
 """
+
 from typing import List, Optional, Dict
 
 from backend.core.database import get_db

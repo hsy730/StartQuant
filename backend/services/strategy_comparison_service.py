@@ -1,6 +1,7 @@
 """
 策略对比服务 - 对比多个策略的表现
 """
+
 import logging
 from typing import List, Dict, Optional
 import numpy as np
@@ -71,9 +72,7 @@ class StrategyComparisonService:
         results["metrics_comparison"] = self._create_metrics_table(results["strategies"])
 
         # 3. 统计显著性检验
-        results["statistical_tests"] = self._perform_statistical_tests(
-            results["strategies"], df
-        )
+        results["statistical_tests"] = self._perform_statistical_tests(results["strategies"], df)
 
         # 4. 排名
         results["ranking"] = self._rank_strategies(results["metrics_comparison"])
@@ -104,11 +103,7 @@ class StrategyComparisonService:
 
         return df
 
-    def _perform_statistical_tests(
-        self,
-        strategies_results: Dict,
-        df: pd.DataFrame
-    ) -> Dict:
+    def _perform_statistical_tests(self, strategies_results: Dict, df: pd.DataFrame) -> Dict:
         """
         执行统计显著性检验
 
@@ -124,31 +119,22 @@ class StrategyComparisonService:
 
         # 两两对比
         for i, strat1 in enumerate(strategy_names):
-            for strat2 in strategy_names[i + 1:]:
+            for strat2 in strategy_names[i + 1 :]:  # noqa: E203
                 returns1 = strategies_results[strat1]["backtest"]["portfolio_returns"]
                 returns2 = strategies_results[strat2]["backtest"]["portfolio_returns"]
 
                 # 对齐索引
-                aligned_data = pd.DataFrame(
-                    {"strategy1": returns1, "strategy2": returns2}
-                ).dropna()
+                aligned_data = pd.DataFrame({"strategy1": returns1, "strategy2": returns2}).dropna()
 
                 if len(aligned_data) < 30:  # 样本量太小
                     logger.warning(f"跳过 {strat1} vs {strat2} 对比：对齐后样本量不足 ({len(aligned_data)}<30)")
                     continue
 
                 # T检验：均值是否显著不同
-                t_stat, p_value = stats.ttest_ind(
-                    aligned_data["strategy1"],
-                    aligned_data["strategy2"],
-                    equal_var=False
-                )
+                t_stat, p_value = stats.ttest_ind(aligned_data["strategy1"], aligned_data["strategy2"], equal_var=False)
 
                 # 配对T检验
-                paired_t_stat, paired_p_value = stats.ttest_rel(
-                    aligned_data["strategy1"],
-                    aligned_data["strategy2"]
-                )
+                paired_t_stat, paired_p_value = stats.ttest_rel(aligned_data["strategy1"], aligned_data["strategy2"])
 
                 # 相关系数
                 correlation = aligned_data["strategy1"].corr(aligned_data["strategy2"])
@@ -205,8 +191,7 @@ class StrategyComparisonService:
 
         # 按综合得分排名（得分越低越好），排除 None 和 NaN
         valid_scores = {
-            k: v for k, v in overall_scores.items()
-            if v is not None and not (isinstance(v, float) and np.isnan(v))
+            k: v for k, v in overall_scores.items() if v is not None and not (isinstance(v, float) and np.isnan(v))
         }
         sorted_overall = sorted(valid_scores.items(), key=lambda x: x[1])
         rankings["overall"] = {strategy: i + 1 for i, (strategy, _) in enumerate(sorted_overall)}

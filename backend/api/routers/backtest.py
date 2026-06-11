@@ -1,6 +1,7 @@
 """
 策略回测API路由
 """
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import List, Optional, Dict
@@ -19,8 +20,10 @@ router = APIRouter()
 
 # ========== 数据模型 ==========
 
+
 class SingleBacktestRequest(BaseModel):
     """单策略回测请求"""
+
     data_mode: str = "single"  # single 或 pool
     stock_codes: List[str]
     factor_name: Optional[str] = None  # 单因子时的因子名称
@@ -45,6 +48,7 @@ class SingleBacktestRequest(BaseModel):
 
 class ComparisonRequest(BaseModel):
     """策略对比请求"""
+
     data_mode: str = "single"
     stock_codes: List[str]
     strategies: List[Dict]  # 策略配置列表
@@ -57,15 +61,13 @@ class ComparisonRequest(BaseModel):
 
 # ========== API端点 ==========
 
+
 @router.post("/single")
 async def run_single_backtest(request: SingleBacktestRequest):
     """运行单策略回测"""
     try:
         if not check_vectorbt_available():
-            raise HTTPException(
-                status_code=503,
-                detail="VectorBT未安装，请先安装: pip install vectorbt"
-            )
+            raise HTTPException(status_code=503, detail="VectorBT未安装，请先安装: pip install vectorbt")
 
         from backend.services.data_service import data_service
         from backend.services.factor_service import factor_service
@@ -109,11 +111,7 @@ async def run_single_backtest(request: SingleBacktestRequest):
                     period=minute_period if minute_period.isdigit() else "5",
                 )
             else:
-                raw_data = data_service.get_stock_data(
-                    stock_code,
-                    request.start_date,
-                    request.end_date
-                )
+                raw_data = data_service.get_stock_data(stock_code, request.start_date, request.end_date)
 
             if raw_data is None or len(raw_data) == 0:
                 continue
@@ -124,9 +122,7 @@ async def run_single_backtest(request: SingleBacktestRequest):
                 factor_calculator = factor_service.calculator
                 for factor_name in factor_names_to_use:
                     factor_def = factor_defs[factor_name]
-                    factor_values = factor_calculator.calculate(
-                        stock_data, factor_def.code
-                    )
+                    factor_values = factor_calculator.calculate(stock_data, factor_def.code)
                     stock_data[factor_name] = factor_values
 
                 all_factor_data[stock_code] = stock_data
@@ -151,7 +147,7 @@ async def run_single_backtest(request: SingleBacktestRequest):
                     price_data[stock_code] = df[["close", "volume"]]
 
             # 调用智能滑点检测器
-            _slippage_rec = backtest_service.set_smart_slippage(
+            _slippage_rec = backtest_service.set_smart_slippage(  # noqa: F841
                 stock_codes=request.stock_codes,
                 strategy_turnover=12.0,  # 默认年化换手率12倍（可在后续版本中从回测结果动态计算）
                 price_data=price_data if price_data else None,
@@ -248,20 +244,32 @@ async def run_single_backtest(request: SingleBacktestRequest):
                 )
 
         # 提取指标
-        metrics = {k: v for k, v in result.items() if k in [
-            "total_return", "annual_return", "volatility", "sharpe_ratio",
-            "max_drawdown", "calmar_ratio", "win_rate", "sortino_ratio",
-            "var_95", "cvar_95"
-        ]}
+        metrics = {
+            k: v
+            for k, v in result.items()
+            if k
+            in [
+                "total_return",
+                "annual_return",
+                "volatility",
+                "sharpe_ratio",
+                "max_drawdown",
+                "calmar_ratio",
+                "win_rate",
+                "sortino_ratio",
+                "var_95",
+                "cvar_95",
+            ]
+        }
 
         # 转换 pandas Series 为列表，以便 JSON 序列化
         result_serializable = {}
         for k, v in result.items():
-            if hasattr(v, 'tolist'):  # pandas Series or numpy array
+            if hasattr(v, "tolist"):  # pandas Series or numpy array
                 result_serializable[k] = v.tolist()
             elif k == "trades" and v is not None:
                 # 转换 DataFrame 为字典列表
-                result_serializable[k] = v.to_dict('records')
+                result_serializable[k] = v.to_dict("records")
             else:
                 result_serializable[k] = v
 
@@ -298,25 +306,22 @@ async def run_single_backtest(request: SingleBacktestRequest):
             # K线数据
             stock_chart_data = {
                 "kline": {
-                    "dates": df.index.strftime('%Y-%m-%d').tolist(),
+                    "dates": df.index.strftime("%Y-%m-%d").tolist(),
                     "open": df["open"].tolist() if "open" in df.columns else df["close"].tolist(),
                     "high": df["high"].tolist() if "high" in df.columns else df["close"].tolist(),
                     "low": df["low"].tolist() if "low" in df.columns else df["close"].tolist(),
                     "close": df["close"].tolist(),
                 },
                 "factor": {
-                    "dates": df.index.strftime('%Y-%m-%d').tolist(),
+                    "dates": df.index.strftime("%Y-%m-%d").tolist(),
                     # 单因子模式：保持原有格式（向后兼容）
                     # 多因子模式：返回所有因子数据
                     "factors": [
-                        {
-                            "name": factor_name,
-                            "values": clean_factor_values(df[factor_name])
-                        }
+                        {"name": factor_name, "values": clean_factor_values(df[factor_name])}
                         for factor_name in factor_names_to_use
                         if factor_name in df.columns
-                    ]
-                }
+                    ],
+                },
             }
 
             # 买卖信号 - 两种类型
@@ -331,9 +336,9 @@ async def run_single_backtest(request: SingleBacktestRequest):
                 exits = factor_rank > percentile_threshold
 
             # 1. 策略信号（所有满足条件的信号，不考虑持仓状态）
-            strategy_buy_dates = df.index[entries].strftime('%Y-%m-%d').tolist()
+            strategy_buy_dates = df.index[entries].strftime("%Y-%m-%d").tolist()
             strategy_buy_prices = df.loc[entries, "close"].tolist()
-            strategy_sell_dates = df.index[exits].strftime('%Y-%m-%d').tolist()
+            strategy_sell_dates = df.index[exits].strftime("%Y-%m-%d").tolist()
             strategy_sell_prices = df.loc[exits, "close"].tolist()
 
             # 2. 实际交易信号（从VectorBT交易记录中提取）
@@ -349,54 +354,42 @@ async def run_single_backtest(request: SingleBacktestRequest):
                     stock_trades_df = trades_df
 
                     # 如果有'股票代码'列，筛选出当前股票的交易
-                    if '股票代码' in trades_df.columns:
-                        stock_trades_df = trades_df[trades_df['股票代码'] == stock_code]
+                    if "股票代码" in trades_df.columns:
+                        stock_trades_df = trades_df[trades_df["股票代码"] == stock_code]
 
                     # trades_df的索引是入场时间（DatetimeIndex，name='入场时间'）
                     # 直接遍历索引和行
                     for entry_time, row in stock_trades_df.iterrows():
                         # entry_time 是买入日期（Timestamp）
                         if pd.notna(entry_time):
-                            buy_date = pd.Timestamp(entry_time).strftime('%Y-%m-%d')
-                            if '入场价格' in row and pd.notna(row['入场价格']):
+                            buy_date = pd.Timestamp(entry_time).strftime("%Y-%m-%d")
+                            if "入场价格" in row and pd.notna(row["入场价格"]):
                                 actual_buy_dates.append(buy_date)
-                                actual_buy_prices.append(float(row['入场价格']))
+                                actual_buy_prices.append(float(row["入场价格"]))
 
                         # 提取出场时间（卖出）
-                        if '出场时间' in row and pd.notna(row['出场时间']):
-                            exit_time = row['出场时间']
-                            #出场时间可能是字符串或Timestamp
+                        if "出场时间" in row and pd.notna(row["出场时间"]):
+                            exit_time = row["出场时间"]
+                            # 出场时间可能是字符串或Timestamp
                             if isinstance(exit_time, str):
                                 sell_date = exit_time  # 已经是格式化的字符串
                             else:
-                                sell_date = pd.Timestamp(exit_time).strftime('%Y-%m-%d')
+                                sell_date = pd.Timestamp(exit_time).strftime("%Y-%m-%d")
 
                             actual_sell_dates.append(sell_date)
 
-                            if '出场价格' in row and pd.notna(row['出场价格']):
-                                actual_sell_prices.append(float(row['出场价格']))
+                            if "出场价格" in row and pd.notna(row["出场价格"]):
+                                actual_sell_prices.append(float(row["出场价格"]))
 
             stock_chart_data["signals"] = {
                 "strategy": {
-                    "buy": {
-                        "dates": strategy_buy_dates,
-                        "prices": strategy_buy_prices
-                    },
-                    "sell": {
-                        "dates": strategy_sell_dates,
-                        "prices": strategy_sell_prices
-                    }
+                    "buy": {"dates": strategy_buy_dates, "prices": strategy_buy_prices},
+                    "sell": {"dates": strategy_sell_dates, "prices": strategy_sell_prices},
                 },
                 "actual": {
-                    "buy": {
-                        "dates": actual_buy_dates,
-                        "prices": actual_buy_prices
-                    },
-                    "sell": {
-                        "dates": actual_sell_dates,
-                        "prices": actual_sell_prices
-                    }
-                }
+                    "buy": {"dates": actual_buy_dates, "prices": actual_buy_prices},
+                    "sell": {"dates": actual_sell_dates, "prices": actual_sell_prices},
+                },
             }
 
             # 净值曲线 - 使用result中的equity_curve，或者基于信号生成模拟的
@@ -404,15 +397,12 @@ async def run_single_backtest(request: SingleBacktestRequest):
                 # 单股票模式使用回测结果的净值曲线
                 eq_curve = result["equity_curve"]
                 eq_values = result_serializable["equity_curve"]
-                eq_dates = eq_curve.index.strftime('%Y-%m-%d').tolist()
+                eq_dates = eq_curve.index.strftime("%Y-%m-%d").tolist()
                 # 限制净值曲线数据点
                 if len(eq_dates) > CHART_DATA_LIMIT:
                     eq_dates = eq_dates[-CHART_DATA_LIMIT:]
                     eq_values = eq_values[-CHART_DATA_LIMIT:]
-                stock_chart_data["equity"] = {
-                    "dates": eq_dates,
-                    "values": eq_values
-                }
+                stock_chart_data["equity"] = {"dates": eq_dates, "values": eq_values}
             else:
                 # 多股票模式：尝试从回测结果获取组合净值曲线
                 equity_values = None
@@ -422,20 +412,21 @@ async def run_single_backtest(request: SingleBacktestRequest):
                     if portfolio_returns is not None and len(portfolio_returns) > 0:
                         equity_curve = (1 + portfolio_returns).cumprod() * request.initial_capital
                         equity_values = equity_curve.tolist()
-                        equity_dates = portfolio_returns.index.strftime('%Y-%m-%d').tolist() if hasattr(portfolio_returns.index, 'strftime') else [str(d) for d in portfolio_returns.index]
+                        equity_dates = (
+                            portfolio_returns.index.strftime("%Y-%m-%d").tolist()
+                            if hasattr(portfolio_returns.index, "strftime")
+                            else [str(d) for d in portfolio_returns.index]
+                        )
 
                 if equity_values is not None and equity_dates is not None:
-                    stock_chart_data["equity"] = {
-                        "dates": equity_dates,
-                        "values": equity_values
-                    }
+                    stock_chart_data["equity"] = {"dates": equity_dates, "values": equity_values}
                 else:
                     # Fallback: 使用基准价格曲线（明确标注为基准）
                     first_close = df["close"].iloc[0] if len(df) > 0 and df["close"].iloc[0] != 0 else 1.0
                     stock_chart_data["equity"] = {
-                        "dates": df.index.strftime('%Y-%m-%d').tolist(),
+                        "dates": df.index.strftime("%Y-%m-%d").tolist(),
                         "values": (df["close"] / first_close * request.initial_capital).tolist(),
-                        "is_benchmark": True  # 标记为基准曲线
+                        "is_benchmark": True,  # 标记为基准曲线
                     }
 
             # 保存当前股票的图表数据
@@ -453,11 +444,7 @@ async def run_single_backtest(request: SingleBacktestRequest):
 
         return {
             "success": True,
-            "data": {
-                "metrics": cleaned_metrics,
-                "result": cleaned_result,
-                "chart_data": cleaned_chart_data
-            }
+            "data": {"metrics": cleaned_metrics, "result": cleaned_result, "chart_data": cleaned_chart_data},
         }
     except HTTPException:
         raise
@@ -476,11 +463,7 @@ async def run_strategy_comparison(request: ComparisonRequest):
         # 获取数据
         all_data = {}
         for stock_code in request.stock_codes:
-            data = data_service.get_stock_data(
-                stock_code,
-                request.start_date,
-                request.end_date
-            )
+            data = data_service.get_stock_data(stock_code, request.start_date, request.end_date)
             if data is not None and not data.empty:
                 all_data[stock_code] = data
 
@@ -491,16 +474,18 @@ async def run_strategy_comparison(request: ComparisonRequest):
         data_frames = []
         for stock_code, data in all_data.items():
             df_copy = data.copy()
-            df_copy['stock_code'] = stock_code
+            df_copy["stock_code"] = stock_code
             df_copy = df_copy.reset_index()
             data_frames.append(df_copy)
 
         merged_data = pd.concat(data_frames, ignore_index=True)
 
         # 确保有return列
-        if 'return' not in merged_data.columns and 'close' in merged_data.columns:
-            merged_data = merged_data.sort_values(['stock_code', 'date'])
-            merged_data['return'] = merged_data.groupby('stock_code')['close'].transform(lambda s: s.pct_change().shift(-1))
+        if "return" not in merged_data.columns and "close" in merged_data.columns:
+            merged_data = merged_data.sort_values(["stock_code", "date"])
+            merged_data["return"] = merged_data.groupby("stock_code")["close"].transform(
+                lambda s: s.pct_change().shift(-1)
+            )
 
         merged_data = merged_data.sort_values(["date", "stock_code"])
 
@@ -518,9 +503,7 @@ async def run_strategy_comparison(request: ComparisonRequest):
                 continue
 
             # 计算因子值（使用因子代码）
-            factor_values = factor_service.calculator.calculate(
-                merged_data, factor_def.code
-            )
+            factor_values = factor_service.calculator.calculate(merged_data, factor_def.code)
 
             if factor_values is not None:
                 # 创建因子DataFrame
@@ -541,10 +524,14 @@ async def run_strategy_comparison(request: ComparisonRequest):
 
                     # 计算下期收益
                     if "stock_code" in merged_data.columns:
-                        next_returns = merged_data[
-                            (merged_data["date"] == date) &
-                            (merged_data["stock_code"].isin(top_stocks["stock_code"]))
-                        ].groupby("stock_code")["return"].first()
+                        next_returns = (
+                            merged_data[
+                                (merged_data["date"] == date)
+                                & (merged_data["stock_code"].isin(top_stocks["stock_code"]))
+                            ]
+                            .groupby("stock_code")["return"]
+                            .first()
+                        )
 
                         if len(next_returns) > 0:
                             avg_return = next_returns.mean()
@@ -578,12 +565,7 @@ async def run_strategy_comparison(request: ComparisonRequest):
 
         results_clean = sanitize_dict(results)
 
-        return {
-            "success": True,
-            "data": {
-                "results": results_clean
-            }
-        }
+        return {"success": True, "data": {"results": results_clean}}
     except HTTPException:
         raise
     except Exception as e:
@@ -601,23 +583,21 @@ async def get_backtest_history(limit: int = 10):
             # 转换为字典列表
             history_list = []
             for record in history:
-                history_list.append({
-                    "id": record.id,
-                    "strategy_name": record.strategy_name,
-                    "factor_combination": record.factor_combination,
-                    "start_date": record.start_date,
-                    "end_date": record.end_date,
-                    "total_return": record.total_return,
-                    "sharpe_ratio": record.sharpe_ratio,
-                    "max_drawdown": record.max_drawdown,
-                    "created_at": record.created_at.isoformat()
-                })
+                history_list.append(
+                    {
+                        "id": record.id,
+                        "strategy_name": record.strategy_name,
+                        "factor_combination": record.factor_combination,
+                        "start_date": record.start_date,
+                        "end_date": record.end_date,
+                        "total_return": record.total_return,
+                        "sharpe_ratio": record.sharpe_ratio,
+                        "max_drawdown": record.max_drawdown,
+                        "created_at": record.created_at.isoformat(),
+                    }
+                )
 
-            return {
-                "success": True,
-                "data": history_list,
-                "total": len(history_list)
-            }
+            return {"success": True, "data": history_list, "total": len(history_list)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -633,10 +613,7 @@ async def delete_backtest_history(record_id: int):
             if not success:
                 raise HTTPException(status_code=404, detail="记录不存在或删除失败")
 
-            return {
-                "success": True,
-                "message": "删除成功"
-            }
+            return {"success": True, "message": "删除成功"}
     except HTTPException:
         raise
     except Exception as e:

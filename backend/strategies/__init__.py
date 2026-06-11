@@ -1,6 +1,7 @@
 """
 回测策略模块
 """
+
 from .base_strategy import BaseStrategy
 from .equal_weight_strategy import EqualWeightStrategy
 from .market_cap_strategy import MarketCapStrategy

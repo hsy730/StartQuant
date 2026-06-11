@@ -11,6 +11,7 @@
 2. 与JoinQuant/BigQuant等业界平台一致
 3. 数学上更严谨（控制了所有行业的共同影响）
 """
+
 import logging
 
 import pandas as pd
@@ -37,17 +38,16 @@ class FactorNeutralizationService:
             if col not in df.columns:
                 raise ValueError(f"数据框中缺少列: {col}")
 
-    def _build_result_series(self, df: pd.DataFrame, factor_name: str, valid_index: pd.Index, residuals: np.ndarray) -> pd.Series:
+    def _build_result_series(
+        self, df: pd.DataFrame, factor_name: str, valid_index: pd.Index, residuals: np.ndarray
+    ) -> pd.Series:
         """构建结果Series，保持原索引，缺失值位置填充NaN"""
         result = pd.Series(index=df.index, dtype=float)
         result.loc[valid_index] = residuals
         return result
 
     def neutralize_market_cap(
-        self,
-        df: pd.DataFrame,
-        factor_name: str,
-        market_cap_column: str = "market_cap"
+        self, df: pd.DataFrame, factor_name: str, market_cap_column: str = "market_cap"
     ) -> pd.Series:
         """
         市值中性化 - 使用线性回归去除市值影响
@@ -84,12 +84,7 @@ class FactorNeutralizationService:
 
         return self._build_result_series(df, factor_name, valid_data.index, residuals)
 
-    def neutralize_industry(
-        self,
-        df: pd.DataFrame,
-        factor_name: str,
-        industry_column: str = "industry"
-    ) -> pd.Series:
+    def neutralize_industry(self, df: pd.DataFrame, factor_name: str, industry_column: str = "industry") -> pd.Series:
         """
         行业中性化 - 使用行业哑变量回归残差法（JoinQuant/BigQuant标准）
 
@@ -123,7 +118,9 @@ class FactorNeutralizationService:
         small_industries = industry_counts[industry_counts < MIN_INDUSTRY_SIZE]
         if len(small_industries) > 0:
             for ind_name in small_industries.index:
-                logger.warning(f"行业 '{ind_name}' 样本量仅 {industry_counts[ind_name]}，不足{MIN_INDUSTRY_SIZE}，已过滤")
+                logger.warning(
+                    f"行业 '{ind_name}' 样本量仅 {industry_counts[ind_name]}，不足{MIN_INDUSTRY_SIZE}，已过滤"
+                )
             # 过滤掉小行业（而非合并为Other），避免小行业噪声影响回归
             # 注意：只过滤valid_data和industries，不修改原始df，保证_build_result_series索引完整
             valid_mask = ~industries.isin(small_industries.index)
@@ -149,7 +146,7 @@ class FactorNeutralizationService:
         df: pd.DataFrame,
         factor_name: str,
         market_cap_column: str = "market_cap",
-        industry_column: str = "industry"
+        industry_column: str = "industry",
     ) -> pd.Series:
         """
         行业+市值联合中性化（JoinQuant/BigQuant标准：一次回归同时剥离）
@@ -207,7 +204,9 @@ class FactorNeutralizationService:
                 small_industries = industry_counts[industry_counts < MIN_INDUSTRY_SIZE]
                 if len(small_industries) > 0:
                     for ind_name in small_industries.index:
-                        logger.warning(f"行业 '{ind_name}' 样本量仅 {industry_counts[ind_name]}，不足{MIN_INDUSTRY_SIZE}，已过滤")
+                        logger.warning(
+                            f"行业 '{ind_name}' 样本量仅 {industry_counts[ind_name]}，不足{MIN_INDUSTRY_SIZE}，已过滤"
+                        )
                     # 过滤掉小行业（而非合并为Other），避免小行业噪声影响回归
                     # 注意：只过滤valid_data和industries，不修改原始df，保证_build_result_series索引完整
                     valid_mask = ~industries.isin(small_industries.index)
@@ -253,17 +252,13 @@ class FactorNeutralizationService:
             logger.warning(f"获取行业分类失败: {e}, 使用默认分类")
             return {code: "unknown" for code in stock_codes}
 
-    def add_industry_classification(
-        self,
-        df: pd.DataFrame,
-        stock_codes: List[str]
-    ) -> pd.DataFrame:
+    def add_industry_classification(self, df: pd.DataFrame, stock_codes: List[str]) -> pd.DataFrame:
         industry_map = self.get_industry_classification(stock_codes)
 
         result = df.copy()
 
         if "stock_code" in df.columns:
-            pure_codes = result["stock_code"].str.replace(r'\.(SH|SZ|BJ)$', '', regex=True)
+            pure_codes = result["stock_code"].str.replace(r"\.(SH|SZ|BJ)$", "", regex=True)
             result["industry"] = pure_codes.map(industry_map)
         else:
             result["industry"] = "unknown"

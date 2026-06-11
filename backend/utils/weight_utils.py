@@ -4,6 +4,7 @@
 项目规范5：权重归一化在11处各自实现，提取统一入口
 项目规范1：归一化中的除法必须使用 safe_divide
 """
+
 from typing import Dict, Union
 import numpy as np
 import pandas as pd

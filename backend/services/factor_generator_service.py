@@ -1,6 +1,7 @@
 """
 因子生成器服务 - 基于预置因子生成新因子
 """
+
 from typing import List, Dict
 import pandas as pd
 import numpy as np
@@ -8,7 +9,7 @@ import random
 from itertools import combinations
 from scipy.stats import spearmanr
 
-from backend.utils.safe_math import safe_ir, safe_divide
+from backend.utils.safe_math import safe_ir
 
 
 class FactorGeneratorService:
@@ -60,10 +61,7 @@ class FactorGeneratorService:
         }
 
     def generate_binary_combinations(
-        self,
-        base_factors: List[str],
-        max_depth: int = 3,
-        max_combinations: int = 100
+        self, base_factors: List[str], max_depth: int = 3, max_combinations: int = 100
     ) -> List[str]:
         """
         生成二元运算组合因子
@@ -113,10 +111,7 @@ class FactorGeneratorService:
         return expressions[:max_combinations]
 
     def generate_statistical_combinations(
-        self,
-        base_factors: List[str],
-        window_sizes: List[int] = [5, 10, 20, 60],
-        max_combinations: int = 50
+        self, base_factors: List[str], window_sizes: List[int] = [5, 10, 20, 60], max_combinations: int = 50
     ) -> List[str]:
         """
         生成统计函数组合因子
@@ -173,7 +168,10 @@ class FactorGeneratorService:
                         expressions.append(expr)
                     elif stat_func == "zscore":
                         # zscore需要特殊处理: (x - mean) / std，使用safe_divide防止除零
-                        expr = f"safe_divide({factor} - {factor}.rolling(252, min_periods=1).mean(), {factor}.rolling(252, min_periods=1).std(), default=np.nan)"
+                        expr = (
+                            f"safe_divide({factor} - {factor}.rolling(252, min_periods=1).mean(), "
+                            f"{factor}.rolling(252, min_periods=1).std(), default=np.nan)"
+                        )
                         expressions.append(expr)
                 elif stat_func in no_window_functions:
                     # 直接调用方法
@@ -188,10 +186,7 @@ class FactorGeneratorService:
         return expressions[:max_combinations]
 
     def generate_indicator_combinations(
-        self,
-        base_factors: List[str],
-        price_column: str = "close",
-        max_combinations: int = 30
+        self, base_factors: List[str], price_column: str = "close", max_combinations: int = 30
     ) -> List[str]:
         """
         生成技术指标组合因子
@@ -228,11 +223,7 @@ class FactorGeneratorService:
 
         return expressions[:max_combinations]
 
-    def generate_hybrid_factors(
-        self,
-        base_factors: List[str],
-        n_factors: int = 100
-    ) -> List[Dict]:
+    def generate_hybrid_factors(self, base_factors: List[str], n_factors: int = 100) -> List[Dict]:
         """
         生成混合因子（结合多种方法）
 
@@ -247,45 +238,42 @@ class FactorGeneratorService:
 
         # 1. 二元运算组合（40%）
         n_binary = int(n_factors * 0.4)
-        binary_exprs = self.generate_binary_combinations(
-            base_factors,
-            max_combinations=n_binary
-        )
+        binary_exprs = self.generate_binary_combinations(base_factors, max_combinations=n_binary)
 
         for expr in binary_exprs:
-            factors.append({
-                "expression": expr,
-                "type": "binary_operation",
-                "complexity": "medium",
-            })
+            factors.append(
+                {
+                    "expression": expr,
+                    "type": "binary_operation",
+                    "complexity": "medium",
+                }
+            )
 
         # 2. 统计函数组合（30%）
         n_statistical = int(n_factors * 0.3)
-        stat_exprs = self.generate_statistical_combinations(
-            base_factors,
-            max_combinations=n_statistical
-        )
+        stat_exprs = self.generate_statistical_combinations(base_factors, max_combinations=n_statistical)
 
         for expr in stat_exprs:
-            factors.append({
-                "expression": expr,
-                "type": "statistical",
-                "complexity": "low",
-            })
+            factors.append(
+                {
+                    "expression": expr,
+                    "type": "statistical",
+                    "complexity": "low",
+                }
+            )
 
         # 3. 技术指标组合（20%）
         n_indicator = int(n_factors * 0.2)
-        indicator_exprs = self.generate_indicator_combinations(
-            base_factors,
-            max_combinations=n_indicator
-        )
+        indicator_exprs = self.generate_indicator_combinations(base_factors, max_combinations=n_indicator)
 
         for expr in indicator_exprs:
-            factors.append({
-                "expression": expr,
-                "type": "indicator_based",
-                "complexity": "high",
-            })
+            factors.append(
+                {
+                    "expression": expr,
+                    "type": "indicator_based",
+                    "complexity": "high",
+                }
+            )
 
         # 4. 随机组合（10%）
         n_random = n_factors - len(factors)
@@ -306,22 +294,20 @@ class FactorGeneratorService:
                 else:
                     expr = f"({factor1} {op} {factor2})"
 
-                factors.append({
-                    "expression": expr,
-                    "type": "random_hybrid",
-                    "complexity": random.choice(["low", "medium", "high"]),
-                })
+                factors.append(
+                    {
+                        "expression": expr,
+                        "type": "random_hybrid",
+                        "complexity": random.choice(["low", "medium", "high"]),
+                    }
+                )
 
         # 打乱顺序
         random.shuffle(factors)
 
         return factors[:n_factors]
 
-    def compile_expression_to_code(
-        self,
-        expression: str,
-        data_column: str = "close"
-    ) -> str:
+    def compile_expression_to_code(self, expression: str, data_column: str = "close") -> str:
         """
         将因子表达式编译为可执行代码
 
@@ -380,28 +366,56 @@ class FactorGeneratorService:
             depth = 0
             current = []
             for ch in args_str:
-                if ch == '(':
+                if ch == "(":
                     depth += 1
                     current.append(ch)
-                elif ch == ')':
+                elif ch == ")":
                     depth -= 1
                     current.append(ch)
-                elif ch == ',' and depth == 0:
-                    parts.append(''.join(current).strip())
+                elif ch == "," and depth == 0:
+                    parts.append("".join(current).strip())
                     current = []
                 else:
                     current.append(ch)
             if current:
-                parts.append(''.join(current).strip())
+                parts.append("".join(current).strip())
             return parts
 
         # 已知的非列名标识符（Python 关键字、内置函数、模块名等）
         _non_col_identifiers = {
-            'True', 'False', 'None', 'and', 'or', 'not', 'in', 'is',
-            'if', 'else', 'elif', 'for', 'while', 'with', 'as', 'def',
-            'class', 'return', 'import', 'from', 'try', 'except', 'finally',
-            'raise', 'pass', 'break', 'continue', 'lambda', 'yield', 'del',
-            'global', 'nonlocal', 'assert',
+            "True",
+            "False",
+            "None",
+            "and",
+            "or",
+            "not",
+            "in",
+            "is",
+            "if",
+            "else",
+            "elif",
+            "for",
+            "while",
+            "with",
+            "as",
+            "def",
+            "class",
+            "return",
+            "import",
+            "from",
+            "try",
+            "except",
+            "finally",
+            "raise",
+            "pass",
+            "break",
+            "continue",
+            "lambda",
+            "yield",
+            "del",
+            "global",
+            "nonlocal",
+            "assert",
         }
 
         def parse_and_replace(expr: str) -> str:
@@ -412,27 +426,27 @@ class FactorGeneratorService:
             # 从最外层函数开始解析
             i = 0
             while i < len(expr):
-                if expr[i].isalpha() or expr[i] == '_':
+                if expr[i].isalpha() or expr[i] == "_":
                     # 找到函数名
                     j = i
-                    while j < len(expr) and (expr[j].isalnum() or expr[j] == '_'):
+                    while j < len(expr) and (expr[j].isalnum() or expr[j] == "_"):
                         j += 1
                     func_name = expr[i:j]
                     # 跳过空白
                     k = j
-                    while k < len(expr) and expr[k] == ' ':
+                    while k < len(expr) and expr[k] == " ":
                         k += 1
-                    if k < len(expr) and expr[k] == '(':
+                    if k < len(expr) and expr[k] == "(":
                         # 找到匹配的右括号
                         paren_depth = 1
                         m = k + 1
                         while m < len(expr) and paren_depth > 0:
-                            if expr[m] == '(':
+                            if expr[m] == "(":
                                 paren_depth += 1
-                            elif expr[m] == ')':
+                            elif expr[m] == ")":
                                 paren_depth -= 1
                             m += 1
-                        args = expr[k+1:m-1]
+                        args = expr[k + 1 : m - 1]  # noqa: E203
                         # 递归解析参数
                         parsed_args = parse_and_replace(args)
                         # 替换函数
@@ -442,14 +456,18 @@ class FactorGeneratorService:
                         replaced = False
                         for fname, template in func_map:
                             if fname == func_name and template is not None:
-                                if '{col}' in template:
+                                if "{col}" in template:
                                     # 含 {col} 的模板：第一个参数是数据源，其余参数是函数参数
                                     arg_list = split_args_by_comma(parsed_args)
                                     # 确定数据源：第一个参数
                                     if arg_list:
                                         first_arg = arg_list[0].strip()
                                         # 判断是否为简单列名（纯标识符）
-                                        is_simple_col = first_arg.isidentifier() and not first_arg.startswith('np.') and not first_arg.startswith('df[')
+                                        is_simple_col = (
+                                            first_arg.isidentifier()
+                                            and not first_arg.startswith("np.")
+                                            and not first_arg.startswith("df[")
+                                        )
                                         if is_simple_col:
                                             data_source = f"df['{first_arg}']"
                                         else:
@@ -457,7 +475,7 @@ class FactorGeneratorService:
                                     else:
                                         data_source = f"df['{data_column}']"
                                     # 剩余参数（除第一个外的所有参数）
-                                    remaining_args = ', '.join(arg_list[1:]) if len(arg_list) > 1 else ''
+                                    remaining_args = ", ".join(arg_list[1:]) if len(arg_list) > 1 else ""
                                     # 确定窗口大小：第二个参数（如果存在且为数字），用于 rolling 函数
                                     window = 252
                                     if len(arg_list) >= 2:
@@ -468,12 +486,12 @@ class FactorGeneratorService:
                                     # 构建替换：先替换 df['{col}'] 整体为 data_source，再替换其余占位符
                                     # 必须先替换 df['{col}'] 再替换 {col}，避免展开后无法匹配多引用场景
                                     replacement = template.replace("df['{col}']", data_source)
-                                    replacement = replacement.replace('{col}', data_column)
-                                    replacement = replacement.replace('{args}', remaining_args)
-                                    if 'window=252' in replacement and window != 252:
-                                        replacement = replacement.replace('window=252', f'window={window}', 1)
+                                    replacement = replacement.replace("{col}", data_column)
+                                    replacement = replacement.replace("{args}", remaining_args)
+                                    if "window=252" in replacement and window != 252:
+                                        replacement = replacement.replace("window=252", f"window={window}", 1)
                                 else:
-                                    replacement = template.replace('{args}', parsed_args)
+                                    replacement = template.replace("{args}", parsed_args)
                                 replaced = True
                                 break
                         if not replaced:
@@ -483,10 +501,12 @@ class FactorGeneratorService:
                     else:
                         # 标识符后面没有 '('，不是函数调用
                         # 如果是裸列名（非关键字、非已替换表达式），转为 df['...'] 引用
-                        if (func_name not in _non_col_identifiers
-                                and not func_name.startswith('np.')
-                                and not func_name.startswith('df[')
-                                and not func_name.startswith('talib.')):
+                        if (
+                            func_name not in _non_col_identifiers
+                            and not func_name.startswith("np.")
+                            and not func_name.startswith("df[")
+                            and not func_name.startswith("talib.")
+                        ):
                             col_ref = f"df['{func_name}']"
                             return expr[:i] + col_ref + parse_and_replace(expr[j:])
                         i = j
@@ -496,10 +516,14 @@ class FactorGeneratorService:
 
         # 如果表达式是 zscore(expr)，特殊处理
         if expression.strip().startswith("zscore("):
-            inner = expression.strip()[len("zscore("):-1]
+            inner = expression.strip()[len("zscore(") : -1]  # noqa: E203
             parsed_inner = parse_and_replace(inner)
             # zscore: (x - mean) / std，使用safe_divide防止除零
-            code = f"safe_divide({parsed_inner} - ({parsed_inner}).rolling(252, min_periods=1).mean(), ({parsed_inner}).rolling(252, min_periods=1).std(), default=np.nan)"
+            code = (
+                f"safe_divide({parsed_inner} - ({parsed_inner}).rolling(252, min_periods=1).mean(), "
+                f"({parsed_inner}).rolling(252, min_periods=1).std(), "
+                f"default=np.nan)"
+            )
         else:
             code = parse_and_replace(expression)
 
@@ -548,9 +572,7 @@ def calculate_factor(df):
             return False, "括号不匹配"
 
         # 检查是否有非法字符
-        allowed_chars = set(
-            "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789+-*/()., _"
-        )
+        allowed_chars = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789+-*/()., _")
         for char in expression:
             if char not in allowed_chars:
                 return False, f"包含非法字符: {char}"
@@ -617,7 +639,7 @@ def calculate_factor(df):
         return_data: pd.Series,
         ic_threshold: float = 0.03,
         ir_threshold: float = 0.5,
-        min_valid_ratio: float = 0.7
+        min_valid_ratio: float = 0.7,
     ) -> List[Dict]:
         """
         预筛选因子 - 根据IC、IR等指标筛选有潜力的因子
@@ -637,16 +659,13 @@ def calculate_factor(df):
 
         for factor_info in factors:
             expression = factor_info["expression"]
-            _factor_name = f"factor_{len(selected_factors)}"
+            _factor_name = f"factor_{len(selected_factors)}"  # noqa: F841
 
             if expression in factor_data_map:
                 factor_values = factor_data_map[expression]
 
                 # 对齐数据
-                aligned_data = pd.DataFrame({
-                    "factor": factor_values,
-                    "return": return_data
-                }).dropna()
+                aligned_data = pd.DataFrame({"factor": factor_values, "return": return_data}).dropna()
 
                 # 检查数据比例
                 valid_ratio = len(aligned_data) / len(factor_values) if len(factor_values) > 0 else 0.0
@@ -678,9 +697,9 @@ def calculate_factor(df):
                     r, _ = spearmanr(x[valid], y_aligned[valid])
                     return r
 
-                rolling_ic_series = factor_vals.rolling(
-                    window=window, min_periods=min_periods
-                ).apply(_rolling_spearman, raw=False)
+                rolling_ic_series = factor_vals.rolling(window=window, min_periods=min_periods).apply(
+                    _rolling_spearman, raw=False
+                )
                 rolling_ic_values = rolling_ic_series.tolist()
 
                 if rolling_ic_values:
@@ -691,7 +710,7 @@ def calculate_factor(df):
                     if ir is None:
                         # Rule 7.10: IC_std≈0 且 IC_mean≠0 → IR→∞，因子极其稳定
                         if abs(float(ic_mean)) > 1e-10:
-                            ir = float('inf')
+                            ir = float("inf")
                         else:
                             ir = 0
                 else:
@@ -709,11 +728,7 @@ def calculate_factor(df):
 
         return selected_factors
 
-    def calculate_factor_metrics(
-        self,
-        factor_values: pd.Series,
-        return_values: pd.Series
-    ) -> Dict:
+    def calculate_factor_metrics(self, factor_values: pd.Series, return_values: pd.Series) -> Dict:
         """
         计算因子的质量指标
 
@@ -725,24 +740,15 @@ def calculate_factor(df):
             质量指标字典
         """
         # 对齐数据
-        aligned_data = pd.DataFrame({
-            "factor": factor_values,
-            "return": return_values
-        }).dropna()
+        aligned_data = pd.DataFrame({"factor": factor_values, "return": return_values}).dropna()
 
         if len(aligned_data) < 10:
-            return {
-                "valid": False,
-                "message": "数据不足"
-            }
+            return {"valid": False, "message": "数据不足"}
 
         # 计算IC（Spearman秩相关，与业界标准一致）
         valid = aligned_data["factor"].notna() & aligned_data["return"].notna()
         if valid.sum() < 5:
-            return {
-                "valid": False,
-                "message": "有效数据不足"
-            }
+            return {"valid": False, "message": "有效数据不足"}
         ic, _ = spearmanr(aligned_data["factor"][valid], aligned_data["return"][valid])
         if pd.isna(ic):
             ic = 0.0
@@ -761,9 +767,9 @@ def calculate_factor(df):
             r, _ = spearmanr(x[v], y_aligned[v])
             return r
 
-        rolling_ic_series = factor_vals.rolling(
-            window=window, min_periods=min_periods
-        ).apply(_rolling_spearman, raw=False)
+        rolling_ic_series = factor_vals.rolling(window=window, min_periods=min_periods).apply(
+            _rolling_spearman, raw=False
+        )
 
         rolling_ic = rolling_ic_series
 

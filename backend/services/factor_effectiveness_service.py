@@ -1,6 +1,7 @@
 """
 因子有效性分析服务
 """
+
 import logging
 import numpy as np
 import pandas as pd
@@ -9,10 +10,11 @@ from scipy.stats import spearmanr
 
 from backend.utils.returns import calculate_future_returns
 from backend.utils.safe_math import safe_ir
+from backend.utils.ic_calculator import calculate_rolling_ic
 
 logger = logging.getLogger(__name__)
 
-from backend.services.alphalens_analysis_service import alphalens_analysis_service
+from backend.services.alphalens_analysis_service import alphalens_analysis_service  # noqa: E402
 
 
 class FactorEffectivenessService:
@@ -22,10 +24,7 @@ class FactorEffectivenessService:
         pass
 
     def analyze_effectiveness(
-        self,
-        factor_data: Dict[str, pd.DataFrame],
-        factor_name: str,
-        future_periods: List[int] = [1, 5, 10, 20]
+        self, factor_data: Dict[str, pd.DataFrame], factor_name: str, future_periods: List[int] = [1, 5, 10, 20]
     ) -> Dict[str, Any]:
         """
         分析因子有效性
@@ -48,29 +47,17 @@ class FactorEffectivenessService:
 
         results = {}
 
-        results["scatter_plot"] = self._create_scatter_data(
-            factor_data, factor_name
-        )
+        results["scatter_plot"] = self._create_scatter_data(factor_data, factor_name)
 
-        results["ic_time_series"] = self._calculate_ic_series(
-            factor_data, factor_name
-        )
+        results["ic_time_series"] = self._calculate_ic_series(factor_data, factor_name)
 
-        results["event_response"] = self._analyze_event_response(
-            factor_data, factor_name
-        )
+        results["event_response"] = self._analyze_event_response(factor_data, factor_name)
 
-        results["decay_analysis"] = self._analyze_decay(
-            factor_data, factor_name, future_periods
-        )
+        results["decay_analysis"] = self._analyze_decay(factor_data, factor_name, future_periods)
 
         return results
 
-    def _create_scatter_data(
-        self,
-        factor_data: Dict[str, pd.DataFrame],
-        factor_name: str
-    ) -> Dict[str, Any]:
+    def _create_scatter_data(self, factor_data: Dict[str, pd.DataFrame], factor_name: str) -> Dict[str, Any]:
         """创建因子-收益散点图数据"""
         factor_values = []
         returns = []
@@ -124,14 +111,11 @@ class FactorEffectivenessService:
             "y": [float(v) for v in returns],
             "correlation": float(correlation),
             "correlation_pvalue": float(p_value) if p_value is not None else None,
-            "count": len(factor_values)
+            "count": len(factor_values),
         }
 
     def _calculate_ic_series(
-        self,
-        factor_data: Dict[str, pd.DataFrame],
-        factor_name: str,
-        window: int = 20
+        self, factor_data: Dict[str, pd.DataFrame], factor_name: str, window: int = 20
     ) -> Dict[str, Any]:
         """计算IC时序分析（使用Alphalens）"""
         num_stocks = len(factor_data)
@@ -218,18 +202,13 @@ class FactorEffectivenessService:
                 "ic_std": float(ic_s.std()) if len(ic_s) > 1 else None,
                 "ir": safe_ir(float(ic_s.mean()), float(ic_s.std()), default=None) if len(ic_s) > 1 else None,
                 "ic_positive_ratio": float((ic_s > 0).mean()),
-                "source": "Alphalens"
+                "source": "Alphalens",
             }
         except Exception as e:
             logger.debug(f"Alphalens IC计算失败，使用fallback: {e}")
             return None
 
-    def _calculate_timeseries_ic(
-        self,
-        df: pd.DataFrame,
-        factor_name: str,
-        window: int = 20
-    ) -> Dict[str, Any]:
+    def _calculate_timeseries_ic(self, df: pd.DataFrame, factor_name: str, window: int = 20) -> Dict[str, Any]:
         """计算时间序列滚动IC（适用于单只股票）"""
         factor_vals = df[factor_name].dropna()
         return_vals = df["future_return"].dropna()
@@ -241,8 +220,7 @@ class FactorEffectivenessService:
         factor_aligned = factor_vals.loc[common_index]
         return_aligned = return_vals.loc[common_index]
 
-        from backend.utils.ic_calculator import calculate_rolling_ic
-        rolling_ic = calculate_rolling_ic(factor_aligned, return_aligned, window=window, method='spearman')
+        rolling_ic = calculate_rolling_ic(factor_aligned, return_aligned, window=window, method="spearman")
         valid_ic = rolling_ic.dropna()
         valid_ic = valid_ic[~np.isinf(valid_ic)]
 
@@ -260,14 +238,10 @@ class FactorEffectivenessService:
             "ic_mean": float(ic_series.mean()),
             "ic_std": ic_std,
             "ir": safe_ir(float(ic_series.mean()), ic_std, default=None),
-            "ic_positive_ratio": float((ic_series > 0).mean())
+            "ic_positive_ratio": float((ic_series > 0).mean()),
         }
 
-    def _calculate_cross_sectional_ic(
-        self,
-        df: pd.DataFrame,
-        factor_name: str
-    ) -> Dict[str, Any]:
+    def _calculate_cross_sectional_ic(self, df: pd.DataFrame, factor_name: str) -> Dict[str, Any]:
         """计算横截面IC（适用于多只股票）"""
         ic_values = []
         dates = []
@@ -300,7 +274,7 @@ class FactorEffectivenessService:
             "ic_mean": float(ic_series.mean()),
             "ic_std": float(ic_series.std()),
             "ir": safe_ir(float(ic_series.mean()), float(ic_series.std()), default=None),
-            "ic_positive_ratio": float((ic_series > 0).mean())
+            "ic_positive_ratio": float((ic_series > 0).mean()),
         }
 
     def _analyze_event_response(
@@ -308,7 +282,7 @@ class FactorEffectivenessService:
         factor_data: Dict[str, pd.DataFrame],
         factor_name: str,
         threshold_percentile: float = 0.8,
-        holding_periods: List[int] = [1, 3, 5, 10]
+        holding_periods: List[int] = [1, 3, 5, 10],
     ) -> Dict[str, Any]:
         """
         事件响应分析 - 因子突破阈值后N日收益
@@ -338,9 +312,11 @@ class FactorEffectivenessService:
                 # 按日期计算该股票的横截面分位数阈值
                 for date in df.index:
                     # 获取该日期所有股票的因子值
-                    date_factor_vals = merged_df.loc[
-                        merged_df.index == date, factor_name
-                    ].dropna() if date in merged_df.index else None
+                    date_factor_vals = (
+                        merged_df.loc[merged_df.index == date, factor_name].dropna()
+                        if date in merged_df.index
+                        else None
+                    )
 
                     if date_factor_vals is None or len(date_factor_vals) < 3:
                         continue
@@ -403,7 +379,11 @@ class FactorEffectivenessService:
         for period in holding_periods:
             high_avg[period] = float(np.mean(high_returns[period])) if high_returns[period] else None
             low_avg[period] = float(np.mean(low_returns[period])) if low_returns[period] else None
-            excess[period] = (high_avg[period] - low_avg[period]) if (high_avg[period] is not None and low_avg[period] is not None) else None
+            excess[period] = (
+                (high_avg[period] - low_avg[period])
+                if (high_avg[period] is not None and low_avg[period] is not None)
+                else None
+            )
 
         return {
             "threshold_value": threshold_value,
@@ -411,14 +391,11 @@ class FactorEffectivenessService:
             "high_exposure_returns": {f"{p}日": high_avg[p] for p in holding_periods},
             "low_exposure_returns": {f"{p}日": low_avg[p] for p in holding_periods},
             "excess_returns": {f"{p}日": excess[p] for p in holding_periods},
-            "holding_periods": holding_periods
+            "holding_periods": holding_periods,
         }
 
     def _analyze_decay(
-        self,
-        factor_data: Dict[str, pd.DataFrame],
-        factor_name: str,
-        periods: List[int]
+        self, factor_data: Dict[str, pd.DataFrame], factor_name: str, periods: List[int]
     ) -> Dict[str, Any]:
         """
         因子衰减分析 - 计算不同持有期的IC（优先使用Alphalens多周期IC）
@@ -438,10 +415,12 @@ class FactorEffectivenessService:
                     continue
                 df_with_returns = calculate_future_returns(df[[factor_name, "close"]], periods=[period])
                 future_returns = df_with_returns[f"future_return_{period}"]
-                temp_df = pd.DataFrame({
-                    "factor": df[factor_name],
-                    "return": future_returns,
-                })
+                temp_df = pd.DataFrame(
+                    {
+                        "factor": df[factor_name],
+                        "return": future_returns,
+                    }
+                )
                 # 保留日期索引
                 if isinstance(df.index, pd.DatetimeIndex):
                     temp_df["date"] = df.index
@@ -465,12 +444,14 @@ class FactorEffectivenessService:
 
             if len(daily_ics) >= 1:
                 try:
-                    decay_data.append({
-                        "period": f"{period}日",
-                        "period_days": period,
-                        "ic": float(mean_ic),
-                        "abs_ic": abs(float(mean_ic))
-                    })
+                    decay_data.append(
+                        {
+                            "period": f"{period}日",
+                            "period_days": period,
+                            "ic": float(mean_ic),
+                            "abs_ic": abs(float(mean_ic)),
+                        }
+                    )
                 except Exception as e:
                     logger.debug(f"衰减数据追加失败: {e}")
 
@@ -527,12 +508,14 @@ class FactorEffectivenessService:
                 if isinstance(period_stats, dict) and "error" not in period_stats:
                     mean_ic = period_stats.get("mean_ic", 0)
                     if mean_ic is not None:
-                        decay_curve.append({
-                            "period": f"{period}日",
-                            "period_days": period,
-                            "ic": float(mean_ic),
-                            "abs_ic": abs(float(mean_ic))
-                        })
+                        decay_curve.append(
+                            {
+                                "period": f"{period}日",
+                                "period_days": period,
+                                "ic": float(mean_ic),
+                                "abs_ic": abs(float(mean_ic)),
+                            }
+                        )
 
             if not decay_curve:
                 return None

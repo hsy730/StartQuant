@@ -8,6 +8,7 @@
 - 样本量感知
 - 行业分布分析
 """
+
 import numpy as np
 import pandas as pd
 from typing import Dict, Tuple, Optional, List
@@ -23,43 +24,45 @@ logger = logging.getLogger(__name__)
 @dataclass
 class DataCharacteristics:
     """数据特征描述"""
+
     n_stocks: int
     n_dates: int
     total_samples: int
-    
+
     market_board: MarketBoard
     avg_market_cap: float
     market_cap_std: float
-    
-    factor_volatility: float      # 因子横截面波动率（日均标准差）
-    factor_skewness: float         # 因子偏度
-    factor_kurtosis: float         # 因子峰度
-    
+
+    factor_volatility: float  # 因子横截面波动率（日均标准差）
+    factor_skewness: float  # 因子偏度
+    factor_kurtosis: float  # 因子峰度
+
     n_industries: int
-    min_industry_size: int        # 最小行业样本量
-    max_industry_size: int        # 最大行业样本量
-    
-    has_extreme_outliers: bool    # 是否存在极端异常值
-    outlier_ratio: float          # 异常值比例
-    
-    is_fat_tailed: bool           # 是否肥尾分布
-    time_varying_volatility: bool # 波动率是否时变
+    min_industry_size: int  # 最小行业样本量
+    max_industry_size: int  # 最大行业样本量
+
+    has_extreme_outliers: bool  # 是否存在极端异常值
+    outlier_ratio: float  # 异常值比例
+
+    is_fat_tailed: bool  # 是否肥尾分布
+    time_varying_volatility: bool  # 波动率是否时变
 
 
 @dataclass
 class PreprocessingRecommendation:
     """预处理参数推荐"""
+
     config_dict: Dict
-    confidence: float              # 推荐置信度 (0-1)
-    reasoning: str                # 推荐理由
+    confidence: float  # 推荐置信度 (0-1)
+    reasoning: str  # 推荐理由
     data_characteristics: DataCharacteristics
-    warnings: List[str]           # 警告信息
+    warnings: List[str]  # 警告信息
 
 
 class SmartPreprocessingDetector:
     """
     智能预处理参数检测器
-    
+
     算法流程：
     1. 识别市场板块 → 确定基础参数范围
     2. 分析因子分布 → 选择去极值方法
@@ -115,13 +118,13 @@ class SmartPreprocessingDetector:
     ) -> DataCharacteristics:
         """
         分析数据特征
-        
+
         Args:
             factor_data: {stock_code: DataFrame} 格式的因子数据
             factor_names: 因子名称列表
             market_cap_column: 市值列名
             industry_column: 行业列名
-            
+
         Returns:
             数据特征描述对象
         """
@@ -147,7 +150,7 @@ class SmartPreprocessingDetector:
             return self._empty_characteristics()
 
         merged_df = pd.concat(all_dfs, ignore_index=True)
-        
+
         # 1️⃣ 基础统计
         n_stocks = len(factor_data)
         n_dates = merged_df["date"].nunique() if "date" in merged_df.columns else 0
@@ -172,7 +175,7 @@ class SmartPreprocessingDetector:
         has_outliers = False
         outlier_ratio = 0
         is_fat_tail = False
-        
+
         all_factor_stats = []
         for factor_name in factor_names:
             if factor_name in merged_df.columns:
@@ -208,7 +211,7 @@ class SmartPreprocessingDetector:
         n_industries = 0
         min_ind_size = 0
         max_ind_size = 0
-        
+
         if industry_column in merged_df.columns:
             industry_counts = merged_df[industry_column].value_counts()
             n_industries = len(industry_counts)
@@ -284,21 +287,21 @@ class SmartPreprocessingDetector:
     ) -> PreprocessingRecommendation:
         """
         推荐最优预处理配置
-        
+
         Args:
             factor_data: 因子数据字典
             factor_names: 因子名称列表
             user_preference: 用户偏好 ("conservative"保守/"aggressive"激进/None自动)
-            
+
         Returns:
             推荐配置对象
         """
         # 分析数据特征
         chars = self.analyze_data(factor_data, factor_names)
-        
+
         # 基于规则生成推荐配置
         config, confidence, reasoning, warnings = self._generate_recommendation(chars, user_preference)
-        
+
         return PreprocessingRecommendation(
             config_dict=config,
             confidence=confidence,
@@ -313,7 +316,7 @@ class SmartPreprocessingDetector:
         preference: Optional[str],
     ) -> Tuple[Dict, float, str, List[str]]:
         """生成推荐配置的核心逻辑"""
-        
+
         config = {}
         warnings = []
         confidence_scores = []  # 各项决策的置信度
@@ -339,7 +342,7 @@ class SmartPreprocessingDetector:
 
         # ==================== 2️⃣ 去极值强度（n_sigma）====================
         base_board_config = self._board_patterns.get(chars.market_board, {})
-        _volatility_factor = base_board_config.get("volatility_factor", 1.0)
+        _volatility_factor = base_board_config.get("volatility_factor", 1.0)  # noqa: F841
         base_n_sigma = base_board_config.get("default_n_sigma", 3.0)
 
         # 根据波动性和用户偏好调整
@@ -362,14 +365,17 @@ class SmartPreprocessingDetector:
             else:
                 n_sigma = base_n_sigma
                 reasoning_parts.append("使用该板块的标准参数")
-            
+
             confidence_scores.append(0.88)
 
         config["winsorize_n_sigma"] = round(n_sigma, 2)
 
         # ==================== 3️⃣ 中性化策略 ====================
         # 市值中性化
-        if chars.avg_market_cap > 0 and safe_divide(float(chars.market_cap_std), float(chars.avg_market_cap), default=0.0) > 0.5:
+        if (
+            chars.avg_market_cap > 0
+            and safe_divide(float(chars.market_cap_std), float(chars.avg_market_cap), default=0.0) > 0.5
+        ):
             # 市值差异大 → 必须中性化
             config["enable_market_cap_neutralization"] = True
             confidence_scores.append(0.95)
@@ -386,17 +392,13 @@ class SmartPreprocessingDetector:
             config["enable_industry_neutralization"] = True
             confidence_scores.append(0.9)
             reasoning_parts.append(
-                f"行业结构良好({chars.n_industries}个行业，最少{chars.min_industry_size}只/行业)，"
-                f"启用行业中性化"
+                f"行业结构良好({chars.n_industries}个行业，最少{chars.min_industry_size}只/行业)，" f"启用行业中性化"
             )
         elif chars.n_industries >= 2 and chars.min_industry_size >= 5:
             # 行业数尚可但部分行业较小
             config["enable_industry_neutralization"] = True
             confidence_scores.append(0.7)
-            reasoning_parts.append(
-                f"部分行业样本较少(最少{chars.min_industry_size}只)，"
-                f"行业中性化效果可能受限"
-            )
+            reasoning_parts.append(f"部分行业样本较少(最少{chars.min_industry_size}只)，" f"行业中性化效果可能受限")
             warnings.append(f"⚠️ 存在仅{chars.min_industry_size}只股票的小行业，中性化效果可能不稳定")
         else:
             # 行业数太少或样本严重不足
@@ -423,7 +425,7 @@ class SmartPreprocessingDetector:
             reasoning_parts.append("异常值较多，使用中位数填充缺失值")
         else:
             config["handle_missing"] = "fill_zero"
-        
+
         # 最小样本量
         if chars.n_industries > 0:
             config["min_samples"] = max(10, min(chars.min_industry_size // 2, 20))
@@ -441,20 +443,29 @@ class SmartPreprocessingDetector:
 
     def _empty_characteristics(self) -> DataCharacteristics:
         return DataCharacteristics(
-            n_stocks=0, n_dates=0, total_samples=0,
+            n_stocks=0,
+            n_dates=0,
+            total_samples=0,
             market_board=MarketBoard.UNKNOWN,
-            avg_market_cap=0, market_cap_std=0,
-            factor_volatility=0, factor_skewness=0, factor_kurtosis=0,
-            n_industries=0, min_industry_size=0, max_industry_size=0,
-            has_extreme_outliers=False, outlier_ratio=0,
-            is_fat_tailed=False, time_varying_volatility=False,
+            avg_market_cap=0,
+            market_cap_std=0,
+            factor_volatility=0,
+            factor_skewness=0,
+            factor_kurtosis=0,
+            n_industries=0,
+            min_industry_size=0,
+            max_industry_size=0,
+            has_extreme_outliers=False,
+            outlier_ratio=0,
+            is_fat_tailed=False,
+            time_varying_volatility=False,
         )
 
     def get_config_summary(self, recommendation: PreprocessingRecommendation) -> str:
         """生成人类可读的配置摘要"""
         chars = recommendation.data_characteristics
         config = recommendation.config_dict
-        
+
         lines = [
             "# 🤖 智能预处理参数推荐报告",
             "",
@@ -470,24 +481,31 @@ class SmartPreprocessingDetector:
             "",
             "| 参数 | 推荐值 | 说明 |",
             "|------|--------|------|",
-            f"| 去极值方法 | **{config.get('winsorize_method', 'mad').upper()}** | {'稳健抗异常值' if config.get('winsorize_method') == 'mad' else '适应非正态'} |",
-            f"| 去极值强度 | **{config.get('winsorize_n_sigma', 3.0):.2f}σ** | 基于{self._get_board_name(chars.market_board)}特性调整 |",
-            f"| 市值中性化 | **{'✅ 启用' if config.get('enable_market_cap_neutralization') else '❌ 关闭'}** | {'市值差异大' if config.get('enable_market_cap_neutralization') else '-'} |",
-            f"| 行业中性化 | **{'✅ 启用' if config.get('enable_industry_neutralization') else '❌ 关闭'}** | {f'{chars.n_industries}个行业' if config.get('enable_industry_neutralization') else '样本不足'} |",
-            f"| 标准化方法 | **{config.get('standardize_method', 'zscore').upper()}** | {'抗异常值' if config.get('standardize_method') == 'rank' else '保持线性'} |",
+            f"| 去极值方法 | **{config.get('winsorize_method', 'mad').upper()}** "
+            f"| {'稳健抗异常值' if config.get('winsorize_method') == 'mad' else '适应非正态'} |",
+            f"| 去极值强度 | **{config.get('winsorize_n_sigma', 3.0):.2f}σ** "
+            f"| 基于{self._get_board_name(chars.market_board)}特性调整 |",
+            f"| 市值中性化 | **{'✅ 启用' if config.get('enable_market_cap_neutralization') else '❌ 关闭'}** "
+            f"| {'市值差异大' if config.get('enable_market_cap_neutralization') else '-'} |",
+            f"| 行业中性化 | **{'✅ 启用' if config.get('enable_industry_neutralization') else '❌ 关闭'}** "
+            f"| {f'{chars.n_industries}个行业' if config.get('enable_industry_neutralization') else '样本不足'} |",
+            f"| 标准化方法 | **{config.get('standardize_method', 'zscore').upper()}** "
+            f"| {'抗异常值' if config.get('standardize_method') == 'rank' else '保持线性'} |",
             "",
             "## 💡 推荐理由",
             f"{recommendation.reasoning}",
         ]
-        
+
         if recommendation.warnings:
-            lines.extend([
-                "",
-                "## ⚠️ 注意事项",
-            ])
+            lines.extend(
+                [
+                    "",
+                    "## ⚠️ 注意事项",
+                ]
+            )
             for warning in recommendation.warnings:
                 lines.append(f"- {warning}")
-        
+
         return "\n".join(lines)
 
     def _get_board_name(self, board: MarketBoard) -> str:

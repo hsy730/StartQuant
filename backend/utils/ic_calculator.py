@@ -4,6 +4,7 @@ IC（信息系数）计算公共工具 — 统一IC计算方式
 项目规范5：IC计算在30+处各自实现，提取统一入口
 TODO: 逐步迁移各服务中的IC计算到此处
 """
+
 import numpy as np
 import pandas as pd
 from typing import Optional
@@ -92,9 +93,7 @@ def calculate_rolling_ic(
             vy = valid_y.loc[common_idx]
             return spearmanr(vx, vy)[0]
 
-        return aligned["factor"].rolling(window, min_periods=min_periods).apply(
-            _rolling_spearman, raw=False
-        )
+        return aligned["factor"].rolling(window, min_periods=min_periods).apply(_rolling_spearman, raw=False)
     else:
         min_periods = max(2, window // 2)
         return aligned["factor"].rolling(window, min_periods=min_periods).corr(aligned["returns"])

@@ -3,6 +3,7 @@
 
 统一提供未来收益率、因子IC统计量等跨服务复用的计算方法。
 """
+
 import numpy as np
 import pandas as pd
 from typing import Dict, Sequence, Tuple
@@ -92,7 +93,7 @@ def calculate_ic_stats(
     if std_ic < 1e-10:
         positive_ratio = float((ic_clean > 0).mean())
         if abs(mean_ic) > 1e-10:
-            t_statistic = float('inf')
+            t_statistic = float("inf")
             p_value = 0.0
         else:
             t_statistic = 0.0

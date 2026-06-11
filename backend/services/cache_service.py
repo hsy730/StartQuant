@@ -1,6 +1,7 @@
 """
 智能缓存服务 - 管理缓存文件的元数据、TTL、统计和清理
 """
+
 import os
 import pickle
 import hashlib
@@ -225,11 +226,13 @@ class CacheService:
             total_attempts = self._hits + self._misses
             hit_rate = self._hits / total_attempts if total_attempts > 0 else 0.0
 
-            stats.update({
-                "hits": self._hits,
-                "misses": self._misses,
-                "hit_rate": round(hit_rate, 4),
-            })
+            stats.update(
+                {
+                    "hits": self._hits,
+                    "misses": self._misses,
+                    "hit_rate": round(hit_rate, 4),
+                }
+            )
 
             return stats
 

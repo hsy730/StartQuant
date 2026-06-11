@@ -1,6 +1,7 @@
 """
 因子版本数据模型
 """
+
 from datetime import datetime
 from sqlalchemy import String, Integer, Text, DateTime, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column

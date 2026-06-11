@@ -10,6 +10,7 @@
 - AlphaMiner: ❌ → ✅ (通过 FactorOrchestrator)
 - StockRanker: ❌ → ✅ (通过 StockRankerService)
 """
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
@@ -27,23 +28,26 @@ router = APIRouter()
 #  1. Factor Orchestrator API（AlphaMiner 替代）
 # =====================================================================
 
+
 class OrchestratorValidateRequest(BaseModel):
     """一键验证请求"""
-    expression: str                          # 因子表达式
-    stock_codes: List[str]                   # 股票代码列表
-    start_date: str                          # 开始日期
-    end_date: str                            # 结束日期
-    factor_name: Optional[str] = None        # 因子名称
+
+    expression: str  # 因子表达式
+    stock_codes: List[str]  # 股票代码列表
+    start_date: str  # 开始日期
+    end_date: str  # 结束日期
+    factor_name: Optional[str] = None  # 因子名称
     enable_lookahead_detection: bool = True  # 未来函数检测
-    enable_ic_analysis: bool = True          # IC/IR 分析
-    enable_alphalens: bool = True            # Alphalens 分析
-    enable_quantile_backtest: bool = True    # 分组回测
-    enable_tear_sheet: bool = True           # Tear Sheet 报告
-    fail_fast_on_bias: bool = True           # 发现未来函数立即终止
+    enable_ic_analysis: bool = True  # IC/IR 分析
+    enable_alphalens: bool = True  # Alphalens 分析
+    enable_quantile_backtest: bool = True  # 分组回测
+    enable_tear_sheet: bool = True  # Tear Sheet 报告
+    fail_fast_on_bias: bool = True  # 发现未来函数立即终止
 
 
 class OrchestratorBatchRequest(BaseModel):
     """批量验证请求"""
+
     expressions: List[str]
     stock_codes: List[str]
     start_date: str
@@ -131,10 +135,12 @@ async def orchestrator_batch_validate(request: OrchestratorBatchRequest):
 #  2. StockRanker API（StockRanker 替代）
 # =====================================================================
 
+
 class RankerTrainRequest(BaseModel):
     """排序模型训练请求"""
+
     model_name: str = "stock_ranker"
-    feature_cols: Optional[List[str]] = None   # 特征列（None=自动检测）
+    feature_cols: Optional[List[str]] = None  # 特征列（None=自动检测）
     label_col: str = "forward_return_5d"
     date_col: str = "date"
     group_col: str = "date"
@@ -149,6 +155,7 @@ class RankerTrainRequest(BaseModel):
 
 class RankerPredictRequest(BaseModel):
     """排序预测请求"""
+
     model_id: str
     top_n: int = 50
     feature_cols: Optional[List[str]] = None
@@ -181,7 +188,6 @@ async def stock_ranker_train(request: RankerTrainRequest):
                 status_code=503,
                 detail="XGBoost 未安装，StockRanker 服务不可用。请执行: pip install xgboost",
             )
-
 
         # 构造特征数据（示例：使用基础因子作为特征）
         # 实际生产中应从数据库/因子库中获取预计算的特征矩阵
@@ -224,6 +230,7 @@ async def stock_ranker_train(request: RankerTrainRequest):
 
 class RankerTrainWithDataRequest(BaseModel):
     """带数据的排序模型训练请求"""
+
     feature_data: List[Dict[str, Any]] = []
     label_col: str = "label"
     training_config: Optional[Dict[str, Any]] = None
@@ -411,6 +418,7 @@ async def stock_ranker_explain(model_id: str):
 # =====================================================================
 #  3. Model Registry API（ML 模型管理）
 # =====================================================================
+
 
 @router.get("/models")
 async def list_models(

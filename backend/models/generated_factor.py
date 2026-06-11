@@ -1,6 +1,7 @@
 """
 生成的因子数据模型
 """
+
 from sqlalchemy import Integer, String, Text, Float, Boolean, DateTime
 from sqlalchemy.orm import Mapped, mapped_column
 from datetime import datetime

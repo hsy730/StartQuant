@@ -1,6 +1,7 @@
 """
 因子摘要统计服务 - 自动生成因子统计摘要
 """
+
 import pandas as pd
 import numpy as np
 from typing import Dict, List, Optional, Any
@@ -192,10 +193,7 @@ class FactorSummaryService:
         else:
             return "D"
 
-    def generate_multi_factor_summary(
-        self,
-        factors_summary: List[Dict]
-    ) -> Dict:
+    def generate_multi_factor_summary(self, factors_summary: List[Dict]) -> Dict:
         """
         生成多因子对比摘要
 
@@ -215,11 +213,13 @@ class FactorSummaryService:
             quality_score = summary.get("quality_score", 0)
             grade = summary.get("grade", "D")
 
-            comparison["factors"].append({
-                "name": factor_name,
-                "score": quality_score,
-                "grade": grade,
-            })
+            comparison["factors"].append(
+                {
+                    "name": factor_name,
+                    "score": quality_score,
+                    "grade": grade,
+                }
+            )
 
         # 排序
         comparison["factors"].sort(key=lambda x: x["score"], reverse=True)

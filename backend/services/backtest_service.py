@@ -5,6 +5,7 @@
 所有核心回测方法委托给VectorBTBacktestService；
 VectorBT不可用时抛出明确错误，不再使用有Bug的自建fallback。
 """
+
 import pandas as pd
 import numpy as np
 from typing import Dict, List, Optional
@@ -14,15 +15,17 @@ from backend.services.strategy_registry import strategy_registry
 from backend.services.strategy_comparison_service import strategy_comparison_service
 from backend.services.position_analysis_service import position_analysis_service
 from backend.services.export_service import export_service
-from backend.services.risk_metrics import calculate_risk_metrics, calculate_relative_metrics, _empty_metrics as _risk_empty_metrics
+from backend.services.risk_metrics import (
+    calculate_risk_metrics,
+    calculate_relative_metrics,
+    _empty_metrics as _risk_empty_metrics,
+)
 
 from backend.services.vectorbt_backtest_service import (
     VectorBTBacktestService,
 )
 
 logger = logging.getLogger(__name__)
-
-
 
 
 class BacktestService:
@@ -56,8 +59,10 @@ class BacktestService:
         use_chunking: str = "auto",
     ) -> Dict:
         result = self._get_vbt().single_factor_backtest(
-            df=df, factor_name=factor_name,
-            percentile=percentile, direction=direction,
+            df=df,
+            factor_name=factor_name,
+            percentile=percentile,
+            direction=direction,
             n_quantiles=n_quantiles,
             use_tradable_mask=use_tradable_mask,
             freq=freq,
@@ -68,21 +73,46 @@ class BacktestService:
 
     # ==================== 横截面回测 (委托VectorBT) ====================
 
-    def cross_sectional_backtest(self, df: pd.DataFrame, factor_name: str, top_percentile: float = 0.2, direction: str = "long", freq: str = "D") -> Dict:
-        result = self._get_vbt().cross_sectional_backtest(df=df, factor_name=factor_name, top_percentile=top_percentile, direction=direction, freq=freq)
+    def cross_sectional_backtest(
+        self, df: pd.DataFrame, factor_name: str, top_percentile: float = 0.2, direction: str = "long", freq: str = "D"
+    ) -> Dict:
+        result = self._get_vbt().cross_sectional_backtest(
+            df=df, factor_name=factor_name, top_percentile=top_percentile, direction=direction, freq=freq
+        )
         result["engine"] = "vectorbt"
         return result
 
     # ==================== 多因子回测 (委托VectorBT) ====================
 
-    def multi_factor_backtest(self, df: pd.DataFrame, factor_names: List[str], weights: Optional[List[float]] = None, method: str = "equal_weight", percentile: int = 50, direction: str = "long", freq: str = "D", use_chunking: str = "auto") -> Dict:
-        result = self._get_vbt().multi_factor_backtest(df=df, factor_names=factor_names, weights=weights, method=method, percentile=percentile, direction=direction, freq=freq, use_chunking=use_chunking)
+    def multi_factor_backtest(
+        self,
+        df: pd.DataFrame,
+        factor_names: List[str],
+        weights: Optional[List[float]] = None,
+        method: str = "equal_weight",
+        percentile: int = 50,
+        direction: str = "long",
+        freq: str = "D",
+        use_chunking: str = "auto",
+    ) -> Dict:
+        result = self._get_vbt().multi_factor_backtest(
+            df=df,
+            factor_names=factor_names,
+            weights=weights,
+            method=method,
+            percentile=percentile,
+            direction=direction,
+            freq=freq,
+            use_chunking=use_chunking,
+        )
         result["engine"] = "vectorbt"
         return result
 
     # ==================== 性能指标计算 (委托risk_metrics + empyrical) ====================
 
-    def calculate_metrics(self, returns: pd.Series, annual_trading_days: int = 252, risk_free_rate: float = 0.03) -> Dict:
+    def calculate_metrics(
+        self, returns: pd.Series, annual_trading_days: int = 252, risk_free_rate: float = 0.03
+    ) -> Dict:
         returns_clean = returns.dropna()
         if len(returns_clean) == 0:
             return self._empty_metrics()
@@ -97,21 +127,35 @@ class BacktestService:
         """计算回撤序列（返回负值，与empyrical约定一致）"""
         peak = equity_curve.cummax()
         from backend.utils.safe_math import safe_series_divide
+
         return safe_series_divide(equity_curve - peak, peak, fill_value=np.nan)
 
     # ==================== 信号生成 ====================
 
-    def generate_signals(self, df: pd.DataFrame, factor_name: str, method: str = "percentile", threshold: float = 0.5, direction: str = "long") -> pd.Series:
+    def generate_signals(
+        self,
+        df: pd.DataFrame,
+        factor_name: str,
+        method: str = "percentile",
+        threshold: float = 0.5,
+        direction: str = "long",
+    ) -> pd.Series:
         if method == "percentile":
             rank = df[factor_name].rolling(252, min_periods=1).rank(pct=True)
             signals = (rank >= threshold).astype(int) if direction == "long" else (rank <= threshold).astype(int)
         else:
-            signals = (df[factor_name] >= threshold).astype(int) if direction == "long" else (df[factor_name] <= threshold).astype(int)
+            signals = (
+                (df[factor_name] >= threshold).astype(int)
+                if direction == "long"
+                else (df[factor_name] <= threshold).astype(int)
+            )
         return signals
 
     # ==================== 基准对比 ====================
 
-    def calculate_benchmark_metrics(self, returns: pd.Series, benchmark_returns: pd.Series, annual_trading_days: int = 252) -> Dict:
+    def calculate_benchmark_metrics(
+        self, returns: pd.Series, benchmark_returns: pd.Series, annual_trading_days: int = 252
+    ) -> Dict:
         """计算基准对比指标（委托risk_metrics统一入口，符合规则2）"""
         relative = calculate_relative_metrics(returns, benchmark_returns, annual_trading_days=annual_trading_days)
         return {
@@ -146,15 +190,21 @@ class BacktestService:
         metrics = strategy.calculate_metrics(backtest_result["portfolio_returns"])
         return {"strategy_name": strategy_name, "backtest": backtest_result, "metrics": metrics}
 
-    def run_strategy_comparison(self, df: pd.DataFrame, strategy_names: List[str], strategy_params: Optional[Dict[str, Dict]] = None) -> Dict:
-        return strategy_comparison_service.compare_strategies(df=df, strategy_names=strategy_names, strategy_params=strategy_params)
+    def run_strategy_comparison(
+        self, df: pd.DataFrame, strategy_names: List[str], strategy_params: Optional[Dict[str, Dict]] = None
+    ) -> Dict:
+        return strategy_comparison_service.compare_strategies(
+            df=df, strategy_names=strategy_names, strategy_params=strategy_params
+        )
 
     def analyze_positions(self, positions: pd.Series, initial_capital: float = 1000000) -> Dict:
         return position_analysis_service.analyze_positions(positions=positions, initial_capital=initial_capital)
 
     def export_to_excel(self, backtest_result: Dict, output_path: str, strategy_name: str = "策略"):
         metrics = backtest_result.get("metrics")
-        export_service.export_backtest_to_excel(backtest_result=backtest_result, output_path=output_path, metrics=metrics, strategy_name=strategy_name)
+        export_service.export_backtest_to_excel(
+            backtest_result=backtest_result, output_path=output_path, metrics=metrics, strategy_name=strategy_name
+        )
 
     def export_comparison_to_excel(self, comparison_result: Dict, output_path: str):
         export_service.export_comparison_to_excel(comparison_result=comparison_result, output_path=output_path)

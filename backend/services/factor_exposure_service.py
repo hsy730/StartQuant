@@ -1,6 +1,7 @@
 """
 因子暴露度分析服务
 """
+
 import logging
 import numpy as np
 import pandas as pd
@@ -20,10 +21,7 @@ class FactorExposureService:
         pass
 
     def calculate_exposure_metrics(
-        self,
-        factor_data: Dict[str, pd.DataFrame],
-        factor_name: str,
-        window: int = 20
+        self, factor_data: Dict[str, pd.DataFrame], factor_name: str, window: int = 20
     ) -> Dict[str, Any]:
         """
         计算因子暴露度指标
@@ -86,21 +84,15 @@ class FactorExposureService:
             "dates": [str(date) for date in time_series.index],
             "percentiles": [float(p) for p in percentile_series.values],
             "values": [float(v) for v in time_series.values],
-            "stock_code": longest_stock
+            "stock_code": longest_stock,
         }
 
         # 滚动统计
         rolling_mean = time_series.rolling(window=window, min_periods=1).mean()
         rolling_std = time_series.rolling(window=window, min_periods=1).std()
 
-        rolling_mean_dict = {
-            str(date): float(val) if pd.notna(val) else None
-            for date, val in rolling_mean.items()
-        }
-        rolling_std_dict = {
-            str(date): float(val) if pd.notna(val) else None
-            for date, val in rolling_std.items()
-        }
+        rolling_mean_dict = {str(date): float(val) if pd.notna(val) else None for date, val in rolling_mean.items()}
+        rolling_std_dict = {str(date): float(val) if pd.notna(val) else None for date, val in rolling_std.items()}
 
         # 使用最新的滚动统计值计算变异系数
         latest_mean = rolling_mean.iloc[-1]
@@ -125,17 +117,13 @@ class FactorExposureService:
             "std": float(factor_series.std()),
             "count": len(factor_series),
             "percentiles": {
-                f"p{p}": float(factor_series.quantile(p/100))
-                for p in [1, 5, 10, 25, 50, 75, 90, 95, 99]
-            }
+                f"p{p}": float(factor_series.quantile(p / 100)) for p in [1, 5, 10, 25, 50, 75, 90, 95, 99]
+            },
         }
 
         # 直方图数据（用于前端绘制分布图）
         hist, bins = np.histogram(factor_series.dropna().values, bins=50)
-        histogram = {
-            "bins": [float(b) for b in bins],
-            "counts": [int(c) for c in hist]
-        }
+        histogram = {"bins": [float(b) for b in bins], "counts": [int(c) for c in hist]}
 
         return {
             "current_value": current_value,
@@ -150,14 +138,10 @@ class FactorExposureService:
             "latest_mean": float(latest_mean),
             "latest_std": float(latest_std),
             "distribution": distribution,
-            "histogram": histogram
+            "histogram": histogram,
         }
 
-    def calculate_exposure_by_stock(
-        self,
-        factor_data: Dict[str, pd.DataFrame],
-        factor_name: str
-    ) -> Dict[str, Dict]:
+    def calculate_exposure_by_stock(self, factor_data: Dict[str, pd.DataFrame], factor_name: str) -> Dict[str, Dict]:
         """
         计算每只股票的因子暴露度
 
@@ -188,15 +172,13 @@ class FactorExposureService:
                         "current": float(factor_values.iloc[-1]),
                         "min": float(factor_values.min()),
                         "max": float(factor_values.max()),
-                        "count": len(factor_values)
+                        "count": len(factor_values),
                     }
 
         return exposure_by_stock
 
     def calculate_percentile_distribution(
-        self,
-        factor_data: Dict[str, pd.DataFrame],
-        factor_name: str
+        self, factor_data: Dict[str, pd.DataFrame], factor_name: str
     ) -> Dict[str, Any]:
         """
         计算因子值的分位数分布
@@ -239,22 +221,13 @@ class FactorExposureService:
             "q20": float(values.quantile(0.2)),
             "q40": float(values.quantile(0.4)),
             "q60": float(values.quantile(0.6)),
-            "q80": float(values.quantile(0.8))
+            "q80": float(values.quantile(0.8)),
         }
 
-        deciles = {
-            f"d{i*10}": float(values.quantile(i/10))
-            for i in range(1, 10)
-        }
+        deciles = {f"d{i*10}": float(values.quantile(i / 10)) for i in range(1, 10)}
 
         # 按五分位数分组
-        distribution_by_quintile = {
-            "0-20%": [],
-            "20-40%": [],
-            "40-60%": [],
-            "60-80%": [],
-            "80-100%": []
-        }
+        distribution_by_quintile = {"0-20%": [], "20-40%": [], "40-60%": [], "60-80%": [], "80-100%": []}
 
         for stock_code, value in stock_latest_values.items():
             if value <= quintiles["q20"]:
@@ -268,17 +241,10 @@ class FactorExposureService:
             else:
                 distribution_by_quintile["80-100%"].append(stock_code)
 
-        return {
-            "quintiles": quintiles,
-            "deciles": deciles,
-            "distribution_by_quintile": distribution_by_quintile
-        }
+        return {"quintiles": quintiles, "deciles": deciles, "distribution_by_quintile": distribution_by_quintile}
 
     def calculate_rolling_exposure(
-        self,
-        factor_data: Dict[str, pd.DataFrame],
-        factor_name: str,
-        window: int = 20
+        self, factor_data: Dict[str, pd.DataFrame], factor_name: str, window: int = 20
     ) -> Dict[str, Any]:
         """
         计算滚动窗口暴露度
@@ -328,7 +294,7 @@ class FactorExposureService:
             "rolling_min": [float(v) if pd.notna(v) else None for v in rolling_min.values],
             "rolling_max": [float(v) if pd.notna(v) else None for v in rolling_max.values],
             "upper_band": [float(v) if pd.notna(v) else None for v in upper_band.values],
-            "lower_band": [float(v) if pd.notna(v) else None for v in lower_band.values]
+            "lower_band": [float(v) if pd.notna(v) else None for v in lower_band.values],
         }
 
 

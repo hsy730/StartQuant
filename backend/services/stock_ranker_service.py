@@ -19,6 +19,7 @@ StockRanker 排序学习服务 — 替代 BigQuant StockRanker 的 GBDT Learning
 - 安全: 自动进行未来函数检测（训练前检查特征）
 - 高性能: 支持增量训练和批量预测
 """
+
 import logging
 import os
 import json
@@ -38,6 +39,7 @@ logger = logging.getLogger(__name__)
 
 try:
     import xgboost as xgb
+
     XGB_AVAILABLE = True
 except ImportError:
     XGB_AVAILABLE = False
@@ -46,14 +48,16 @@ except ImportError:
 
 class RankObjective(str, Enum):
     """排序目标类型"""
-    PAIRWISE = "rank:pairwise"      # 成对排序损失
-    NDCG = "rank:ndcg"              # NDCG 优化（listwise）
-    MAP = "rank:map"                # Mean Average Precision
-    REGRESSION = "reg:squarederror" # 回退为回归（非排序）
+
+    PAIRWISE = "rank:pairwise"  # 成对排序损失
+    NDCG = "rank:ndcg"  # NDCG 优化（listwise）
+    MAP = "rank:map"  # Mean Average Precision
+    REGRESSION = "reg:squarederror"  # 回退为回归（非排序）
 
 
 class ModelStatus(str, Enum):
     """模型状态"""
+
     TRAINING = "training"
     READY = "ready"
     DEPRECATED = "deprecated"
@@ -63,6 +67,7 @@ class ModelStatus(str, Enum):
 @dataclass
 class RankTrainingConfig:
     """排序模型训练配置"""
+
     objective: str = RankObjective.NDCG.value
     learning_rate: float = 0.05
     max_depth: int = 6
@@ -75,7 +80,7 @@ class RankTrainingConfig:
 
     # 排序特定参数
     lambdarank_pair_method: str = "mean"  # mean / max / sum
-    ndcg_truncation: int = 5              # NDCG@k 的 k 值
+    ndcg_truncation: int = 5  # NDCG@k 的 k 值
 
     # 正则化
     reg_alpha: float = 0.1
@@ -85,6 +90,7 @@ class RankTrainingConfig:
 @dataclass
 class RankPredictionResult:
     """排序预测结果"""
+
     predictions: pd.DataFrame  # columns: [date, stock_code, rank_score, rank_position]
     top_n_stocks: pd.DataFrame  # Top-N 推荐股票
     metrics: Dict[str, float]  # 预测质量指标
@@ -94,6 +100,7 @@ class RankPredictionResult:
 @dataclass
 class RankTrainingResult:
     """排序模型训练结果"""
+
     model_id: str
     status: ModelStatus
     config: RankTrainingConfig
@@ -190,9 +197,7 @@ class StockRankerService:
             default_config: 默认训练配置
         """
         if not XGB_AVAILABLE:
-            raise ImportError(
-                "XGBoost 未安装。请执行: pip install xgboost"
-            )
+            raise ImportError("XGBoost 未安装。请执行: pip install xgboost")
 
         self.model_registry = model_registry
         self.default_config = default_config or RankTrainingConfig()
@@ -251,10 +256,7 @@ class StockRankerService:
         # 自动识别特征列
         if feature_cols is None:
             exclude_cols = {date_col, label_col, "stock_code", "asset", "index"}
-            feature_cols = [
-                c for c in df.columns
-                if c not in exclude_cols and pd.api.types.is_numeric_dtype(df[c])
-            ]
+            feature_cols = [c for c in df.columns if c not in exclude_cols and pd.api.types.is_numeric_dtype(df[c])]
 
         if len(feature_cols) == 0:
             raise ValueError("没有可用的数值特征列")
@@ -274,6 +276,7 @@ class StockRankerService:
                     FactorPreprocessingPipeline,
                     PreprocessingConfig,
                 )
+
                 pp_config = preprocessing_config or PreprocessingConfig()
                 pipeline = FactorPreprocessingPipeline(pp_config)
                 for feat in feature_cols:
@@ -294,6 +297,7 @@ class StockRankerService:
         bias_warnings = []
         if enable_bias_check:
             from backend.services.lookahead_bias_detector import lookahead_bias_detector
+
             for feat in feature_cols:
                 try:
                     check = lookahead_bias_detector.detect(
@@ -302,9 +306,7 @@ class StockRankerService:
                         factor_name=feat,
                     )
                     if check.risk_level.value in ("high", "critical"):
-                        bias_warnings.append(
-                            f"特征 [{feat}] 存在未来函数风险({check.risk_level.value})，建议移除"
-                        )
+                        bias_warnings.append(f"特征 [{feat}] 存在未来函数风险({check.risk_level.value})，建议移除")
                 except Exception as e:
                     logger.debug(f"未来函数检测失败: {e}")
 
@@ -324,9 +326,7 @@ class StockRankerService:
         train_groups, valid_groups, adjusted_split_idx = self._split_groups(groups, len(df), split_idx)
 
         if adjusted_split_idx != split_idx:
-            logger.info(
-                f"[StockRanker] 分割点已调整: {split_idx} → {adjusted_split_idx}（对齐日期组边界）"
-            )
+            logger.info(f"[StockRanker] 分割点已调整: {split_idx} → {adjusted_split_idx}（对齐日期组边界）")
 
         # 特征缺失值填充：仅用训练集统计量，避免数据泄漏
         train_df = df.iloc[:adjusted_split_idx]
@@ -393,13 +393,20 @@ class StockRankerService:
 
         # ---- 特征重要性 ----
         importance = model.get_score(importance_type="gain")
-        importance_sorted = dict(
-            sorted(importance.items(), key=lambda x: x[1], reverse=True)
-        )
+        importance_sorted = dict(sorted(importance.items(), key=lambda x: x[1], reverse=True))
 
         # ---- 保存模型 ----
         train_period = f"{df[date_col].min()} ~ {df[date_col].max()}"
-        model_id = self._save_model(model, model_name, cfg, tags, feature_cols, train_period=train_period, feature_medians=feature_medians, preprocessing_stats=preprocessing_stats)
+        model_id = self._save_model(
+            model,
+            model_name,
+            cfg,
+            tags,
+            feature_cols,
+            train_period=train_period,
+            feature_medians=feature_medians,
+            preprocessing_stats=preprocessing_stats,
+        )
 
         duration = time.time() - t0
 
@@ -420,11 +427,22 @@ class StockRankerService:
                 "best_iteration": int(best_iter),
                 "train_score": float(eval_result["train"][eval_metric][-1]) if eval_result.get("train") else 0,
                 "valid_score": float(eval_result["valid"][eval_metric][-1]) if eval_result.get("valid") else 0,
-                "eval_history": {
-                    k: {metric: [float(v) for v in vals] for metric, vals in metrics.items() if isinstance(metrics, dict)}
-                    if isinstance(metrics, dict) else [float(v) for v in metrics]
-                    for k, metrics in eval_result.items()
-                } if eval_result else {},
+                "eval_history": (
+                    {
+                        k: (
+                            {
+                                metric: [float(v) for v in vals]
+                                for metric, vals in metrics.items()
+                                if isinstance(metrics, dict)
+                            }
+                            if isinstance(metrics, dict)
+                            else [float(v) for v in metrics]
+                        )
+                        for k, metrics in eval_result.items()
+                    }
+                    if eval_result
+                    else {}
+                ),
             },
             feature_importance=importance_sorted,
             shap_summary=self._compute_shap_summary(model, dtrain, feature_cols) if len(feature_cols) <= 50 else None,
@@ -501,7 +519,9 @@ class StockRankerService:
             "bottom_score": float(np.min(scores)),
             "score_range": float(np.max(scores) - np.min(scores)),
             "n_predicted": len(features),
-            "score_cv": safe_divide(float(np.std(scores, ddof=1)), float(np.abs(np.mean(scores))), default=None),  # 变异系数，衡量分数区分度
+            "score_cv": safe_divide(
+                float(np.std(scores, ddof=1)), float(np.abs(np.mean(scores))), default=None
+            ),  # 变异系数，衡量分数区分度
         }
 
         return RankPredictionResult(
@@ -550,8 +570,7 @@ class StockRankerService:
         feature_medians = metadata.get("feature_medians", {})
 
         logger.info(
-            f"[StockRanker] 开始预测+回测: model_id={model_id}, "
-            f"历史数据={len(feature_history)}行, top_n={top_n}"
+            f"[StockRanker] 开始预测+回测: model_id={model_id}, " f"历史数据={len(feature_history)}行, top_n={top_n}"
         )
 
         # 训练期重叠校验：检测回测数据是否与训练期重叠，避免 in-sample bias
@@ -601,12 +620,14 @@ class StockRankerService:
                     stock_names = top_stocks["asset"].values
                 else:
                     raise ValueError(f"数据中缺少股票标识列 '{stock_col}' 或 'asset'")
-                weights_chunk = pd.DataFrame({
-                    date_col: date,
-                    stock_col: stock_names,
-                    "weight": weight,
-                    "rank_score": top_stocks["rank_score"].values,
-                })
+                weights_chunk = pd.DataFrame(
+                    {
+                        date_col: date,
+                        stock_col: stock_names,
+                        "weight": weight,
+                        "rank_score": top_stocks["rank_score"].values,
+                    }
+                )
                 portfolio_weights_list.append(weights_chunk)
 
             except Exception as e:
@@ -624,9 +645,13 @@ class StockRankerService:
 
             backtest_result = vectorbt_backtest_service.run_vectorbt_backtest_from_weights(
                 weights_df=weights_df,
-                price_data=feature_history[[date_col, stock_col, price_col]].rename(
-                    columns={stock_col: "ticker", price_col: "close"}
-                ) if stock_col != "ticker" else feature_history[[date_col, stock_col, price_col]],
+                price_data=(
+                    feature_history[[date_col, stock_col, price_col]].rename(
+                        columns={stock_col: "ticker", price_col: "close"}
+                    )
+                    if stock_col != "ticker"
+                    else feature_history[[date_col, stock_col, price_col]]
+                ),
                 rebalance_freq=rebalance_freq,
             )
             backtest_result["success"] = True
@@ -670,15 +695,11 @@ class StockRankerService:
 
         result = {
             "model_id": model_id,
-            "feature_importance_gain": [
-                {"feature": feat, "importance": float(imp)}
-                for feat, imp in importance_sorted
-            ],
+            "feature_importance_gain": [{"feature": feat, "importance": float(imp)} for feat, imp in importance_sorted],
             "feature_importance_split": [
                 {"feature": feat, "importance": float(imp)}
                 for feat, imp in sorted(
-                    model.get_score(importance_type="weight").items(),
-                    key=lambda x: x[1], reverse=True
+                    model.get_score(importance_type="weight").items(), key=lambda x: x[1], reverse=True
                 )[:max_display]
             ],
             "n_features": len(feature_cols),
@@ -911,9 +932,7 @@ class StockRankerService:
                 adjusted_split_idx -= last_train
             elif train_groups:
                 # 仅有一个日期组：无法按组分割，发出警告并使用空验证集
-                logger.warning(
-                    "[StockRanker] 仅有一个日期组，无法创建验证集，early stopping 将失效"
-                )
+                logger.warning("[StockRanker] 仅有一个日期组，无法创建验证集，early stopping 将失效")
 
         return train_groups, valid_groups, adjusted_split_idx
 
@@ -932,13 +951,8 @@ class StockRankerService:
 
             # 全局特征重要性（按 |mean(SHAP)| 排序）
             mean_abs_shap = np.abs(shap_values).mean(axis=0)
-            shap_importance = {
-                feat: float(mean_abs_shap[i])
-                for i, feat in enumerate(feature_names)
-            }
-            shap_importance_sorted = dict(
-                sorted(shap_importance.items(), key=lambda x: x[1], reverse=True)
-            )
+            shap_importance = {feat: float(mean_abs_shap[i]) for i, feat in enumerate(feature_names)}
+            shap_importance_sorted = dict(sorted(shap_importance.items(), key=lambda x: x[1], reverse=True))
 
             return {
                 "shap_importance": shap_importance_sorted,

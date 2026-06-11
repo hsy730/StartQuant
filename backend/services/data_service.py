@@ -9,6 +9,7 @@ Mask-First设计：在数据加载阶段即构建可交易性掩码(tradable_mas
 - 即便事后删除这些行，计算时已经被污染
 - 解决方案：在数据加载时就标记不可交易日，让所有算子接收并传递mask
 """
+
 import hashlib
 import logging
 from pathlib import Path
@@ -29,12 +30,13 @@ logger = logging.getLogger(__name__)
 @dataclass
 class TradableMaskConfig:
     """可交易性掩码配置"""
-    check_limit_up: bool = True           # 是否检测涨停
-    check_limit_down: bool = True         # 是否检测跌停
-    check_suspended: bool = True          # 是否检测停牌
-    check_new_stock: bool = True          # 是否过滤新股（上市<250天）
-    new_stock_threshold: int = 250         # 新股上市天数阈值
-    volume_threshold: float = 0.0         # 成交量阈值（<=此值视为停牌）
+
+    check_limit_up: bool = True  # 是否检测涨停
+    check_limit_down: bool = True  # 是否检测跌停
+    check_suspended: bool = True  # 是否检测停牌
+    check_new_stock: bool = True  # 是否过滤新股（上市<250天）
+    new_stock_threshold: int = 250  # 新股上市天数阈值
+    volume_threshold: float = 0.0  # 成交量阈值（<=此值视为停牌）
 
 
 class DataService:
@@ -45,23 +47,23 @@ class DataService:
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.cache_service = cache_service
         self.preprocessing = data_preprocessing_service
-        
+
         # 市场板块配置（涨跌幅限制）
         self._board_config = {
             MarketBoard.STAR: {
-                "price_limit": 0.20,      # ±20%
+                "price_limit": 0.20,  # ±20%
                 "description": "科创板市场",
             },
             MarketBoard.CHINEXT: {
-                "price_limit": 0.20,      # ±20%
+                "price_limit": 0.20,  # ±20%
                 "description": "创业板市场",
             },
             MarketBoard.BSE: {
-                "price_limit": 0.30,      # ±30%
+                "price_limit": 0.30,  # ±30%
                 "description": "北交所市场",
             },
             MarketBoard.MAIN: {
-                "price_limit": 0.10,      # ±10%
+                "price_limit": 0.10,  # ±10%
                 "description": "主板市场",
             },
         }
@@ -336,10 +338,7 @@ class DataService:
         return board
 
     def _detect_price_limits(
-        self,
-        df: pd.DataFrame,
-        stock_code: str,
-        config: Optional[TradableMaskConfig] = None
+        self, df: pd.DataFrame, stock_code: str, config: Optional[TradableMaskConfig] = None
     ) -> pd.DataFrame:
         """
         检测涨跌停并构建可交易性掩码（Mask-First核心方法）
@@ -388,14 +387,11 @@ class DataService:
         if config.check_limit_up:
             # 一字涨停：最高价>=涨停价 且 最低价≈最高价（全天封死，允许浮点误差）
             df["is_limit_up"] = (
-                (df["high"] >= df["limit_up_price"]) &
-                np.isclose(df["low"], df["high"], atol=0.001)
+                (df["high"] >= df["limit_up_price"]) & np.isclose(df["low"], df["high"], atol=0.001)
             ).fillna(False)
-            
+
             # 额外检测：收盘价==涨停价（触及涨停）
-            df["touched_limit_up"] = (
-                df["close"] >= df["limit_up_price"] * 0.999  # 允许0.1%误差
-            ).fillna(False)
+            df["touched_limit_up"] = (df["close"] >= df["limit_up_price"] * 0.999).fillna(False)  # 允许0.1%误差
         else:
             df["is_limit_up"] = False
             df["touched_limit_up"] = False
@@ -404,24 +400,20 @@ class DataService:
         if config.check_limit_down:
             # 一字跌停：最低价<=跌停价 且 最低价≈最高价（允许浮点误差）
             df["is_limit_down"] = (
-                (df["low"] <= df["limit_down_price"]) &
-                np.isclose(df["low"], df["high"], atol=0.001)
+                (df["low"] <= df["limit_down_price"]) & np.isclose(df["low"], df["high"], atol=0.001)
             ).fillna(False)
-            
+
             # 触及跌停
-            df["touched_limit_down"] = (
-                df["close"] <= df["limit_down_price"] * 1.001  # 允许0.1%误差
-            ).fillna(False)
+            df["touched_limit_down"] = (df["close"] <= df["limit_down_price"] * 1.001).fillna(False)  # 允许0.1%误差
         else:
             df["is_limit_down"] = False
             df["touched_limit_down"] = False
 
         # 6. 检测停牌（成交量异常低或缺失）
         if config.check_suspended:
-            df["is_suspended"] = (
-                (df["volume"] <= config.volume_threshold) |
-                df["volume"].isna()
-            ).fillna(True)  # 缺失成交量视为停牌
+            df["is_suspended"] = ((df["volume"] <= config.volume_threshold) | df["volume"].isna()).fillna(
+                True
+            )  # 缺失成交量视为停牌
         else:
             df["is_suspended"] = False
 
@@ -484,17 +476,29 @@ class DataService:
 
         # 清理中间列（只保留关键列）
         columns_to_keep = [
-            "open", "high", "low", "close", "volume",
-            "amount", "pct_change", "turnover",  # 原始OHLCV
-            "is_limit_up", "is_limit_down", "is_suspended",  # 状态标记
-            "tradable_mask"  # 核心掩码
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume",
+            "amount",
+            "pct_change",
+            "turnover",  # 原始OHLCV
+            "is_limit_up",
+            "is_limit_down",
+            "is_suspended",  # 状态标记
+            "tradable_mask",  # 核心掩码
         ]
-        
+
         # 保留存在的列
         final_columns = [col for col in columns_to_keep if col in df.columns]
         # 也保留其他可能存在的列
-        other_columns = [col for col in df.columns if col not in final_columns and not col.startswith(("limit_", "prev_", "touched_", "is_new"))]
-        
+        other_columns = [
+            col
+            for col in df.columns
+            if col not in final_columns and not col.startswith(("limit_", "prev_", "touched_", "is_new"))
+        ]
+
         return df[final_columns + other_columns]
 
     def _preprocess_data(self, df: pd.DataFrame, stock_code: str = "") -> pd.DataFrame:
@@ -588,9 +592,7 @@ class DataService:
 
         return {code: industry_map.get(code, "") for code in stock_codes}
 
-    def get_market_cap_data(
-        self, stock_code: str, start_date: str, end_date: str
-    ) -> pd.DataFrame:
+    def get_market_cap_data(self, stock_code: str, start_date: str, end_date: str) -> pd.DataFrame:
         stock_code = self._normalize_stock_code(stock_code)
         cache_key = self._get_cache_key(stock_code + "_mktcap", start_date, end_date)
 

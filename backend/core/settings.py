@@ -1,6 +1,7 @@
 """
 应用配置模块
 """
+
 import logging
 import shutil
 from pathlib import Path

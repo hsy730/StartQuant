@@ -1,23 +1,22 @@
 """
 策略基类 - 定义策略接口
 """
+
 from abc import ABC, abstractmethod
 from typing import Dict
 import pandas as pd
 
-from backend.services.risk_metrics import calculate_risk_metrics as _calculate_risk_metrics, _empty_metrics as _risk_empty_metrics
+from backend.services.risk_metrics import (
+    calculate_risk_metrics as _calculate_risk_metrics,
+    _empty_metrics as _risk_empty_metrics,
+)
 from backend.utils.return_calculator import calculate_future_return
 
 
 class BaseStrategy(ABC):
     """策略抽象基类"""
 
-    def __init__(
-        self,
-        initial_capital: float = 1000000,
-        commission_rate: float = 0.0003,
-        **kwargs
-    ):
+    def __init__(self, initial_capital: float = 1000000, commission_rate: float = 0.0003, **kwargs):
         """
         初始化策略
 
@@ -49,11 +48,7 @@ class BaseStrategy(ABC):
         pass
 
     @abstractmethod
-    def calculate_weights(
-        self,
-        df: pd.DataFrame,
-        signals: pd.Series
-    ) -> pd.Series:
+    def calculate_weights(self, df: pd.DataFrame, signals: pd.Series) -> pd.Series:
         """
         计算持仓权重
 
@@ -135,9 +130,7 @@ class BaseStrategy(ABC):
         # 7. 计算交易次数
         if is_multiindex:
             # MultiIndex 下按资产分组统计交易次数
-            trades_count = int(
-                weights.groupby(level=1).diff().fillna(0).ne(0).groupby(level=0).any().sum()
-            )
+            trades_count = int(weights.groupby(level=1).diff().fillna(0).ne(0).groupby(level=0).any().sum())
         else:
             trades_count = (weights.diff().fillna(0) != 0).sum()
 
@@ -160,10 +153,7 @@ class BaseStrategy(ABC):
         }
 
     def calculate_metrics(
-        self,
-        returns: pd.Series,
-        annual_trading_days: int = 252,
-        risk_free_rate: float = 0.03
+        self, returns: pd.Series, annual_trading_days: int = 252, risk_free_rate: float = 0.03
     ) -> Dict:
         """
         计算性能指标（委托risk_metrics统一入口，符合规则0和代码复用原则）

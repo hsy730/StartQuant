@@ -1,6 +1,7 @@
 """
 可视化增强服务 - 生成专业的分析图表
 """
+
 from typing import Dict
 import pandas as pd
 import plotly.graph_objects as go
@@ -8,6 +9,7 @@ from plotly.subplots import make_subplots
 
 try:
     import networkx as nx
+
     NETWORKX_AVAILABLE = True
 except ImportError:
     NETWORKX_AVAILABLE = False
@@ -55,12 +57,7 @@ class VisualizationService:
         )
 
         # 添加零线
-        fig.add_hline(
-            y=1.0,
-            line_dash="dash",
-            line_color="gray",
-            annotation_text="基准线"
-        )
+        fig.add_hline(y=1.0, line_dash="dash", line_color="gray", annotation_text="基准线")
 
         # 更新布局
         fig.update_layout(
@@ -117,6 +114,7 @@ class VisualizationService:
             pos = nx.spring_layout(G, k=2, iterations=50, seed=42)
         except Exception as e:
             import logging
+
             logging.getLogger(__name__).debug(f"spring_layout失败，使用circular_layout: {e}")
             pos = nx.circular_layout(G)
 
@@ -173,10 +171,7 @@ class VisualizationService:
         fig = go.Figure(
             data=[edge_trace, node_trace],
             layout=go.Layout(
-                title=dict(
-                    text=f"因子相关性网络图（阈值 ≥ {threshold}）",
-                    font=dict(size=16)
-                ),
+                title=dict(text=f"因子相关性网络图（阈值 ≥ {threshold}）", font=dict(size=16)),
                 showlegend=False,
                 hovermode="closest",
                 margin=dict(b=20, l=5, r=5, t=40),
@@ -343,20 +338,10 @@ class VisualizationService:
 
         # 添加均值线
         mean_ic = ic_clean.mean()
-        fig.add_vline(
-            x=mean_ic,
-            line_dash="dash",
-            line_color="red",
-            annotation_text=f"均值: {mean_ic:.4f}"
-        )
+        fig.add_vline(x=mean_ic, line_dash="dash", line_color="red", annotation_text=f"均值: {mean_ic:.4f}")
 
         # 添加零线
-        fig.add_vline(
-            x=0,
-            line_dash="dash",
-            line_color="gray",
-            annotation_text="零线"
-        )
+        fig.add_vline(x=0, line_dash="dash", line_color="gray", annotation_text="零线")
 
         # 更新布局
         fig.update_layout(
@@ -417,12 +402,7 @@ class VisualizationService:
         )
 
         # 添加零线
-        fig.add_hline(
-            y=0,
-            line_dash="dash",
-            line_color="gray",
-            annotation_text="零线"
-        )
+        fig.add_hline(y=0, line_dash="dash", line_color="gray", annotation_text="零线")
 
         # 更新布局
         fig.update_layout(
@@ -558,7 +538,7 @@ class VisualizationService:
             line_color="red",
             row=1,
             col=1,
-            annotation_text=f"均值: {avg_turnover:.3f}"
+            annotation_text=f"均值: {avg_turnover:.3f}",
         )
 
         # 更新布局
@@ -612,11 +592,7 @@ class VisualizationService:
         fig = go.Figure()
 
         for i, metric in enumerate(set(metrics)):
-            metric_data = [
-                (f, m, v)
-                for f, m, v in zip(factors, metrics, values)
-                if m == metric
-            ]
+            metric_data = [(f, m, v) for f, m, v in zip(factors, metrics, values) if m == metric]
 
             metric_factors = [x[0] for x in metric_data]
             metric_values = [x[2] for x in metric_data]

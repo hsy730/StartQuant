@@ -1,6 +1,7 @@
 """
 市值加权策略 - 按市值分配权重
 """
+
 import pandas as pd
 from .base_strategy import BaseStrategy
 from backend.utils.safe_math import safe_divide
@@ -20,7 +21,7 @@ class MarketCapStrategy(BaseStrategy):
         initial_capital: float = 1000000,
         commission_rate: float = 0.0003,
         market_cap_column: str = "market_cap",
-        **kwargs
+        **kwargs,
     ):
         """
         初始化市值加权策略
@@ -57,11 +58,7 @@ class MarketCapStrategy(BaseStrategy):
 
         return signals
 
-    def calculate_weights(
-        self,
-        df: pd.DataFrame,
-        signals: pd.Series
-    ) -> pd.Series:
+    def calculate_weights(self, df: pd.DataFrame, signals: pd.Series) -> pd.Series:
         """
         按市值计算权重（向量化实现）
 
@@ -107,9 +104,9 @@ class MarketCapStrategy(BaseStrategy):
 
         if date_level is not None:
             date_grouper = df.index.get_level_values(date_level) if df.index.nlevels > 1 else df.index
-            total_mcap = df.loc[valid_mask, self.market_cap_column].groupby(
-                date_grouper[valid_mask.values]
-            ).transform("sum")
+            total_mcap = (
+                df.loc[valid_mask, self.market_cap_column].groupby(date_grouper[valid_mask.values]).transform("sum")
+            )
             weights[valid_mask] = safe_divide(
                 df.loc[valid_mask, self.market_cap_column].values,
                 total_mcap.values,

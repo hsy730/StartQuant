@@ -1,6 +1,7 @@
 """
 组合分析服务 - 分析投资组合的暴露度和风险
 """
+
 import logging
 from typing import Dict, List, Optional
 import pandas as pd
@@ -23,10 +24,7 @@ class PortfolioAnalysisService:
         pass
 
     def calculate_industry_exposure(
-        self,
-        positions: pd.DataFrame,
-        industry_column: str = "industry",
-        weight_column: str = "weight"
+        self, positions: pd.DataFrame, industry_column: str = "industry", weight_column: str = "weight"
     ) -> Dict:
         """
         计算行业暴露度
@@ -125,11 +123,7 @@ class PortfolioAnalysisService:
             "max_exposure": max([abs(v) for v in factor_exposures.values()]) if factor_exposures else 0.0,
         }
 
-    def calculate_concentration(
-        self,
-        positions: pd.DataFrame,
-        weight_column: str = "weight"
-    ) -> Dict:
+    def calculate_concentration(self, positions: pd.DataFrame, weight_column: str = "weight") -> Dict:
         """
         计算组合集中度
 
@@ -162,7 +156,7 @@ class PortfolioAnalysisService:
 
         # 2. Herfindahl指数（权重平方和）
         normalized_weights = normalize_weights(weights, default_equal=False)
-        herfindahl_index = (normalized_weights ** 2).sum()
+        herfindahl_index = (normalized_weights**2).sum()
 
         # 3. 基尼系数
         gini_coefficient = self._calculate_gini(normalized_weights.values)
@@ -209,8 +203,7 @@ class PortfolioAnalysisService:
         # 如果有基准，计算相对风险指标（委托risk_metrics统一入口，符合规则2）
         if benchmark_returns is not None:
             relative = calculate_relative_metrics(
-                returns_clean, benchmark_returns,
-                risk_free_rate=risk_free_rate, annual_trading_days=annual_trading_days
+                returns_clean, benchmark_returns, risk_free_rate=risk_free_rate, annual_trading_days=annual_trading_days
             )
             result["tracking_error"] = relative.get("tracking_error")
             result["beta"] = relative.get("beta")
@@ -220,6 +213,7 @@ class PortfolioAnalysisService:
     def _empty_risk_metrics(self) -> Dict:
         """返回空的风险指标"""
         from backend.services.risk_metrics import _empty_metrics
+
         return _empty_metrics()
 
     def analyze_portfolio_comprehensive(
@@ -254,26 +248,18 @@ class PortfolioAnalysisService:
 
         # 2. 因子暴露度
         if factor_data:
-            result["factor_exposure"] = self.calculate_factor_exposure(
-                positions, factor_data
-            )
+            result["factor_exposure"] = self.calculate_factor_exposure(positions, factor_data)
 
         # 3. 集中度
         result["concentration"] = self.calculate_concentration(positions)
 
         # 4. 风险指标
-        result["risk_metrics"] = self.calculate_risk_metrics(
-            returns, benchmark_returns
-        )
+        result["risk_metrics"] = self.calculate_risk_metrics(returns, benchmark_returns)
 
         return result
 
     def optimize_weights(
-        self,
-        factor_returns: pd.DataFrame,
-        method: str = "equal_weight",
-        risk_free_rate: float = 0.03,
-        **kwargs
+        self, factor_returns: pd.DataFrame, method: str = "equal_weight", risk_free_rate: float = 0.03, **kwargs
     ) -> Dict:
         """
         优化因子权重
@@ -293,11 +279,7 @@ class PortfolioAnalysisService:
             优化结果字典，包含权重和统计信息
         """
         if factor_returns.empty:
-            return {
-                "weights": {},
-                "method": method,
-                "error": "因子收益率为空"
-            }
+            return {"weights": {}, "method": method, "error": "因子收益率为空"}
 
         # 预处理因子收益率，处理 NaN 和 Inf 值
         # NaN 不填充为0.0（0.0在Z-score空间意味着"平均水平"，严重误导优化）
@@ -319,6 +301,7 @@ class PortfolioAnalysisService:
         # 2. IC加权 — 委托WeightOptimizer统一入口（规则2/7.13）
         elif method == "ic_weight":
             from backend.services.weight_optimizer_service import WeightOptimizer
+
             optimizer = WeightOptimizer()
 
             # 获取因子值数据（kwargs中传入）
@@ -347,16 +330,14 @@ class PortfolioAnalysisService:
                     factor_data_dict=factor_data_dict,
                 )
                 weights = pd.Series(result["weights"])
-                extra_info["ic_values"] = {
-                    k: v for k, v in result["weights"].items()
-                }
+                extra_info["ic_values"] = {k: v for k, v in result["weights"].items()}
 
         # 3. 风险平价 — 使用HRPOpt（层次风险平价，考虑因子间相关性）
         elif method == "risk_parity":
             if n_factors >= 2:
                 try:
                     hrp = HRPOpt(factor_returns)
-                    _raw_weights = hrp.optimize()
+                    _raw_weights = hrp.optimize()  # noqa: F841
                     clean_weights = hrp.clean_weights()
                     weights = pd.Series(clean_weights, index=factor_returns.columns)
                     extra_info["optimization_status"] = "success"
@@ -405,11 +386,7 @@ class PortfolioAnalysisService:
                 extra_info["optimization_status"] = "skipped: only one factor"
 
         else:
-            return {
-                "weights": {},
-                "method": method,
-                "error": f"不支持的权重优化方法: {method}"
-            }
+            return {"weights": {}, "method": method, "error": f"不支持的权重优化方法: {method}"}
 
         # ========== 统一计算基于权重的组合指标 ==========
 
@@ -422,7 +399,7 @@ class PortfolioAnalysisService:
 
         # 计算加权期望收益（年化）— 使用几何复利（Rule 7.32）
         weighted_daily_returns = (factor_returns * weights).sum(axis=1)
-        weighted_return = float(empyrical.annual_return(weighted_daily_returns, period='daily'))
+        weighted_return = float(empyrical.annual_return(weighted_daily_returns, period="daily"))
 
         # 计算加权波动率（年化）
         # 组合方差 = w' * Σ * w
@@ -450,10 +427,7 @@ class PortfolioAnalysisService:
         return result
 
     def calculate_combined_factor_score(
-        self,
-        factor_data: Dict[str, pd.Series],
-        weights: Dict[str, float],
-        normalize: bool = True
+        self, factor_data: Dict[str, pd.Series], weights: Dict[str, float], normalize: bool = True
     ) -> pd.Series:
         """
         根据权重计算综合因子得分
@@ -489,10 +463,7 @@ class PortfolioAnalysisService:
                 else:
                     normalized_factors[factor_name] = aligned_factor - mean
         else:
-            normalized_factors = {
-                name: series.reindex(common_index)
-                for name, series in factor_data.items()
-            }
+            normalized_factors = {name: series.reindex(common_index) for name, series in factor_data.items()}
 
         # 计算加权得分
         combined_score = pd.Series(0.0, index=common_index)
@@ -509,10 +480,7 @@ class PortfolioAnalysisService:
         return combined_score
 
     def compare_weight_methods(
-        self,
-        factor_returns: pd.DataFrame,
-        methods: List[str] = None,
-        risk_free_rate: float = 0.03
+        self, factor_returns: pd.DataFrame, methods: List[str] = None, risk_free_rate: float = 0.03
     ) -> Dict:
         """
         比较不同权重优化方法的效果
@@ -531,11 +499,7 @@ class PortfolioAnalysisService:
         results = {}
 
         for method in methods:
-            optimization_result = self.optimize_weights(
-                factor_returns,
-                method=method,
-                risk_free_rate=risk_free_rate
-            )
+            optimization_result = self.optimize_weights(factor_returns, method=method, risk_free_rate=risk_free_rate)
 
             if "error" not in optimization_result:
                 results[method] = {

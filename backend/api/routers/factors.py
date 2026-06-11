@@ -1,6 +1,9 @@
 """
 因子管理API路由
 """
+
+# ruff: noqa: F821
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import List, Optional
@@ -16,44 +19,136 @@ def _validate_expression_safety(expression: str) -> bool:
     # 允许的名称白名单（变量名、函数名等）
     ALLOWED_NAMES = {
         # 安全的内置函数
-        'abs', 'max', 'min', 'sum', 'len', 'log', 'exp', 'sqrt', 'sign',
-        'round', 'pow', 'int', 'float', 'bool', 'str',
+        "abs",
+        "max",
+        "min",
+        "sum",
+        "len",
+        "log",
+        "exp",
+        "sqrt",
+        "sign",
+        "round",
+        "pow",
+        "int",
+        "float",
+        "bool",
+        "str",
         # 数据源变量
-        'open', 'high', 'low', 'close', 'volume', 'amount',
-        'C', 'O', 'H', 'L', 'V', 'CLOSE', 'OPEN', 'HIGH', 'LOW', 'VOL', 'VWAP',
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume",
+        "amount",
+        "C",
+        "O",
+        "H",
+        "L",
+        "V",
+        "CLOSE",
+        "OPEN",
+        "HIGH",
+        "LOW",
+        "VOL",
+        "VWAP",
         # 库别名
-        'np', 'pd', 'df',
+        "np",
+        "pd",
+        "df",
         # 安全工具
-        'safe_divide',
+        "safe_divide",
         # TALib 指标
-        'SMA', 'MA', 'EMA', 'RSI', 'MACD', 'ADX', 'CCI', 'ATR', 'BBANDS', 'OBV',
-        'STOCH', 'STOCHRSI', 'WILLR', 'KAMA', 'ROC', 'MOM',
+        "SMA",
+        "MA",
+        "EMA",
+        "RSI",
+        "MACD",
+        "ADX",
+        "CCI",
+        "ATR",
+        "BBANDS",
+        "OBV",
+        "STOCH",
+        "STOCHRSI",
+        "WILLR",
+        "KAMA",
+        "ROC",
+        "MOM",
         # 麦语言函数
-        'REF', 'HHV', 'LLV', 'AVE', 'STD', 'COUNT', 'EVERY', 'EXIST',
-        'CROSS', 'LONGCROSS', 'UP', 'DOWN', 'IF', 'BETWEEN',
-        'BARSLAST', 'CONST', 'TSRANK', 'CORR', 'COV', 'DELTA',
-        'SIGN', 'SIGNEDPOWER', 'RETURNS', 'TS_PRODUCT', 'TS_ARGMAX', 'TS_ARGMIN',
-        'SCALE', 'DECAY_LINEAR',
+        "REF",
+        "HHV",
+        "LLV",
+        "AVE",
+        "STD",
+        "COUNT",
+        "EVERY",
+        "EXIST",
+        "CROSS",
+        "LONGCROSS",
+        "UP",
+        "DOWN",
+        "IF",
+        "BETWEEN",
+        "BARSLAST",
+        "CONST",
+        "TSRANK",
+        "CORR",
+        "COV",
+        "DELTA",
+        "SIGN",
+        "SIGNEDPOWER",
+        "RETURNS",
+        "TS_PRODUCT",
+        "TS_ARGMAX",
+        "TS_ARGMIN",
+        "SCALE",
+        "DECAY_LINEAR",
         # 统计函数
-        'mean', 'median', 'rank', 'zscore',
+        "mean",
+        "median",
+        "rank",
+        "zscore",
     }
     try:
-        tree = ast.parse(expression, mode='eval')
+        tree = ast.parse(expression, mode="eval")
         # 只允许安全节点（注意：ast.Name 不在此列表中，需单独校验）
         allowed_nodes = (
-            ast.Expression, ast.BinOp, ast.UnaryOp, ast.Compare,
-            ast.Call, ast.Attribute, ast.Constant, ast.Num,
-            ast.Str, ast.Load, ast.Add, ast.Sub, ast.Mult, ast.Div,
-            ast.Pow, ast.Mod, ast.USub, ast.UAdd, ast.And, ast.Or,
-            ast.Eq, ast.NotEq, ast.Lt, ast.LtE, ast.Gt, ast.GtE,
-            ast.Subscript, ast.Index,
+            ast.Expression,
+            ast.BinOp,
+            ast.UnaryOp,
+            ast.Compare,
+            ast.Call,
+            ast.Attribute,
+            ast.Constant,
+            ast.Num,
+            ast.Str,
+            ast.Load,
+            ast.Add,
+            ast.Sub,
+            ast.Mult,
+            ast.Div,
+            ast.Pow,
+            ast.Mod,
+            ast.USub,
+            ast.UAdd,
+            ast.And,
+            ast.Or,
+            ast.Eq,
+            ast.NotEq,
+            ast.Lt,
+            ast.LtE,
+            ast.Gt,
+            ast.GtE,
+            ast.Subscript,
+            ast.Index,
         )
         for node in ast.walk(tree):
             if isinstance(node, allowed_nodes):
                 # allowed_nodes 中的节点类型直接放行
                 # 但 ast.Attribute 需要额外检查下划线属性
                 if isinstance(node, ast.Attribute):
-                    if node.attr.startswith('_'):
+                    if node.attr.startswith("_"):
                         return False
                 continue
             # ast.Name 不在 allowed_nodes 中，需单独校验白名单
@@ -70,8 +165,10 @@ def _validate_expression_safety(expression: str) -> bool:
 
 # ========== 数据模型 ==========
 
+
 class FactorCreate(BaseModel):
     """创建因子请求"""
+
     name: str
     code: str
     category: str
@@ -83,6 +180,7 @@ class FactorCreate(BaseModel):
 
 class FactorUpdate(BaseModel):
     """更新因子请求"""
+
     name: Optional[str] = None
     code: Optional[str] = None
     category: Optional[str] = None
@@ -91,6 +189,7 @@ class FactorUpdate(BaseModel):
 
 class BatchGenerateRequest(BaseModel):
     """批量生成因子请求"""
+
     base_factors: List[str]
     generate_methods: List[str]  # ["arithmetic", "statistics", "technical"]
     ic_threshold: float = 0.03
@@ -100,6 +199,7 @@ class BatchGenerateRequest(BaseModel):
 
 class PreselectRequest(BaseModel):
     """预筛选因子请求"""
+
     factors: List[str]
     ic_threshold: float = 0.03
     ir_threshold: float = 0.5
@@ -108,11 +208,9 @@ class PreselectRequest(BaseModel):
 
 # ========== API端点 ==========
 
+
 @router.get("/")
-async def get_factors(
-    category: Optional[str] = None,
-    source: Optional[str] = None
-):
+async def get_factors(category: Optional[str] = None, source: Optional[str] = None):
     """
     获取因子列表
 
@@ -129,11 +227,7 @@ async def get_factors(
         if source:
             factors = [f for f in factors if f.get("source") == source]
 
-        return {
-            "success": True,
-            "data": factors,
-            "total": len(factors)
-        }
+        return {"success": True, "data": factors, "total": len(factors)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -143,10 +237,7 @@ async def get_factor_stats():
     """获取因子统计信息"""
     try:
         stats = factor_service.get_factor_stats()
-        return {
-            "success": True,
-            "data": stats
-        }
+        return {"success": True, "data": stats}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -167,10 +258,7 @@ async def get_factor(factor_id: int):
 
         factor = factor_model.to_dict()
 
-        return {
-            "success": True,
-            "data": factor
-        }
+        return {"success": True, "data": factor}
     except HTTPException:
         raise
     except Exception as e:
@@ -196,11 +284,7 @@ async def create_factor(request: FactorCreate):
             skip_validation=request.skip_validation,
         )
 
-        return {
-            "success": True,
-            "data": factor,
-            "message": "因子创建成功"
-        }
+        return {"success": True, "data": factor, "message": "因子创建成功"}
     except ValueError as e:
         # 验证门控拒绝，返回400而非500
         raise HTTPException(status_code=400, detail=str(e))
@@ -218,13 +302,10 @@ async def update_factor(factor_id: int, request: FactorUpdate):
             name=request.name,
             code=request.code,
             category=request.category,
-            description=request.description
+            description=request.description,
         )
 
-        return {
-            "success": True,
-            "message": "因子更新成功"
-        }
+        return {"success": True, "message": "因子更新成功"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -238,10 +319,7 @@ async def delete_factor(factor_id: int):
         if not success:
             raise HTTPException(status_code=404, detail="因子不存在或删除失败")
 
-        return {
-            "success": True,
-            "message": "因子删除成功"
-        }
+        return {"success": True, "message": "因子删除成功"}
     except HTTPException:
         raise
     except Exception as e:
@@ -259,33 +337,28 @@ async def batch_generate_factors(request: BatchGenerateRequest):
             if method == "arithmetic":
                 # 算术运算组合
                 factors = factor_generator_service.generate_binary_combinations(
-                    base_factors=request.base_factors,
-                    max_depth=2,
-                    max_combinations=50
+                    base_factors=request.base_factors, max_depth=2, max_combinations=50
                 )
                 all_generated_factors.extend(factors)
 
             elif method == "statistics":
                 # 统计变换
                 factors = factor_generator_service.generate_statistical_combinations(
-                    base_factors=request.base_factors,
-                    max_combinations=50
+                    base_factors=request.base_factors, max_combinations=50
                 )
                 all_generated_factors.extend(factors)
 
             elif method == "technical":
                 # 技术指标组合
                 factors = factor_generator_service.generate_indicator_combinations(
-                    base_factors=request.base_factors,
-                    max_combinations=30
+                    base_factors=request.base_factors, max_combinations=30
                 )
                 all_generated_factors.extend(factors)
 
         # 混合因子生成
         if len(request.generate_methods) > 1:
             hybrid_factors = factor_generator_service.generate_hybrid_factors(
-                base_factors=request.base_factors,
-                n_factors=20
+                base_factors=request.base_factors, n_factors=20
             )
             all_generated_factors.extend(hybrid_factors)
 
@@ -304,13 +377,10 @@ async def batch_generate_factors(request: BatchGenerateRequest):
         result = {
             "generated_count": len(all_generated_factors),
             "factors": all_generated_factors[:20],  # 只返回前20个示例
-            "total_possible": len(all_generated_factors)
+            "total_possible": len(all_generated_factors),
         }
 
-        return {
-            "success": True,
-            "data": result
-        }
+        return {"success": True, "data": result}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -323,11 +393,7 @@ async def preselect_factors(request: PreselectRequest):
         # 暂时返回示例数据
         return {
             "success": True,
-            "data": {
-                "total": len(request.factors),
-                "selected": len(request.factors),
-                "factors": request.factors
-            }
+            "data": {"total": len(request.factors), "selected": len(request.factors), "factors": request.factors},
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -335,6 +401,7 @@ async def preselect_factors(request: PreselectRequest):
 
 class ValidateFactorRequest(BaseModel):
     """验证因子公式请求"""
+
     code: str
     formula_type: str = "expression"
 
@@ -347,43 +414,28 @@ async def validate_factor(request: ValidateFactorRequest):
         formula_type = request.formula_type
 
         if not code:
-            return {
-                "success": False,
-                "message": "代码不能为空"
-            }
+            return {"success": False, "message": "代码不能为空"}
 
         # 字符检查：确保只包含合法字符
         import re
+
         # 使用更宽松的检查：只禁止控制字符，允许所有可打印字符（包括中文）
-        if re.search(r'[\x00-\x08\x0B\x0C\x0E-\x1F]', code):
-            return {
-                "success": False,
-                "message": "代码包含非法控制字符"
-            }
+        if re.search(r"[\x00-\x08\x0B\x0C\x0E-\x1F]", code):
+            return {"success": False, "message": "代码包含非法控制字符"}
 
         # 调用真正的验证逻辑：执行代码来测试
         is_valid, message = factor_service.validate_factor_code(code)
 
         if not is_valid:
-            return {
-                "success": False,
-                "message": message
-            }
+            return {"success": False, "message": message}
 
         return {
             "success": True,
-            "data": {
-                "code": code,
-                "formula_type": formula_type,
-                "valid": True
-            },
-            "message": "验证通过"
+            "data": {"code": code, "formula_type": formula_type, "valid": True},
+            "message": "验证通过",
         }
     except Exception as e:
-        return {
-            "success": False,
-            "message": str(e)
-        }
+        return {"success": False, "message": str(e)}
 
 
 @router.post("/{factor_id}/copy")
@@ -403,8 +455,7 @@ async def copy_factor(factor_id: int):
 
         # 查找已存在的同名副本数量
         existing_copies = [
-            f for f in factors
-            if f.get("source") == "user" and f.get("name", "").startswith(base_name + "_")
+            f for f in factors if f.get("source") == "user" and f.get("name", "").startswith(base_name + "_")
         ]
 
         # 提取已有的数字后缀
@@ -412,7 +463,7 @@ async def copy_factor(factor_id: int):
         for f in existing_copies:
             name = f.get("name", "")
             if name.startswith(base_name + "_"):
-                suffix = name[len(base_name) + 1:]
+                suffix = name[len(base_name) + 1 :]  # noqa: E203
                 if suffix.isdigit():
                     suffix_numbers.append(int(suffix))
 
@@ -430,14 +481,10 @@ async def copy_factor(factor_id: int):
             code=original_factor.get("code", ""),
             category=original_factor.get("category", ""),
             description=original_factor.get("description", ""),
-            formula_type=original_factor.get("formula_type", "expression")
+            formula_type=original_factor.get("formula_type", "expression"),
         )
 
-        return {
-            "success": True,
-            "data": new_factor,
-            "message": f"因子已复制为 {new_name}"
-        }
+        return {"success": True, "data": new_factor, "message": f"因子已复制为 {new_name}"}
     except HTTPException:
         raise
     except Exception as e:
@@ -445,6 +492,7 @@ async def copy_factor(factor_id: int):
 
 
 # ========== 生成因子（generated_factors）管理端点 ==========
+
 
 @router.get("/generated/")
 async def get_generated_factors(
@@ -509,6 +557,7 @@ async def get_generated_factor(generated_id: int):
 
 class PromoteFactorRequest(BaseModel):
     """将验证通过的生成因子提升到因子库"""
+
     name: str
     category: str = "遗传挖掘"
     description: str = ""
@@ -535,33 +584,24 @@ async def promote_generated_factor(generated_id: int, request: PromoteFactorRequ
             if not gen_factor.is_valid:
                 raise HTTPException(
                     status_code=400,
-                    detail=f"因子未通过验证（验证得分: {gen_factor.validation_score:.1f}），不能提升到因子库"
+                    detail=f"因子未通过验证（验证得分: {gen_factor.validation_score:.1f}），不能提升到因子库",
                 )
 
             if gen_factor.is_saved:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"因子已保存为 '{gen_factor.factor_name}'，请勿重复操作"
-                )
+                raise HTTPException(status_code=400, detail=f"因子已保存为 '{gen_factor.factor_name}'，请勿重复操作")
 
             # 将表达式包装为完整函数
             expression = gen_factor.expression
 
             # 验证表达式安全性，防止代码注入
             if not _validate_expression_safety(expression):
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"因子表达式包含不安全代码: {expression[:50]}"
-                )
+                raise HTTPException(status_code=400, detail=f"因子表达式包含不安全代码: {expression[:50]}")
 
         import re
-        processed_expr = re.sub(
-            r'\b(open|close|high|low|volume)\b',
-            lambda m: f"df['{m.group(1)}']",
-            expression
-        )
 
-        code = f"""def calculate_factor(df):
+        processed_expr = re.sub(r"\b(open|close|high|low|volume)\b", lambda m: f"df['{m.group(1)}']", expression)
+
+        code = f"""def calculate_factor(df):  # noqa: F821
     \"\"\"
     {gen_factor.generation_method}挖掘因子
     表达式: {expression}
@@ -577,7 +617,7 @@ async def promote_generated_factor(generated_id: int, request: PromoteFactorRequ
         return result
     except Exception as ex:
         import logging
-        logging.getLogger(__name__).warning(f"因子计算异常: {ex}")
+        logging.getLogger(__name__).warning(f"因子计算异常: {ex}")  # noqa: F821
         return pd.Series(float('nan'), index=df.index)
 """
 
@@ -586,7 +626,8 @@ async def promote_generated_factor(generated_id: int, request: PromoteFactorRequ
             name=request.name,
             code=code,
             category=request.category,
-            description=request.description or f"表达式: {expression} | IC: {gen_factor.ic_value} | IR: {gen_factor.ir_value}",
+            description=request.description
+            or f"表达式: {expression} | IC: {gen_factor.ic_value} | IR: {gen_factor.ir_value}",
             formula_type="function",
             generated_factor_id=generated_id,
         )
@@ -619,10 +660,7 @@ async def delete_generated_factor(generated_id: int):
                 raise HTTPException(status_code=404, detail="生成因子不存在")
 
             if factor.is_saved:
-                raise HTTPException(
-                    status_code=400,
-                    detail="该因子已保存到因子库，请从因子库中删除"
-                )
+                raise HTTPException(status_code=400, detail="该因子已保存到因子库，请从因子库中删除")
 
             repo.delete(generated_id)
 

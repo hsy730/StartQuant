@@ -1,6 +1,7 @@
 """
 公式编译器服务 - 可视化因子构建
 """
+
 import ast
 from typing import Dict, Tuple
 
@@ -167,7 +168,10 @@ class FormulaCompilerService:
                 elif func_name == "ATR":
                     # TA-Lib ATR需要(high, low, close, timeperiod=N)三个价格序列
                     if len(compiled_args) >= 4:
-                        return f"ATR({compiled_args[0]}, {compiled_args[1]}, {compiled_args[2]}, timeperiod={compiled_args[3]})"
+                        return (
+                            f"ATR({compiled_args[0]}, {compiled_args[1]}, "
+                            f"{compiled_args[2]}, timeperiod={compiled_args[3]})"
+                        )
                     else:
                         # 参数不足时走通用分支，让运行时报错更清晰
                         return f"{func_name}({', '.join(compiled_args)})"
@@ -176,13 +180,17 @@ class FormulaCompilerService:
                 else:
                     return f"{func_name}({', '.join(compiled_args)})"
             elif func_name in ["mean", "std", "max", "min"]:
-                return f'{compiled_args[0]}.{func_name}()'
+                return f"{compiled_args[0]}.{func_name}()"
             elif func_name == "rank":
-                return f'{compiled_args[0]}.rank()'
+                return f"{compiled_args[0]}.rank()"
             elif func_name == "zscore":
                 # 使用滚动窗口zscore避免前视偏差，默认窗口20
                 window = compiled_args[1] if len(compiled_args) > 1 else 20
-                return f'safe_series_divide({compiled_args[0]} - {compiled_args[0]}.rolling({window}).mean(), {compiled_args[0]}.rolling({window}).std())'
+                return (
+                    f"safe_series_divide({compiled_args[0]} - "
+                    f"{compiled_args[0]}.rolling({window}).mean(), "
+                    f"{compiled_args[0]}.rolling({window}).std())"
+                )
             else:
                 return f"{func_name}({', '.join(compiled_args)})"
 
@@ -202,16 +210,38 @@ class FormulaCompilerService:
 
     # 禁止调用的函数名（危险内置函数）
     _FORBIDDEN_FUNCTIONS = {
-        "exec", "eval", "compile", "open", "__import__", "input",
-        "globals", "locals", "vars", "dir", "getattr", "hasattr",
-        "delattr", "setattr", "breakpoint",
+        "exec",
+        "eval",
+        "compile",
+        "open",
+        "__import__",
+        "input",
+        "globals",
+        "locals",
+        "vars",
+        "dir",
+        "getattr",
+        "hasattr",
+        "delattr",
+        "setattr",
+        "breakpoint",
     }
 
     # 禁止访问的属性名（防止沙箱逃逸）
     _FORBIDDEN_ATTRS = {
-        "__builtins__", "__import__", "__class__", "__bases__", "__subclasses__",
-        "__globals__", "__code__", "__closure__", "__dict__", "__mro__",
-        "__getattribute__", "__setattr__", "delattr",
+        "__builtins__",
+        "__import__",
+        "__class__",
+        "__bases__",
+        "__subclasses__",
+        "__globals__",
+        "__code__",
+        "__closure__",
+        "__dict__",
+        "__mro__",
+        "__getattribute__",
+        "__setattr__",
+        "delattr",
     }
 
     def validate_formula(self, formula_code: str) -> Tuple[bool, str]:
@@ -227,7 +257,7 @@ class FormulaCompilerService:
         try:
             if formula_code.strip().startswith("def "):
                 # 函数形式：语法检查 + AST安全校验
-                tree = ast.parse(formula_code, mode='exec')
+                tree = ast.parse(formula_code, mode="exec")
                 # 校验函数体中的安全约束
                 for node in ast.walk(tree):
                     # 检查函数调用是否安全
@@ -237,16 +267,36 @@ class FormulaCompilerService:
                             return False, f"禁止调用的函数: {func_name}"
                         if func_name not in self.ALLOWED_FUNCTIONS and func_name not in (
                             # 函数模式允许的额外安全名称
-                            "abs", "min", "max", "len", "sum", "range",
-                            "float", "int", "bool", "str", "list", "tuple", "dict", "set",
-                            "enumerate", "zip", "round", "pow", "sorted", "reversed",
-                            "map", "filter", "any", "all",
+                            "abs",
+                            "min",
+                            "max",
+                            "len",
+                            "sum",
+                            "range",
+                            "float",
+                            "int",
+                            "bool",
+                            "str",
+                            "list",
+                            "tuple",
+                            "dict",
+                            "set",
+                            "enumerate",
+                            "zip",
+                            "round",
+                            "pow",
+                            "sorted",
+                            "reversed",
+                            "map",
+                            "filter",
+                            "any",
+                            "all",
                             "isinstance",
                         ):
                             return False, f"不允许的函数: {func_name}，仅支持: {sorted(self.ALLOWED_FUNCTIONS)}"
                     # 检查属性访问是否安全
                     if isinstance(node, ast.Attribute):
-                        if node.attr in self._FORBIDDEN_ATTRS or node.attr.startswith('_'):
+                        if node.attr in self._FORBIDDEN_ATTRS or node.attr.startswith("_"):
                             return False, f"禁止访问的属性: {node.attr}"
                     # 检查变量名是否安全
                     if isinstance(node, ast.Name):
@@ -255,7 +305,7 @@ class FormulaCompilerService:
             else:
                 # 表达式形式
                 # 只验证语法，不执行
-                tree = ast.parse(formula_code, mode='eval')
+                tree = ast.parse(formula_code, mode="eval")
                 # 校验函数名是否在白名单中
                 for node in ast.walk(tree):
                     if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
@@ -264,7 +314,7 @@ class FormulaCompilerService:
                             return False, f"不允许的函数: {func_name}，仅支持: {sorted(self.ALLOWED_FUNCTIONS)}"
                     # 检查属性访问是否安全
                     if isinstance(node, ast.Attribute):
-                        if node.attr in self._FORBIDDEN_ATTRS or node.attr.startswith('_'):
+                        if node.attr in self._FORBIDDEN_ATTRS or node.attr.startswith("_"):
                             return False, f"禁止访问的属性: {node.attr}"
                     # 检查变量名是否安全
                     if isinstance(node, ast.Name):
@@ -290,7 +340,7 @@ class FormulaCompilerService:
         """
         try:
             # 使用AST解析表达式
-            tree = ast.parse(expression, mode='eval')
+            tree = ast.parse(expression, mode="eval")
             return self._ast_to_formula_tree(tree.body)
 
         except Exception as e:
