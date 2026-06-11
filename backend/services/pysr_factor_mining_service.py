@@ -292,7 +292,7 @@ class PySRFactorMiningService(BaseMiningService):
                     ic_mean_val = 0.0
                     ir_val = 0.0
 
-                    for ic_type in ["pearson_ic", "spearman_ic"]:
+                    for ic_type in ["spearman_ic", "pearson_ic"]:
                         ic_type_data = ic_results.get(ic_type, {})
                         if ic_type_data:
                             first_period = list(ic_type_data.keys())[0] if ic_type_data else None

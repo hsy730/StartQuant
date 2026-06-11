@@ -242,19 +242,12 @@ class FactorStabilityService:
 
             # 计算滚动时间序列Spearman相关性（非横截面IC，见方法文档说明）
             if factor_name in factor_data.columns and return_col in factor_data.columns:
-                from scipy.stats import spearmanr
+                from backend.utils.ic_calculator import calculate_rolling_ic
 
-                def _rolling_spearman(x):
-                    y_aligned = factor_data[return_col].loc[x.index]
-                    valid = x.notna() & y_aligned.notna()
-                    if valid.sum() < 5:
-                        return np.nan
-                    result = spearmanr(x[valid], y_aligned[valid])[0]
-                    return result if not np.isnan(result) else np.nan
-
-                rolling_corr_series = factor_data[factor_name].rolling(
-                    window=window, min_periods=window
-                ).apply(_rolling_spearman, raw=False).dropna()
+                rolling_corr_series = calculate_rolling_ic(
+                    factor_data[factor_name], factor_data[return_col],
+                    window=window, method='spearman'
+                ).dropna()
                 rolling_ic = rolling_corr_series.tolist()
             else:
                 rolling_ic = []
@@ -588,7 +581,8 @@ class FactorStabilityService:
                     cv_score = 0.2
                 scores.append(cv_score)
                 
-                logger.info(f"变异系数 CV={cv:.3f}, 得分={cv_score:.3f}")
+                cv_str = f"{cv:.3f}" if cv is not None else "不可计算"
+                logger.info(f"变异系数 CV={cv_str}, 得分={cv_score:.3f}")
             except Exception as e:
                 results["coefficient_of_variation"] = {"error": str(e)}
                 logger.error(f"变异系数计算失败: {e}")

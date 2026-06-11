@@ -703,7 +703,7 @@ def calculate_factor(df):
                 # 通过筛选
                 factor_info_copy = factor_info.copy()
                 factor_info_copy["ic"] = float(ic)
-                factor_info_copy["ir"] = float(ir)
+                factor_info_copy["ir"] = float(ir) if ir is not None and np.isfinite(ir) else None
                 factor_info_copy["valid_ratio"] = float(valid_ratio)
                 selected_factors.append(factor_info_copy)
 

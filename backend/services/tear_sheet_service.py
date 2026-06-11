@@ -406,9 +406,15 @@ class TearSheetService:
         
         if "ic_ir_analysis" in sections:
             ic_ir = sections["ic_ir_analysis"]
-            ir = ic_ir.get("ir", 0)
-            mean_ic = ic_ir.get("mean_ic", 0)
-            pos_ratio = ic_ir.get("ic_positive_ratio", 0.5)
+            ir = ic_ir.get("ir")
+            if ir is None:
+                ir = 0
+            mean_ic = ic_ir.get("mean_ic")
+            if mean_ic is None:
+                mean_ic = 0
+            pos_ratio = ic_ir.get("ic_positive_ratio")
+            if pos_ratio is None:
+                pos_ratio = 0.5
             
             interpretations["ic_ir"] = (
                 f"该因子的IC均值为{mean_ic:.4f}，IR为{ir:.3f}，"

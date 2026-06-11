@@ -1165,9 +1165,9 @@ class VectorBTBacktestService:
                 "success": True,
                 "metrics": metrics,
                 "equity_curve": equity_curve,
-                "total_return": metrics.get("total_return", 0),
-                "sharpe_ratio": metrics.get("sharpe_ratio", 0),
-                "max_drawdown": metrics.get("max_drawdown", 0),
+                "total_return": metrics.get("total_return") if metrics.get("total_return") is not None else 0,
+                "sharpe_ratio": metrics.get("sharpe_ratio") if metrics.get("sharpe_ratio") is not None else 0,
+                "max_drawdown": metrics.get("max_drawdown") if metrics.get("max_drawdown") is not None else 0,
             }
 
         except Exception as e:

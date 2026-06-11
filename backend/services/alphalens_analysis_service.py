@@ -186,7 +186,7 @@ class AlphalensAnalysisService:
             if len(merged) < 2:
                 continue
             daily_ic = merged.groupby(merged.index).apply(
-                lambda g: spearmanr(g['factor'], g['return'])[0] if len(g) >= 2 else np.nan
+                lambda g: g['factor'].corr(g['return'], method='pearson') if len(g) >= 2 else np.nan
             ).dropna()
             if len(daily_ic) > 0:
                 ic_results[period_col] = daily_ic

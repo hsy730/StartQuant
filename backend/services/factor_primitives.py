@@ -39,9 +39,10 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 def safe_div(a, b):
-    """x / y with y=0 mapped to NaN."""
+    """x / y with y=0 or near-zero mapped to NaN."""
     if hasattr(b, 'replace'):
         b = b.replace(0, np.nan)
+        b = b.where(b.abs() >= 1e-10, np.nan)
     else:
         b = np.where(np.abs(b) < 1e-10, np.nan, b)
     return a / b

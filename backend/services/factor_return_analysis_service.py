@@ -608,7 +608,9 @@ class FactorReturnAnalysisService:
         
         有效因子应该呈现单调性：Q1 < Q2 < Q3 < Q4 < Q5（或反向）
         """
-        returns = [q["avg_return"] for q in quantile_returns]
+        returns = [q["avg_return"] for q in quantile_returns if q["avg_return"] is not None]
+        if not returns:
+            return {"is_monotonic": False, "direction": "unknown", "increasing_count": 0, "decreasing_count": 0, "monotonic_score": 0.0}
         n = len(returns)
         
         increasing_count = sum(1 for i in range(n-1) if returns[i+1] > returns[i])
@@ -736,7 +738,8 @@ class FactorReturnAnalysisService:
 
         # 将累计收益转换为日收益率
         daily_returns = pd.Series([(returns[i+1] + 1) / (returns[i] + 1) - 1
-                                   for i in range(len(returns) - 1)])
+                                   for i in range(len(returns) - 1)
+                                   if abs(returns[i] + 1) > 1e-10])
 
         if len(daily_returns) >= 2:
             metrics = calculate_risk_metrics(daily_returns)

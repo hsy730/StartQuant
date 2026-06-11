@@ -119,8 +119,12 @@ class ComprehensiveScoringService:
             滑点敏感性分析结果字典
         """
         # 获取基础指标
-        annual_return = strategy_metrics.get("annual_return", 0.15)
-        turnover = strategy_metrics.get("turnover", 12.0)  # 默认年化换手率12倍
+        annual_return = strategy_metrics.get("annual_return")
+        if annual_return is None:
+            annual_return = 0.15
+        turnover = strategy_metrics.get("turnover")
+        if turnover is None:
+            turnover = 12.0
 
         # 如果提供了股票代码，使用智能检测器获取更准确的推荐
         smart_recommendation = None

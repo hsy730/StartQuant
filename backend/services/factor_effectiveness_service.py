@@ -241,14 +241,8 @@ class FactorEffectivenessService:
         factor_aligned = factor_vals.loc[common_index]
         return_aligned = return_vals.loc[common_index]
 
-        def _rolling_spearman(x):
-            y_aligned = return_aligned.loc[x.index]
-            valid = x.notna() & y_aligned.notna()
-            if valid.sum() < 10:
-                return np.nan
-            return spearmanr(x[valid], y_aligned[valid])[0]
-
-        rolling_ic = factor_aligned.rolling(window=window, min_periods=10).apply(_rolling_spearman, raw=False)
+        from backend.utils.ic_calculator import calculate_rolling_ic
+        rolling_ic = calculate_rolling_ic(factor_aligned, return_aligned, window=window, method='spearman')
         valid_ic = rolling_ic.dropna()
         valid_ic = valid_ic[~np.isinf(valid_ic)]
 

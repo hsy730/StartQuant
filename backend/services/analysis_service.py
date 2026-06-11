@@ -745,10 +745,10 @@ class AnalysisService:
                         factor_key = f"{factor_name}_{ic_type_key}_{period_label}"
 
                     all_ic_stats[factor_key] = {
-                        "IC均值": period_stats.get("mean_ic", 0),
-                        "IC标准差": period_stats.get("std_ic", 0),
-                        "IR": period_stats.get("ir", 0),
-                        "IC>0占比": period_stats.get("ic_positive_ratio", 0),
+                        "IC均值": period_stats.get("mean_ic") if period_stats.get("mean_ic") is not None else 0,
+                        "IC标准差": period_stats.get("std_ic") if period_stats.get("std_ic") is not None else 0,
+                        "IR": period_stats.get("ir") if period_stats.get("ir") is not None else 0,
+                        "IC>0占比": period_stats.get("ic_positive_ratio") if period_stats.get("ic_positive_ratio") is not None else 0,
                         "IC绝对值均值": abs(ic_s).mean() if len(ic_s) > 0 else 0,
                         "IC序列": ic_s.to_dict(),
                         "IC类型": f"横截面{ic_type_name}（Alphalens）",
@@ -1055,7 +1055,8 @@ class AnalysisService:
                         factor_key = f"{factor_name}_{ic_type_key}_weighted_{weight_type}"
 
                         weighted_mean = self._compute_weighted_ic_mean(ic_s, factor_values_dict, weight_map, weight_type)
-                        std_ic_val = period_stats.get("std_ic", ic_s.std())
+                        _std_ic = period_stats.get("std_ic")
+                        std_ic_val = float(_std_ic) if _std_ic is not None else float(ic_s.std())
 
                         all_ic_stats[factor_key] = {
                             "IC均值": float(weighted_mean),
@@ -1285,7 +1286,9 @@ class AnalysisService:
             for factor_name, stats in ic_stats.items():
                 ir_display = f"{stats['IR']:.4f}" if stats['IR'] is not None else "N/A"
                 ic_std_display = f"{stats['IC标准差']:.4f}" if stats.get('IC标准差') is not None else "N/A"
-                report += f"| {factor_name} | {stats['IC均值']:.4f} | {ic_std_display} | {ir_display} | {stats['IC>0占比']:.2%} | {stats['IC绝对值均值']:.4f} |\n"
+                ic_mean_display = f"{stats['IC均值']:.4f}" if stats.get('IC均值') is not None else "N/A"
+                ic_pos_display = f"{stats['IC>0占比']:.2%}" if stats.get('IC>0占比') is not None else "N/A"
+                report += f"| {factor_name} | {ic_mean_display} | {ic_std_display} | {ir_display} | {ic_pos_display} | {stats['IC绝对值均值']:.4f} |\n"
 
             report += "\n"
 

@@ -526,7 +526,8 @@ class GeneticFactorMiningService(BaseMiningService):
                 return_values=self.return_values,
                 existing_factors=None,
             )
-            fitness = validation["score"] / 100.0
+            score_val = validation.get("score")
+            fitness = (score_val / 100.0) if score_val is not None else 0.0
         else:
             # Compute forward returns from close prices for time-series IC
             try:

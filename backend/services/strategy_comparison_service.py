@@ -3,6 +3,7 @@
 """
 import logging
 from typing import List, Dict, Optional
+import numpy as np
 import pandas as pd
 from scipy import stats
 from backend.services.strategy_registry import strategy_registry
@@ -203,10 +204,9 @@ class StrategyComparisonService:
             overall_scores[strategy] = safe_divide(rank_sum, rank_count, default=None)
 
         # 按综合得分排名（得分越低越好），排除 None 和 NaN
-        import math
         valid_scores = {
             k: v for k, v in overall_scores.items()
-            if v is not None and not (isinstance(v, float) and math.isnan(v))
+            if v is not None and not (isinstance(v, float) and np.isnan(v))
         }
         sorted_overall = sorted(valid_scores.items(), key=lambda x: x[1])
         rankings["overall"] = {strategy: i + 1 for i, (strategy, _) in enumerate(sorted_overall)}
