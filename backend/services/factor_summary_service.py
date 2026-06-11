@@ -156,7 +156,13 @@ class FactorSummaryService:
             ir = _safe_float(first_factor.get("ir"), default=None)
             if ir is not None and isinstance(ir, float) and np.isnan(ir):
                 ir = None
-            score += max(min(_safe_float(ir, default=0) * 10, 30), 0)  # IR=3时得30分满分
+            if ir is not None:
+                score += max(min(ir * 10, 30), 0)
+            else:
+                # IR不可计算但IC非零 → 因子极其稳定，给予满分
+                ic_mean_val = first_factor.get("ic_mean")
+                if ic_mean_val is not None and abs(ic_mean_val) > 1e-10:
+                    score += 30
 
         # 稳定性得分（0-20分）
         stability_summary = summary.get("stability_summary")
@@ -256,12 +262,17 @@ class FactorSummaryService:
         if ic_summary:
             for factor, stats in ic_summary.items():
                 if isinstance(stats, dict):
+                    def _fmt(val, fmt=".4f"):
+                        if val is None:
+                            return "N/A"
+                        return f"{val:{fmt}}"
+
                     report += f"""
 **因子**: {factor}
-- IC均值: {_safe_float(stats.get('ic_mean')):.4f}
-- IC标准差: {_safe_float(stats.get('ic_std')):.4f}
-- 信息比率(IR): {_safe_float(stats.get('ir')):.4f}
-- IC>0占比: {_safe_float(stats.get('ic_positive_ratio')):.2%}
+- IC均值: {_fmt(stats.get('ic_mean'))}
+- IC标准差: {_fmt(stats.get('ic_std'))}
+- 信息比率(IR): {_fmt(stats.get('ir'))}
+- IC>0占比: {_fmt(stats.get('ic_positive_ratio'), ".2%")}
 """
 
         # 添加稳定性分析

@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from enum import Enum
 import logging
 from scipy import stats as scipy_stats
+from scipy.stats import spearmanr
 
 from backend.utils.safe_math import safe_divide
 from backend.services.risk_metrics import calculate_sharpe, calculate_risk_metrics
@@ -372,18 +373,20 @@ class FactorReturnAnalysisService:
                     if len(group_data) > 0:
                         group_returns[q] = group_data["return"].mean()
                     else:
-                        group_returns[q] = 0.0
+                        group_returns[q] = None
 
                 for q in range(self.config.n_quantiles):
-                    period_return = group_returns.get(q, 0.0)
-                    group_cumulative[f"Q{q+1}"] *= 1 + period_return
+                    period_return = group_returns.get(q)
+                    if period_return is not None:
+                        group_cumulative[f"Q{q+1}"] *= 1 + period_return
                     group_cumreturns[f"Q{q+1}"].append(float(group_cumulative[f"Q{q+1}"] - 1))
 
                 if long_short:
-                    long_return = group_returns.get(self.config.n_quantiles - 1, 0.0)
-                    short_return = group_returns.get(0, 0.0)
-                    ls_return = long_return - short_return
-                    cumulative_ls *= 1 + ls_return
+                    long_return = group_returns.get(self.config.n_quantiles - 1)
+                    short_return = group_returns.get(0)
+                    if long_return is not None and short_return is not None:
+                        ls_return = long_return - short_return
+                        cumulative_ls *= 1 + ls_return
                     long_short_returns.append(cumulative_ls - 1)
 
                 all_dates.append(date_str)
@@ -478,13 +481,21 @@ class FactorReturnAnalysisService:
                 # 横截面分位数换手率（规则7.2）：
                 # 将因子值分桶，衡量分桶随时间变化的比例
                 n_bins = 5
-                factor_ranks = series.rank(pct=True)
-                factor_bins = pd.cut(factor_ranks, bins=n_bins, labels=False)
+                factor_bins = pd.qcut(series, q=n_bins, labels=False, duplicates="drop")
                 rank_change = (factor_bins != factor_bins.shift(1)).astype(float)
                 turnover = rank_change.dropna().mean()
                 turnover_rates.append(turnover)
 
-                auto_corr = series.autocorr(lag=1)
+                valid = series.dropna()
+                if len(valid) >= 5:
+                    shifted = valid.shift(1).dropna()
+                    common_idx = valid.index.intersection(shifted.index)
+                    if len(common_idx) >= 5:
+                        auto_corr, _ = spearmanr(valid.loc[common_idx], shifted.loc[common_idx])
+                    else:
+                        auto_corr = np.nan
+                else:
+                    auto_corr = np.nan
                 if not np.isnan(auto_corr):
                     autocorrelations.append(auto_corr)
 
@@ -495,10 +506,10 @@ class FactorReturnAnalysisService:
             median_turnover = np.median(turnover_rates)
             std_turnover = np.std(turnover_rates)
 
-            avg_autocorr = np.mean(autocorrelations) if autocorrelations else 0.0
+            avg_autocorr = float(np.mean(autocorrelations)) if autocorrelations else None
 
             half_life = None
-            if avg_autocorr > 0 and avg_autocorr < 1:
+            if avg_autocorr is not None and 0 < avg_autocorr < 1:
                 half_life = -np.log(2) / np.log(avg_autocorr)
 
             stability_score = 1.0 - min(avg_turnover, 1.0)
@@ -517,10 +528,10 @@ class FactorReturnAnalysisService:
                     "interpretation": self._interpret_turnover(avg_turnover),
                 },
                 "autocorrelation": {
-                    "mean_autocorrelation": float(avg_autocorr),
+                    "mean_autocorrelation": float(avg_autocorr) if avg_autocorr is not None else None,
                     "n_stocks_with_valid_autocorr": len(autocorrelations),
                     "half_life": float(half_life) if half_life else None,
-                    "interpretation": self._interpret_autocorrelation(avg_autocorr),
+                    "interpretation": self._interpret_autocorrelation(avg_autocorr) if avg_autocorr is not None else "无法计算自相关",
                 },
                 "stability_analysis": {
                     "stability_score": float(stability_score),
@@ -548,7 +559,20 @@ class FactorReturnAnalysisService:
         top_group = quantile_returns[-1]
         bottom_group = quantile_returns[0]
 
-        spread = top_group["avg_return"] - bottom_group["avg_return"]
+        top_avg = top_group["avg_return"]
+        bottom_avg = bottom_group["avg_return"]
+        if top_avg is None or bottom_avg is None:
+            return {
+                "long_short_spread": None,
+                "spread_std": None,
+                "t_statistic": None,
+                "p_value": None,
+                "is_significant": False,
+                "top_group_return": top_avg,
+                "bottom_group_return": bottom_avg,
+                "interpretation": "数据不足，无法计算多空利差",
+            }
+        spread = top_avg - bottom_avg
 
         n_top = top_group["n_observations"]
         n_bottom = bottom_group["n_observations"]
@@ -588,14 +612,14 @@ class FactorReturnAnalysisService:
             denominator = (var_top / n_top) ** 2 / (n_top - 1) + (var_bottom / n_bottom) ** 2 / (n_bottom - 1)
             df = safe_divide(numerator, denominator, default=n_top + n_bottom - 2)
         else:
-            df = n_top + n_bottom - 2
+            df = max(n_top + n_bottom - 2, 1)
 
         p_value = 2 * (1 - scipy_stats.t.cdf(abs(t_stat), df=df))
 
         return {
             "long_short_spread": float(spread),
             "spread_std": float(se),
-            "t_statistic": float(t_stat),
+            "t_statistic": float(t_stat) if np.isfinite(t_stat) else None,
             "p_value": float(p_value),
             "is_significant": p_value < 0.05,
             "top_group_return": top_group["avg_return"],
@@ -677,7 +701,8 @@ class FactorReturnAnalysisService:
                 sample_df = pd.concat(sample_frames, ignore_index=True)
             else:
                 # 单股票：按行重抽样
-                sample_df = df.sample(n=len(df), replace=True, random_state=rng)
+                sample_indices = rng.choice(len(df), size=len(df), replace=True)
+                sample_df = df.iloc[sample_indices].reset_index(drop=True)
 
             try:
                 sample_df["quantile"] = np.nan

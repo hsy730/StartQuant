@@ -874,6 +874,9 @@ class DeepFactorMiningService:
         # 释放上一次训练的GPU资源，避免内存泄漏
         self.cleanup()
 
+        # 重置取消标志，避免复用实例时旧取消状态影响新任务
+        self._cancel_event.clear()
+
         logger.info("开始深度隐式因子挖掘...")
         logger.info(
             f"模型参数: d_model={self.d_model}, n_heads={self.n_heads}, "
