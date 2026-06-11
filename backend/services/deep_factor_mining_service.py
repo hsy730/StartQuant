@@ -752,7 +752,8 @@ class DeepFactorMiningService:
                             return_values=aligned_ret,
                             existing_factors=None,
                         )
-                        fitness = validation.get("score", 0) / 100.0
+                        score_val = validation.get("score")
+                        fitness = (score_val / 100.0) if score_val is not None else 0.0
                 except Exception as e:
                     logger.warning(f"{factor_name} 验证失败: {e}")
 

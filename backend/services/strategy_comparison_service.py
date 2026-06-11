@@ -195,12 +195,19 @@ class StrategyComparisonService:
             rank_count = 0
             for col, col_ranking in rankings.items():
                 if col != "overall" and strategy in col_ranking:
-                    rank_sum += col_ranking[strategy]
-                    rank_count += 1
+                    rank_val = col_ranking[strategy]
+                    # Rule 7.41: 跳过NaN排名值（上游指标为None时rank()产生NaN）
+                    if rank_val is not None and not (isinstance(rank_val, float) and np.isnan(rank_val)):
+                        rank_sum += rank_val
+                        rank_count += 1
             overall_scores[strategy] = safe_divide(rank_sum, rank_count, default=None)
 
-        # 按综合得分排名（得分越低越好），排除 None（无可比指标的策略）
-        valid_scores = {k: v for k, v in overall_scores.items() if v is not None}
+        # 按综合得分排名（得分越低越好），排除 None 和 NaN
+        import math
+        valid_scores = {
+            k: v for k, v in overall_scores.items()
+            if v is not None and not (isinstance(v, float) and math.isnan(v))
+        }
         sorted_overall = sorted(valid_scores.items(), key=lambda x: x[1])
         rankings["overall"] = {strategy: i + 1 for i, (strategy, _) in enumerate(sorted_overall)}
 

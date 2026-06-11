@@ -108,8 +108,8 @@ class FactorSummaryService:
         if "distribution_stability" in stability_analysis:
             dist_stability = stability_analysis["distribution_stability"]
             summary["distribution"] = {
-                "stability_score": float(dist_stability.get("stability_score", 0)),
-                "stable_ratio": float(dist_stability.get("stable_ratio", 0)),
+                "stability_score": _safe_float(dist_stability.get("stability_score")),
+                "stable_ratio": _safe_float(dist_stability.get("stable_ratio")),
             }
 
         # 时间序列稳定性
@@ -258,10 +258,10 @@ class FactorSummaryService:
                 if isinstance(stats, dict):
                     report += f"""
 **因子**: {factor}
-- IC均值: {stats.get('ic_mean', 0):.4f}
-- IC标准差: {stats.get('ic_std', 0):.4f}
-- 信息比率(IR): {stats.get('ir', 0):.4f}
-- IC>0占比: {stats.get('ic_positive_ratio', 0):.2%}
+- IC均值: {_safe_float(stats.get('ic_mean')):.4f}
+- IC标准差: {_safe_float(stats.get('ic_std')):.4f}
+- 信息比率(IR): {_safe_float(stats.get('ir')):.4f}
+- IC>0占比: {_safe_float(stats.get('ic_positive_ratio')):.2%}
 """
 
         # 添加稳定性分析

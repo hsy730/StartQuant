@@ -663,10 +663,12 @@ class TreePrescreenMiningService(BaseMiningService):
         logger.info(f"树模型预筛选挖掘完成: 发现 {n_factors} 个因子")
         if n_factors > 0:
             top = result["best_factors"][0]
+            fitness_val = top.get('fitness')
+            complexity_val = top.get('complexity')
             logger.info(
                 f"  Top-1: expression={top.get('expression', 'N/A')}, "
-                f"fitness={top.get('fitness', 0):.4f}, "
-                f"complexity={top.get('complexity', 0):.1f}"
+                f"fitness={fitness_val:.4f if fitness_val is not None else 'N/A'}, "
+                f"complexity={complexity_val:.1f if complexity_val is not None else 'N/A'}"
             )
         logger.info("=" * 60)
 

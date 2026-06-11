@@ -599,20 +599,24 @@ class FactorOrchestrator:
                         factor_ic = stats
                         break
 
-            ic_mean = float(factor_ic["IC均值"]) if factor_ic.get("IC均值") is not None else 0.0
+            ic_mean_val = factor_ic.get("IC均值")
+            ic_mean = float(ic_mean_val) if ic_mean_val is not None else None
             ir = float(factor_ic["IR"]) if factor_ic.get("IR") is not None else None
 
             # 判定是否通过
-            status = (
-                PipelineStatus.PASSED
-                if abs(ic_mean) >= self.config.ic_threshold
-                else PipelineStatus.WARNING
-            )
+            if ic_mean is not None:
+                status = (
+                    PipelineStatus.PASSED
+                    if abs(ic_mean) >= self.config.ic_threshold
+                    else PipelineStatus.WARNING
+                )
+            else:
+                status = PipelineStatus.WARNING  # IC不可计算时标记为警告
 
             warnings = []
-            if abs(ic_mean) < self.config.ic_threshold:
+            if ic_mean is not None and abs(ic_mean) < self.config.ic_threshold:
                 warnings.append(f"IC均值({ic_mean:.4f})低于阈值({self.config.ic_threshold})")
-            if abs(ic_mean) > 0.15:
+            if ic_mean is not None and abs(ic_mean) > 0.15:
                 warnings.append(f"IC均值({ic_mean:.4f})异常偏高，请核查是否存在未来函数")
 
             return PipelineStageResult(
@@ -622,7 +626,7 @@ class FactorOrchestrator:
                 result={
                     "ic_mean": ic_mean,
                     "ir": ir,
-                    "rank_ic": float(factor_ic["Rank_IC均值"]) if factor_ic.get("Rank_IC均值") is not None else 0.0,
+                    "rank_ic": float(factor_ic["Rank_IC均值"]) if factor_ic.get("Rank_IC均值") is not None else None,
                     "full_result": ic_ir_result if self.config.include_intermediate_results else None,
                 },
                 warnings=warnings,

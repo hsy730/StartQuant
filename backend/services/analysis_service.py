@@ -1371,7 +1371,9 @@ class AnalysisService:
                     if autocorr:
                         for period_label, ac_data in autocorr.items():
                             if isinstance(ac_data, dict):
-                                report += f"- {period_label}: 平均自相关={ac_data.get('mean_autocorrelation', 0):.4f}\n"
+                                ac_val = ac_data.get('mean_autocorrelation')
+                                ac_str = f"{ac_val:.4f}" if ac_val is not None else "N/A"
+                                report += f"- {period_label}: 平均自相关={ac_str}\n"
                         report += "\n"
 
         # 未来函数检测报告
