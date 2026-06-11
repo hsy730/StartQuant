@@ -8,7 +8,7 @@
 
 项目规则1：比例与绝对金额不可混用
 """
-import pytest
+
 import numpy as np
 import pandas as pd
 
@@ -17,14 +17,17 @@ from backend.strategies.base_strategy import BaseStrategy
 
 class BuyHoldStrategy(BaseStrategy):
     """买入持有策略（用于测试）"""
+
     def generate_signals(self, df):
         return pd.Series(1, index=df.index)
+
     def calculate_weights(self, df, signals):
         return pd.Series(1.0, index=df.index)
 
 
 class SwitchingStrategy(BaseStrategy):
     """每5期切换仓位的策略（用于测试手续费）"""
+
     def __init__(self, switch_period=5, **kwargs):
         super().__init__(**kwargs)
         self.switch_period = switch_period
@@ -47,13 +50,16 @@ def _make_ohlcv(n=50, seed=42):
     dates = pd.date_range("2023-01-01", periods=n, freq="B")
     close = 100 + np.cumsum(np.random.randn(n) * 0.5)
     close = np.maximum(close, 1)
-    return pd.DataFrame({
-        "open": close + np.random.randn(n) * 0.1,
-        "high": close + abs(np.random.randn(n) * 0.3),
-        "low": close - abs(np.random.randn(n) * 0.3),
-        "close": close,
-        "volume": np.random.randint(100000, 1000000, n).astype(float),
-    }, index=dates)
+    return pd.DataFrame(
+        {
+            "open": close + np.random.randn(n) * 0.1,
+            "high": close + abs(np.random.randn(n) * 0.3),
+            "low": close - abs(np.random.randn(n) * 0.3),
+            "close": close,
+            "volume": np.random.randint(100000, 1000000, n).astype(float),
+        },
+        index=dates,
+    )
 
 
 class TestCommissionDimensionConsistency:
@@ -65,7 +71,7 @@ class TestCommissionDimensionConsistency:
         df = _make_ohlcv(n=50)
         result = strategy.backtest(df)
 
-        returns = result["portfolio_returns"]
+        result["portfolio_returns"]
         weights = result["weights"]
 
         # 手续费计算：weight_change * commission_rate
@@ -75,8 +81,9 @@ class TestCommissionDimensionConsistency:
         commission = weight_change * strategy.commission_rate
 
         # 手续费应在合理比例范围内（< 1%）
-        assert (commission.dropna() < 0.01).all(), \
-            f"手续费应为比例值（<1%），发现异常值: {commission[commission >= 0.01].tolist()}"
+        assert (
+            commission.dropna() < 0.01
+        ).all(), f"手续费应为比例值（<1%），发现异常值: {commission[commission >= 0.01].tolist()}"
 
     def test_first_period_commission_not_zero(self):
         """首期建仓手续费不应为0"""
@@ -89,11 +96,11 @@ class TestCommissionDimensionConsistency:
         commission = weight_change * strategy.commission_rate
 
         # 首期从0建仓，weight_change[0] = |1.0 - 0| = 1.0
-        assert commission.iloc[0] > 0, \
-            f"首期应有建仓手续费，实际 commission[0] = {commission.iloc[0]}"
+        assert commission.iloc[0] > 0, f"首期应有建仓手续费，实际 commission[0] = {commission.iloc[0]}"
         # 首期手续费 = 1.0 * 0.0003 = 0.0003
-        assert abs(commission.iloc[0] - strategy.commission_rate) < 1e-10, \
-            f"首期手续费应为 {strategy.commission_rate}，实际为 {commission.iloc[0]}"
+        assert (
+            abs(commission.iloc[0] - strategy.commission_rate) < 1e-10
+        ), f"首期手续费应为 {strategy.commission_rate}，实际为 {commission.iloc[0]}"
 
     def test_first_period_return_not_nan(self):
         """首期收益不应为NaN"""
@@ -117,8 +124,7 @@ class TestCommissionDimensionConsistency:
         # 总手续费应在合理范围
         total_commission = commission.sum()
         assert total_commission > 0, "频繁调仓应有手续费"
-        assert total_commission < 0.5, \
-            f"总手续费不应超过50%（比例），实际为 {total_commission * 100:.2f}%"
+        assert total_commission < 0.5, f"总手续费不应超过50%（比例），实际为 {total_commission * 100:.2f}%"
 
     def test_commission_deducted_from_returns(self):
         """手续费应从收益中扣除"""
@@ -136,8 +142,7 @@ class TestCommissionDimensionConsistency:
         valid = returns.notna() & raw_returns.notna()
         # 首期之后，含手续费收益应严格小于不含手续费收益（当有调仓时）
         # 至少验证含手续费收益不会大于不含手续费收益
-        assert (returns[valid] <= raw_returns[valid] + 1e-10).all(), \
-            "含手续费的收益不应大于不含手续费的收益"
+        assert (returns[valid] <= raw_returns[valid] + 1e-10).all(), "含手续费的收益不应大于不含手续费的收益"
 
 
 class TestWeightChangeFirstRow:

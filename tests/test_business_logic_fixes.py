@@ -4,14 +4,15 @@
 覆盖本次审查发现的13个致命/严重问题的修复验证，
 确保类似问题不会回归。
 """
+
 import numpy as np
 import pandas as pd
 import pytest
 
-
 # ============================================================
 # F2: equal_weight_strategy.py 权重除以总行数而非股票数
 # ============================================================
+
 
 class TestEqualWeightStrategyFix:
     """验证等权策略权重计算：必须按日期分组计算每期股票数"""
@@ -51,14 +52,10 @@ class TestEqualWeightStrategyFix:
         for date in dates:
             date_weights = weights[df.index.get_level_values(0) == date]
             weight_sum = date_weights.sum()
-            assert abs(weight_sum - 1.0) < 1e-10, (
-                f"日期{date}的权重和为{weight_sum}，应为1.0"
-            )
+            assert abs(weight_sum - 1.0) < 1e-10, f"日期{date}的权重和为{weight_sum}，应为1.0"
 
         # 每只股票的权重应为1/n_stocks
-        assert abs(weights.iloc[0] - 1.0 / n_stocks) < 1e-10, (
-            f"每只股票权重应为{1.0/n_stocks}，实际为{weights.iloc[0]}"
-        )
+        assert abs(weights.iloc[0] - 1.0 / n_stocks) < 1e-10, f"每只股票权重应为{1.0/n_stocks}，实际为{weights.iloc[0]}"
 
     def test_no_signal_zero_weight(self):
         """信号为0时权重应为0"""
@@ -77,6 +74,7 @@ class TestEqualWeightStrategyFix:
 # F3: weight_optimizer_service.py 对因子值求pct_change
 # ============================================================
 
+
 class TestWeightOptimizerPctChangeFix:
     """验证权重优化器不再对因子值求pct_change"""
 
@@ -94,9 +92,7 @@ class TestWeightOptimizerPctChangeFix:
         factor_names = ["factor_1", "factor_2"]
 
         # max_sharpe 应能正常执行（不因pct_change产生inf而崩溃）
-        result = optimizer.calculate_weights(
-            factor_values, factor_names, method="max_sharpe"
-        )
+        result = optimizer.calculate_weights(factor_values, factor_names, method="max_sharpe")
         assert "weights" in result
         # 权重和应接近1.0
         weight_sum = sum(result["weights"].values())
@@ -116,9 +112,7 @@ class TestWeightOptimizerPctChangeFix:
         }
         factor_names = list(factor_values.keys())
 
-        result = optimizer.calculate_weights(
-            factor_values, factor_names, method="risk_parity"
-        )
+        result = optimizer.calculate_weights(factor_values, factor_names, method="risk_parity")
         assert "weights" in result
         assert len(result["weights"]) == 3
 
@@ -126,6 +120,7 @@ class TestWeightOptimizerPctChangeFix:
 # ============================================================
 # F5: data_service.py 对原始OHLC价格做MAD去极值
 # ============================================================
+
 
 class TestDataServiceNoPriceWinsorization:
     """验证data_service不再对OHLC价格做去极值"""
@@ -139,15 +134,18 @@ class TestDataServiceNoPriceWinsorization:
         close = np.ones(100) * 100.0
         # 模拟一个极端价格（如涨停/跌停）
         close[50] = 110.0  # 涨停价
-        close[51] = 90.0   # 跌停价
+        close[51] = 90.0  # 跌停价
 
-        df = pd.DataFrame({
-            "open": close,
-            "high": close * 1.01,
-            "low": close * 0.99,
-            "close": close,
-            "volume": np.random.randint(100000, 1000000, 100),
-        }, index=dates)
+        df = pd.DataFrame(
+            {
+                "open": close,
+                "high": close * 1.01,
+                "low": close * 0.99,
+                "close": close,
+                "volume": np.random.randint(100000, 1000000, 100),
+            },
+            index=dates,
+        )
 
         service = DataService()
         # 调用预处理方法（方法名为_preprocess_data）
@@ -162,6 +160,7 @@ class TestDataServiceNoPriceWinsorization:
 # F6: factor_return_analysis_service.py 全局分位改为截面分位
 # ============================================================
 
+
 class TestCrossSectionalQuantile:
     """验证因子分组收益使用截面分位而非全局分位"""
 
@@ -173,10 +172,13 @@ class TestCrossSectionalQuantile:
 
         factor_data = {}
         for stock in stocks:
-            df = pd.DataFrame({
-                "close": np.random.randn(3) + 100,
-                "momentum": np.random.randn(3),  # 因子值
-            }, index=dates)
+            df = pd.DataFrame(
+                {
+                    "close": np.random.randn(3) + 100,
+                    "momentum": np.random.randn(3),  # 因子值
+                },
+                index=dates,
+            )
             factor_data[stock] = df
 
         # 手动验证截面分位逻辑
@@ -200,9 +202,7 @@ class TestCrossSectionalQuantile:
         merged["quantile"] = np.nan
         for date, group in merged.groupby("date"):
             if len(group) >= 5:
-                merged.loc[group.index, "quantile"] = pd.qcut(
-                    group["momentum"], q=5, labels=False, duplicates="drop"
-                )
+                merged.loc[group.index, "quantile"] = pd.qcut(group["momentum"], q=5, labels=False, duplicates="drop")
 
         # 验证：每个截面的分位0和分位4应各占约20%
         for date in merged["date"].dropna().unique():
@@ -216,6 +216,7 @@ class TestCrossSectionalQuantile:
 # ============================================================
 # S1: factor_stability_service.py 时序相关改为截面IC
 # ============================================================
+
 
 class TestStabilityCrossSectionalIC:
     """验证稳定性检验使用截面IC而非时序相关"""
@@ -251,6 +252,7 @@ class TestStabilityCrossSectionalIC:
 # S5: ic_calculator.py 滚动Spearman IC实现
 # ============================================================
 
+
 class TestRollingSpearmanIC:
     """验证滚动Spearman IC对factor和returns都做排名"""
 
@@ -270,15 +272,14 @@ class TestRollingSpearmanIC:
 
         # 验证：手动计算一个窗口的Spearman IC
         from scipy.stats import spearmanr
+
         manual_ic, _ = spearmanr(factor[:20], returns[:20])
         # 滚动IC的最后一个窗口值应与手动计算接近
         # (注意：rolling_ic的索引可能不完全对齐，取有效值比较)
         valid_ic = rolling_ic.dropna()
         if len(valid_ic) > 0:
             # IC值应在[-1, 1]范围内
-            assert (valid_ic.abs() <= 1.0 + 1e-10).all(), (
-                f"IC值超出范围: {valid_ic.abs().max()}"
-            )
+            assert (valid_ic.abs() <= 1.0 + 1e-10).all(), f"IC值超出范围: {valid_ic.abs().max()}"
 
     def test_spearman_vs_pearson_difference(self):
         """Spearman IC和Pearson IC对异常值的响应应不同"""
@@ -309,6 +310,7 @@ class TestRollingSpearmanIC:
 # S2: factor_attribution_service.py 前视偏差修复
 # ============================================================
 
+
 class TestAttributionLookaheadFix:
     """验证因子归因使用未来收益而非同期收益"""
 
@@ -328,20 +330,19 @@ class TestAttributionLookaheadFix:
 
         # 未来收益的第一天 = (close[1] - close[0]) / close[0]
         expected_first = (101 - 100) / 100
-        assert abs(future_return.iloc[0] - expected_first) < 1e-10, (
-            f"未来收益第一天应为{expected_first}，实际为{future_return.iloc[0]}"
-        )
+        assert (
+            abs(future_return.iloc[0] - expected_first) < 1e-10
+        ), f"未来收益第一天应为{expected_first}，实际为{future_return.iloc[0]}"
 
         # 同期收益和未来收益不应相同
         # (除了中间部分有偏移差异)
-        assert not contemporaneous_return.equals(future_return), (
-            "同期收益和未来收益不应相同"
-        )
+        assert not contemporaneous_return.equals(future_return), "同期收益和未来收益不应相同"
 
 
 # ============================================================
 # S3: analysis_service.py IC完全稳定时IR不应为0
 # ============================================================
+
 
 class TestIRWhenICStable:
     """验证IC完全稳定时IR返回default（不可计算）"""
@@ -374,6 +375,7 @@ class TestIRWhenICStable:
 # S6: factor_service.py max_drawdown_20 公式修复
 # ============================================================
 
+
 class TestMaxDrawdownFormula:
     """验证最大回撤公式正确性"""
 
@@ -386,9 +388,7 @@ class TestMaxDrawdownFormula:
         x = pd.Series([100, 50, 200, 150])
         # 正确公式：((x - x.cummax()) / x.cummax()).min()
         drawdown = ((x - x.cummax()) / x.cummax()).min()
-        assert abs(drawdown - (-0.5)) < 1e-10, (
-            f"最大回撤应为-0.5（50%），实际为{drawdown}"
-        )
+        assert abs(drawdown - (-0.5)) < 1e-10, f"最大回撤应为-0.5（50%），实际为{drawdown}"
 
     def test_old_formula_underestimates(self):
         """旧公式会低估回撤"""
@@ -406,6 +406,7 @@ class TestMaxDrawdownFormula:
 # S7: factor_service.py downside_risk 语义修复
 # ============================================================
 
+
 class TestDownsideRiskSemantics:
     """验证下行风险只计算负收益的标准差"""
 
@@ -422,9 +423,7 @@ class TestDownsideRiskSemantics:
         wrong_std = clipped.std()
 
         # 两者不应相等
-        assert abs(correct_std - wrong_std) > 1e-6, (
-            f"正确下行风险({correct_std})不应等于clip版本({wrong_std})"
-        )
+        assert abs(correct_std - wrong_std) > 1e-6, f"正确下行风险({correct_std})不应等于clip版本({wrong_std})"
 
         # 正确版本应只基于负收益计算
         assert len(negative_returns) == 3, "应只有3个负收益"
@@ -435,6 +434,7 @@ class TestDownsideRiskSemantics:
 # S4: analysis_service.py Alphalens失败回退手动方法
 # ============================================================
 
+
 class TestAlphalensFallback:
     """验证Alphalens失败时回退到手动方法"""
 
@@ -443,9 +443,7 @@ class TestAlphalensFallback:
         from backend.services.analysis_service import AnalysisService
 
         service = AnalysisService()
-        assert hasattr(service, '_calculate_multi_stock_ic_manual'), (
-            "AnalysisService应有手动IC计算回退方法"
-        )
+        assert hasattr(service, "_calculate_multi_stock_ic_manual"), "AnalysisService应有手动IC计算回退方法"
 
     def test_manual_method_with_simple_data(self):
         """手动方法应能处理简单数据"""
@@ -455,16 +453,17 @@ class TestAlphalensFallback:
         dates = pd.date_range("2023-01-01", periods=100, freq="B")
         factor_data = {}
         for stock in ["A", "B", "C"]:
-            df = pd.DataFrame({
-                "close": 100 + np.cumsum(np.random.randn(100) * 0.5),
-                "momentum": np.random.randn(100),
-            }, index=dates)
+            df = pd.DataFrame(
+                {
+                    "close": 100 + np.cumsum(np.random.randn(100) * 0.5),
+                    "momentum": np.random.randn(100),
+                },
+                index=dates,
+            )
             factor_data[stock] = df
 
         # 手动方法应能正常执行
-        result = service._calculate_multi_stock_ic_manual(
-            factor_data, ["momentum"], ["A", "B", "C"]
-        )
+        result = service._calculate_multi_stock_ic_manual(factor_data, ["momentum"], ["A", "B", "C"])
         assert "ic_stats" in result, "手动方法应返回ic_stats"
 
 
@@ -472,29 +471,34 @@ class TestAlphalensFallback:
 # 跨文件：safe_ir 对 std=0 的处理
 # ============================================================
 
+
 class TestSafeIR:
     """验证safe_ir对边界条件的处理"""
 
     def test_std_zero_mean_positive(self):
         """std=0, mean>0 → IR不可计算，返回default"""
         from backend.utils.safe_math import safe_ir
+
         result = safe_ir(0.05, 0.0, default=0.0)
         assert result == 0.0, "正IC零std应返回default值"
 
     def test_std_zero_mean_negative(self):
         """std=0, mean<0 → IR不可计算，返回default"""
         from backend.utils.safe_math import safe_ir
+
         result = safe_ir(-0.05, 0.0, default=0.0)
         assert result == 0.0, "负IC零std应返回default值"
 
     def test_std_zero_mean_zero(self):
         """std=0, mean=0 → IR应为0"""
         from backend.utils.safe_math import safe_ir
+
         result = safe_ir(0.0, 0.0, default=0.0)
         assert result == 0.0, "零IC零std应返回0"
 
     def test_normal_case(self):
         """正常情况：IR = mean / std"""
         from backend.utils.safe_math import safe_ir
+
         result = safe_ir(0.1, 0.2, default=0.0)
         assert abs(result - 0.5) < 1e-10, f"IR应为0.5，实际为{result}"

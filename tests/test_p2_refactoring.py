@@ -4,6 +4,7 @@ P2 改造验证测试脚本
   P2-2: 加权IC (市值加权/流动性加权)
   P2-3: RMS相关性指标
 """
+
 import sys
 import os
 import numpy as np
@@ -31,21 +32,24 @@ def make_mock_factor_data(n_stocks=5, n_dates=120, seed=42):
         market_cap = np.exp(np.random.normal(25, 0.8, size=n_dates))
         volume = np.exp(np.random.normal(18, 1.0, size=n_dates))
         industry = np.random.choice(industries)
-        df = pd.DataFrame({
-            "close": close,
-            "factor_a": factor_a,
-            "factor_b": factor_b,
-            "market_cap": market_cap,
-            "volume": volume,
-            "industry": industry,
-            "tradable_mask": True,
-        }, index=dates)
+        df = pd.DataFrame(
+            {
+                "close": close,
+                "factor_a": factor_a,
+                "factor_b": factor_b,
+                "market_cap": market_cap,
+                "volume": volume,
+                "industry": industry,
+                "tradable_mask": True,
+            },
+            index=dates,
+        )
         factor_data[stock_code] = df
     return factor_data
 
 
 def run_test(name, fn):
-    global _passed, _failed, _errors
+    global _passed, _failed
     try:
         result = fn()
         if result:
@@ -68,7 +72,8 @@ def run_test(name, fn):
 # P2-1: BacktestService委托VectorBT
 # ============================================================
 def test_p2_1_backtest_engine_check():
-    from backend.services.backtest_service import BacktestService, check_backtest_engine
+    from backend.services.backtest_service import check_backtest_engine
+
     try:
         engine = check_backtest_engine()
         assert engine == "vectorbt", f"Unexpected engine: {engine}"
@@ -80,6 +85,7 @@ def test_p2_1_backtest_engine_check():
 
 def test_p2_1_backtest_service_init():
     from backend.services.backtest_service import BacktestService
+
     svc = BacktestService(initial_capital=1000000, commission_rate=0.0003)
     assert svc.initial_capital == 1000000
     assert svc.commission_rate == 0.0003
@@ -92,6 +98,7 @@ def test_p2_1_backtest_service_init():
 
 def test_p2_1_single_factor_delegates():
     from backend.services.backtest_service import BacktestService
+
     svc = BacktestService()
     factor_data = make_mock_factor_data(n_stocks=3, n_dates=60, seed=42)
     for stock_code, df in factor_data.items():
@@ -106,6 +113,7 @@ def test_p2_1_single_factor_delegates():
 
 def test_p2_1_cross_sectional_delegates():
     from backend.services.backtest_service import BacktestService
+
     svc = BacktestService()
     all_data = []
     for stock_code, df in make_mock_factor_data(n_stocks=4, n_dates=60, seed=77).items():
@@ -126,6 +134,7 @@ def test_p2_1_cross_sectional_delegates():
 # ============================================================
 def test_p2_2_weighted_ic_market_cap():
     from backend.services.analysis_service import analysis_service
+
     factor_data = make_mock_factor_data(n_stocks=5, n_dates=120, seed=55)
     result = analysis_service.calculate_weighted_ic(
         factor_data=factor_data,
@@ -148,6 +157,7 @@ def test_p2_2_weighted_ic_market_cap():
 
 def test_p2_2_weighted_ic_liquidity():
     from backend.services.analysis_service import analysis_service
+
     factor_data = make_mock_factor_data(n_stocks=5, n_dates=120, seed=66)
     result = analysis_service.calculate_weighted_ic(
         factor_data=factor_data,
@@ -164,6 +174,7 @@ def test_p2_2_weighted_ic_liquidity():
 
 def test_p2_2_weighted_ic_insufficient_stocks():
     from backend.services.analysis_service import analysis_service
+
     factor_data = {"000001": pd.DataFrame({"close": [1, 2], "f": [0.1, 0.2]})}
     result = analysis_service.calculate_weighted_ic(factor_data=factor_data, factor_names=["f"])
     assert "error" in result
@@ -175,6 +186,7 @@ def test_p2_2_weighted_ic_insufficient_stocks():
 # ============================================================
 def test_p2_3_rms_low_correlation():
     from backend.services.factor_correlation_service import FactorCorrelationService
+
     svc = FactorCorrelationService()
     np.random.seed(100)
     data = pd.DataFrame(np.random.randn(100, 4), columns=["A", "B", "C", "D"])
@@ -189,24 +201,32 @@ def test_p2_3_rms_low_correlation():
 
 def test_p2_3_rms_high_correlation():
     from backend.services.factor_correlation_service import FactorCorrelationService
+
     svc = FactorCorrelationService()
     np.random.seed(101)
     base = np.random.randn(100)
-    data = pd.DataFrame({
-        "A": base + np.random.randn(100) * 0.1,
-        "B": base + np.random.randn(100) * 0.15,
-        "C": base + np.random.randn(100) * 0.05,
-        "D": np.random.randn(100),
-    })
+    data = pd.DataFrame(
+        {
+            "A": base + np.random.randn(100) * 0.1,
+            "B": base + np.random.randn(100) * 0.15,
+            "C": base + np.random.randn(100) * 0.05,
+            "D": np.random.randn(100),
+        }
+    )
     corr_matrix = data.corr()
     result = svc.calculate_rms_correlation(corr_matrix)
     assert result["rms_corr"] > 0.5, f"Expected high correlation but got {result['rms_corr']}"
-    assert "严重重叠" in result["interpretation"] or "较高相关性" in result["interpretation"] or "高相关性" in result["interpretation"]
+    assert (
+        "严重重叠" in result["interpretation"]
+        or "较高相关性" in result["interpretation"]
+        or "高相关性" in result["interpretation"]
+    )
     return f"RMS={result['rms_corr']:.4f}, score={result['diversification_score']:.1f}"
 
 
 def test_p2_3_rms_empty_input():
     from backend.services.factor_correlation_service import FactorCorrelationService
+
     svc = FactorCorrelationService()
     result = svc.calculate_rms_correlation(pd.DataFrame())
     assert "error" in result
@@ -215,6 +235,7 @@ def test_p2_3_rms_empty_input():
 
 def test_p2_3_rms_single_factor():
     from backend.services.factor_correlation_service import FactorCorrelationService
+
     svc = FactorCorrelationService()
     result = svc.calculate_rms_correlation(pd.DataFrame({"A": [1.0], "B": [2.0]}))
     assert "error" in result or "rms_corr" in result

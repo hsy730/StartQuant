@@ -9,63 +9,70 @@ factor_neutralization_service.py 因子中性化服务测试
 - _build_result_series: 结果Series构建
 - add_industry_classification: 添加行业分类
 """
+
 import sys
 import os
 import logging
-import warnings
 import numpy as np
 import pandas as pd
 import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 # NumPy 2.0 兼容
-if not hasattr(np, 'NINF'):
+if not hasattr(np, "NINF"):
     np.NINF = -np.inf
-if not hasattr(np, 'PINF'):
+if not hasattr(np, "PINF"):
     np.PINF = np.inf
 
-from backend.services.factor_neutralization_service import FactorNeutralizationService
-
+from backend.services.factor_neutralization_service import FactorNeutralizationService  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # 辅助函数：生成测试数据
 # ---------------------------------------------------------------------------
 
+
 def _make_market_cap_df(n=30, seed=42):
     """生成含因子值和市值的横截面测试数据（n >= 10 满足 MIN_SAMPLES）"""
     np.random.seed(seed)
-    return pd.DataFrame({
-        "factor_value": np.random.randn(n) * 0.1,
-        "market_cap": np.random.lognormal(mean=10, sigma=1, size=n),
-    })
+    return pd.DataFrame(
+        {
+            "factor_value": np.random.randn(n) * 0.1,
+            "market_cap": np.random.lognormal(mean=10, sigma=1, size=n),
+        }
+    )
 
 
 def _make_industry_df(n=30, n_industries=3, seed=42):
     """生成含因子值和行业分类的横截面测试数据"""
     np.random.seed(seed)
     industries = [f"ind_{i}" for i in range(n_industries)]
-    return pd.DataFrame({
-        "factor_value": np.random.randn(n) * 0.1,
-        "industry": np.random.choice(industries, size=n),
-    })
+    return pd.DataFrame(
+        {
+            "factor_value": np.random.randn(n) * 0.1,
+            "industry": np.random.choice(industries, size=n),
+        }
+    )
 
 
 def _make_full_df(n=30, n_industries=3, seed=42):
     """生成含因子值、市值和行业分类的完整横截面测试数据"""
     np.random.seed(seed)
     industries = [f"ind_{i}" for i in range(n_industries)]
-    return pd.DataFrame({
-        "factor_value": np.random.randn(n) * 0.1,
-        "market_cap": np.random.lognormal(mean=10, sigma=1, size=n),
-        "industry": np.random.choice(industries, size=n),
-    })
+    return pd.DataFrame(
+        {
+            "factor_value": np.random.randn(n) * 0.1,
+            "market_cap": np.random.lognormal(mean=10, sigma=1, size=n),
+            "industry": np.random.choice(industries, size=n),
+        }
+    )
 
 
 # ===========================================================================
 # TestValidateColumns
 # ===========================================================================
+
 
 class TestValidateColumns:
     """_validate_columns 列校验测试"""
@@ -104,6 +111,7 @@ class TestValidateColumns:
 # ===========================================================================
 # TestBuildResultSeries
 # ===========================================================================
+
 
 class TestBuildResultSeries:
     """_build_result_series 结果Series构建测试"""
@@ -160,6 +168,7 @@ class TestBuildResultSeries:
 # ===========================================================================
 # TestNeutralizeMarketCap
 # ===========================================================================
+
 
 class TestNeutralizeMarketCap:
     """neutralize_market_cap 市值中性化测试"""
@@ -229,10 +238,12 @@ class TestNeutralizeMarketCap:
 
     def test_all_zero_market_cap_should_raise_value_error(self):
         """所有市值为0时应抛出 ValueError"""
-        df = pd.DataFrame({
-            "factor_value": np.random.randn(15),
-            "market_cap": 0.0,
-        })
+        df = pd.DataFrame(
+            {
+                "factor_value": np.random.randn(15),
+                "market_cap": 0.0,
+            }
+        )
         with pytest.raises(ValueError, match="市值>0"):
             self.service.neutralize_market_cap(df, "factor_value")
 
@@ -253,10 +264,12 @@ class TestNeutralizeMarketCap:
 
     def test_all_nan_should_raise_value_error(self):
         """全部 NaN 数据应抛出 ValueError"""
-        df = pd.DataFrame({
-            "factor_value": [np.nan] * 15,
-            "market_cap": [np.nan] * 15,
-        })
+        df = pd.DataFrame(
+            {
+                "factor_value": [np.nan] * 15,
+                "market_cap": [np.nan] * 15,
+            }
+        )
         with pytest.raises(ValueError, match="有效数据不足"):
             self.service.neutralize_market_cap(df, "factor_value")
 
@@ -278,10 +291,12 @@ class TestNeutralizeMarketCap:
         """残差均值应接近0（线性回归性质）"""
         np.random.seed(42)
         n = 200
-        df = pd.DataFrame({
-            "factor_value": np.random.randn(n),
-            "market_cap": np.random.lognormal(mean=10, sigma=1, size=n),
-        })
+        df = pd.DataFrame(
+            {
+                "factor_value": np.random.randn(n),
+                "market_cap": np.random.lognormal(mean=10, sigma=1, size=n),
+            }
+        )
         result = self.service.neutralize_market_cap(df, "factor_value")
         assert abs(result.dropna().mean()) < 1e-10
 
@@ -289,6 +304,7 @@ class TestNeutralizeMarketCap:
 # ===========================================================================
 # TestNeutralizeIndustry
 # ===========================================================================
+
 
 class TestNeutralizeIndustry:
     """neutralize_industry 行业中性化测试"""
@@ -324,10 +340,12 @@ class TestNeutralizeIndustry:
 
     def test_single_industry_should_return_original_factor(self):
         """只有1个行业时应返回原始因子值（跳过中性化）"""
-        df = pd.DataFrame({
-            "factor_value": np.random.randn(20),
-            "industry": "Tech",
-        })
+        df = pd.DataFrame(
+            {
+                "factor_value": np.random.randn(20),
+                "industry": "Tech",
+            }
+        )
         result = self.service.neutralize_industry(df, "factor_value")
         pd.testing.assert_series_equal(result, df["factor_value"])
 
@@ -355,12 +373,14 @@ class TestNeutralizeIndustry:
         n = 30
         # 主行业有足够样本，小行业只有2个样本
         industries = ["Big"] * 20 + ["Small1"] * 2 + ["Medium"] * 8
-        df = pd.DataFrame({
-            "factor_value": np.random.randn(n),
-            "industry": industries,
-        })
+        df = pd.DataFrame(
+            {
+                "factor_value": np.random.randn(n),
+                "industry": industries,
+            }
+        )
         with caplog.at_level(logging.WARNING, logger="backend.services.factor_neutralization_service"):
-            result = self.service.neutralize_industry(df, "factor_value")
+            self.service.neutralize_industry(df, "factor_value")
             # 应有关于小行业的警告日志
             assert any("样本量" in record.message for record in caplog.records)
 
@@ -369,10 +389,12 @@ class TestNeutralizeIndustry:
         np.random.seed(42)
         # 每个行业只有2个样本，全部 < 5
         industries = ["A"] * 2 + ["B"] * 2 + ["C"] * 2 + ["D"] * 10
-        df = pd.DataFrame({
-            "factor_value": np.random.randn(16),
-            "industry": industries,
-        })
+        df = pd.DataFrame(
+            {
+                "factor_value": np.random.randn(16),
+                "industry": industries,
+            }
+        )
         # D行业有10个样本，但过滤掉A/B/C后只剩1个行业
         # 实际上D有10个，所以过滤后只有1个有效行业，应跳过
         result = self.service.neutralize_industry(df, "factor_value")
@@ -411,10 +433,12 @@ class TestNeutralizeIndustry:
         np.random.seed(42)
         n = 20
         industries = ["A"] * 10 + ["B"] * 10
-        df = pd.DataFrame({
-            "factor_value": np.random.randn(n),
-            "industry": industries,
-        })
+        df = pd.DataFrame(
+            {
+                "factor_value": np.random.randn(n),
+                "industry": industries,
+            }
+        )
         result = self.service.neutralize_industry(df, "factor_value")
         assert isinstance(result, pd.Series)
         assert result.notna().sum() >= 10
@@ -423,6 +447,7 @@ class TestNeutralizeIndustry:
 # ===========================================================================
 # TestNeutralizeBoth
 # ===========================================================================
+
 
 class TestNeutralizeBoth:
     """neutralize_both 行业+市值联合中性化测试"""
@@ -448,16 +473,14 @@ class TestNeutralizeBoth:
         market_cap = np.exp(log_mc)
 
         # 构造同时受市值和行业影响的因子
-        factor = (
-            np.array([industry_effect[i] for i in industries])
-            + 0.5 * log_mc
-            + np.random.randn(n) * 0.01
+        factor = np.array([industry_effect[i] for i in industries]) + 0.5 * log_mc + np.random.randn(n) * 0.01
+        df = pd.DataFrame(
+            {
+                "factor_value": factor,
+                "market_cap": market_cap,
+                "industry": industries,
+            }
         )
-        df = pd.DataFrame({
-            "factor_value": factor,
-            "market_cap": market_cap,
-            "industry": industries,
-        })
 
         result = self.service.neutralize_both(df, "factor_value")
         valid = result.dropna()
@@ -483,9 +506,11 @@ class TestNeutralizeBoth:
 
     def test_neither_column_should_return_original_factor(self):
         """既无市值也无行业列时应返回原始因子值"""
-        df = pd.DataFrame({
-            "factor_value": np.random.randn(20),
-        })
+        df = pd.DataFrame(
+            {
+                "factor_value": np.random.randn(20),
+            }
+        )
         result = self.service.neutralize_both(df, "factor_value")
         pd.testing.assert_series_equal(result, df["factor_value"])
 
@@ -497,10 +522,12 @@ class TestNeutralizeBoth:
 
     def test_missing_factor_column_should_raise_value_error(self):
         """缺少因子列时应抛出 ValueError"""
-        df = pd.DataFrame({
-            "market_cap": [1e8] * 20,
-            "industry": ["A"] * 10 + ["B"] * 10,
-        })
+        df = pd.DataFrame(
+            {
+                "market_cap": [1e8] * 20,
+                "industry": ["A"] * 10 + ["B"] * 10,
+            }
+        )
         with pytest.raises(ValueError, match="缺少列"):
             self.service.neutralize_both(df, "nonexistent")
 
@@ -513,11 +540,13 @@ class TestNeutralizeBoth:
 
     def test_all_zero_market_cap_should_raise_value_error(self):
         """所有市值为0时应抛出 ValueError"""
-        df = pd.DataFrame({
-            "factor_value": np.random.randn(15),
-            "market_cap": 0.0,
-            "industry": ["A"] * 8 + ["B"] * 7,
-        })
+        df = pd.DataFrame(
+            {
+                "factor_value": np.random.randn(15),
+                "market_cap": 0.0,
+                "industry": ["A"] * 8 + ["B"] * 7,
+            }
+        )
         with pytest.raises(ValueError, match="市值>0"):
             self.service.neutralize_both(df, "factor_value")
 
@@ -525,11 +554,13 @@ class TestNeutralizeBoth:
         """只有1个行业但有市值时，应跳过行业部分，仅做市值中性化"""
         np.random.seed(42)
         n = 20
-        df = pd.DataFrame({
-            "factor_value": np.random.randn(n),
-            "market_cap": np.random.lognormal(mean=10, sigma=1, size=n),
-            "industry": "OnlyOne",
-        })
+        df = pd.DataFrame(
+            {
+                "factor_value": np.random.randn(n),
+                "market_cap": np.random.lognormal(mean=10, sigma=1, size=n),
+                "industry": "OnlyOne",
+            }
+        )
         result = self.service.neutralize_both(df, "factor_value")
         assert isinstance(result, pd.Series)
         assert result.notna().sum() >= 10
@@ -549,11 +580,7 @@ class TestNeutralizeBoth:
         """自定义列名应正常工作"""
         df = _make_full_df(n=20, n_industries=3, seed=42)
         df = df.rename(columns={"market_cap": "mkt_cap", "industry": "sector"})
-        result = self.service.neutralize_both(
-            df, "factor_value",
-            market_cap_column="mkt_cap",
-            industry_column="sector"
-        )
+        result = self.service.neutralize_both(df, "factor_value", market_cap_column="mkt_cap", industry_column="sector")
         assert isinstance(result, pd.Series)
         assert result.notna().sum() >= 10
 
@@ -568,11 +595,13 @@ class TestNeutralizeBoth:
         np.random.seed(42)
         n = 30
         industries = ["Big"] * 20 + ["Small"] * 3 + ["Medium"] * 7
-        df = pd.DataFrame({
-            "factor_value": np.random.randn(n),
-            "market_cap": np.random.lognormal(mean=10, sigma=1, size=n),
-            "industry": industries,
-        })
+        df = pd.DataFrame(
+            {
+                "factor_value": np.random.randn(n),
+                "market_cap": np.random.lognormal(mean=10, sigma=1, size=n),
+                "industry": industries,
+            }
+        )
         result = self.service.neutralize_both(df, "factor_value")
         assert isinstance(result, pd.Series)
         assert result.notna().sum() >= 10
@@ -582,6 +611,7 @@ class TestNeutralizeBoth:
 # TestAddIndustryClassification
 # ===========================================================================
 
+
 class TestAddIndustryClassification:
     """add_industry_classification 添加行业分类测试"""
 
@@ -590,10 +620,12 @@ class TestAddIndustryClassification:
 
     def test_with_stock_code_column_should_map_industry(self):
         """有 stock_code 列时应根据映射添加 industry 列"""
-        df = pd.DataFrame({
-            "stock_code": ["600036.SH", "000001.SZ", "300750.SZ"],
-            "factor_value": [1.0, 2.0, 3.0],
-        })
+        df = pd.DataFrame(
+            {
+                "stock_code": ["600036.SH", "000001.SZ", "300750.SZ"],
+                "factor_value": [1.0, 2.0, 3.0],
+            }
+        )
         industry_map = {"600036": "Finance", "000001": "Finance", "300750": "Manufacturing"}
         with patch.object(self.service, "get_industry_classification", return_value=industry_map):
             result = self.service.add_industry_classification(df, ["600036", "000001", "300750"])
@@ -604,9 +636,11 @@ class TestAddIndustryClassification:
 
     def test_without_stock_code_column_should_use_unknown(self):
         """没有 stock_code 列时 industry 应全部为 unknown"""
-        df = pd.DataFrame({
-            "factor_value": [1.0, 2.0, 3.0],
-        })
+        df = pd.DataFrame(
+            {
+                "factor_value": [1.0, 2.0, 3.0],
+            }
+        )
         with patch.object(self.service, "get_industry_classification", return_value={}):
             result = self.service.add_industry_classification(df, ["600036"])
         assert "industry" in result.columns
@@ -614,10 +648,12 @@ class TestAddIndustryClassification:
 
     def test_should_not_modify_original_df(self):
         """不应修改原始 DataFrame（数据不可变原则）"""
-        df = pd.DataFrame({
-            "stock_code": ["600036.SH"],
-            "factor_value": [1.0],
-        })
+        df = pd.DataFrame(
+            {
+                "stock_code": ["600036.SH"],
+                "factor_value": [1.0],
+            }
+        )
         original_cols = list(df.columns)
         with patch.object(self.service, "get_industry_classification", return_value={"600036": "Finance"}):
             self.service.add_industry_classification(df, ["600036"])
@@ -626,10 +662,12 @@ class TestAddIndustryClassification:
 
     def test_bj_suffix_should_be_stripped(self):
         """北交所 .BJ 后缀应被正确去除"""
-        df = pd.DataFrame({
-            "stock_code": ["830799.BJ"],
-            "factor_value": [1.0],
-        })
+        df = pd.DataFrame(
+            {
+                "stock_code": ["830799.BJ"],
+                "factor_value": [1.0],
+            }
+        )
         industry_map = {"830799": "Mining"}
         with patch.object(self.service, "get_industry_classification", return_value=industry_map):
             result = self.service.add_industry_classification(df, ["830799"])
@@ -637,10 +675,12 @@ class TestAddIndustryClassification:
 
     def test_sh_suffix_should_be_stripped(self):
         """.SH 后缀应被正确去除"""
-        df = pd.DataFrame({
-            "stock_code": ["601318.SH"],
-            "factor_value": [1.0],
-        })
+        df = pd.DataFrame(
+            {
+                "stock_code": ["601318.SH"],
+                "factor_value": [1.0],
+            }
+        )
         industry_map = {"601318": "Insurance"}
         with patch.object(self.service, "get_industry_classification", return_value=industry_map):
             result = self.service.add_industry_classification(df, ["601318"])
@@ -648,10 +688,12 @@ class TestAddIndustryClassification:
 
     def test_sz_suffix_should_be_stripped(self):
         """.SZ 后缀应被正确去除"""
-        df = pd.DataFrame({
-            "stock_code": ["000002.SZ"],
-            "factor_value": [1.0],
-        })
+        df = pd.DataFrame(
+            {
+                "stock_code": ["000002.SZ"],
+                "factor_value": [1.0],
+            }
+        )
         industry_map = {"000002": "RealEstate"}
         with patch.object(self.service, "get_industry_classification", return_value=industry_map):
             result = self.service.add_industry_classification(df, ["000002"])
@@ -659,10 +701,12 @@ class TestAddIndustryClassification:
 
     def test_unmapped_stock_code_should_be_nan(self):
         """未在映射中的股票代码 industry 应为 NaN"""
-        df = pd.DataFrame({
-            "stock_code": ["600036.SH", "999999.SH"],
-            "factor_value": [1.0, 2.0],
-        })
+        df = pd.DataFrame(
+            {
+                "stock_code": ["600036.SH", "999999.SH"],
+                "factor_value": [1.0, 2.0],
+            }
+        )
         industry_map = {"600036": "Finance"}  # 不含 999999
         with patch.object(self.service, "get_industry_classification", return_value=industry_map):
             result = self.service.add_industry_classification(df, ["600036", "999999"])
@@ -671,10 +715,12 @@ class TestAddIndustryClassification:
 
     def test_get_industry_classification_failure_should_use_unknown(self):
         """获取行业分类失败时应使用 unknown 作为默认值"""
-        df = pd.DataFrame({
-            "stock_code": ["600036.SH"],
-            "factor_value": [1.0],
-        })
+        df = pd.DataFrame(
+            {
+                "stock_code": ["600036.SH"],
+                "factor_value": [1.0],
+            }
+        )
         with patch("backend.services.factor_neutralization_service.data_service") as mock_ds:
             mock_ds.get_industry_classification.side_effect = Exception("service unavailable")
             result = self.service.add_industry_classification(df, ["600036"])
@@ -685,6 +731,7 @@ class TestAddIndustryClassification:
 # ===========================================================================
 # TestGetIndustryClassification
 # ===========================================================================
+
 
 class TestGetIndustryClassification:
     """get_industry_classification 行业分类获取测试"""
@@ -719,6 +766,7 @@ class TestGetIndustryClassification:
 # TestIntegrationAndEdgeCases
 # ===========================================================================
 
+
 class TestIntegrationAndEdgeCases:
     """集成与边界情况测试"""
 
@@ -749,10 +797,12 @@ class TestIntegrationAndEdgeCases:
     def test_min_samples_boundary_exactly_10_should_work(self):
         """恰好10条有效数据应能正常计算"""
         np.random.seed(42)
-        df = pd.DataFrame({
-            "factor_value": np.random.randn(10),
-            "market_cap": np.random.lognormal(mean=10, sigma=1, size=10),
-        })
+        df = pd.DataFrame(
+            {
+                "factor_value": np.random.randn(10),
+                "market_cap": np.random.lognormal(mean=10, sigma=1, size=10),
+            }
+        )
         result = self.service.neutralize_market_cap(df, "factor_value")
         assert isinstance(result, pd.Series)
         assert result.notna().sum() == 10
@@ -760,10 +810,12 @@ class TestIntegrationAndEdgeCases:
     def test_min_samples_boundary_9_should_raise(self):
         """9条有效数据应抛出 ValueError"""
         np.random.seed(42)
-        df = pd.DataFrame({
-            "factor_value": np.random.randn(9),
-            "market_cap": np.random.lognormal(mean=10, sigma=1, size=9),
-        })
+        df = pd.DataFrame(
+            {
+                "factor_value": np.random.randn(9),
+                "market_cap": np.random.lognormal(mean=10, sigma=1, size=9),
+            }
+        )
         with pytest.raises(ValueError, match="有效数据不足"):
             self.service.neutralize_market_cap(df, "factor_value")
 
@@ -771,10 +823,12 @@ class TestIntegrationAndEdgeCases:
         """市值跨度很大（如从1e6到1e12）时应正常计算"""
         np.random.seed(42)
         n = 30
-        df = pd.DataFrame({
-            "factor_value": np.random.randn(n),
-            "market_cap": np.logspace(6, 12, n),
-        })
+        df = pd.DataFrame(
+            {
+                "factor_value": np.random.randn(n),
+                "market_cap": np.logspace(6, 12, n),
+            }
+        )
         result = self.service.neutralize_market_cap(df, "factor_value")
         assert isinstance(result, pd.Series)
         assert result.notna().sum() >= 10
@@ -783,10 +837,12 @@ class TestIntegrationAndEdgeCases:
         """因子值恒定但市值变化时，残差应接近0"""
         np.random.seed(42)
         n = 30
-        df = pd.DataFrame({
-            "factor_value": 1.0,  # 恒定因子
-            "market_cap": np.random.lognormal(mean=10, sigma=1, size=n),
-        })
+        df = pd.DataFrame(
+            {
+                "factor_value": 1.0,  # 恒定因子
+                "market_cap": np.random.lognormal(mean=10, sigma=1, size=n),
+            }
+        )
         result = self.service.neutralize_market_cap(df, "factor_value")
         valid = result.dropna()
         # 恒定因子完全可被回归解释，残差应接近0
@@ -798,10 +854,12 @@ class TestIntegrationAndEdgeCases:
         np.random.seed(42)
         n = 50
         industries = [f"ind_{i}" for i in range(5)]
-        df = pd.DataFrame({
-            "factor_value": np.random.randn(n),
-            "industry": np.random.choice(industries, size=n),
-        })
+        df = pd.DataFrame(
+            {
+                "factor_value": np.random.randn(n),
+                "industry": np.random.choice(industries, size=n),
+            }
+        )
         result = self.service.neutralize_industry(df, "factor_value")
         assert isinstance(result, pd.Series)
         assert result.notna().sum() >= 10
@@ -824,10 +882,13 @@ class TestIntegrationAndEdgeCases:
         """使用字符串索引的 DataFrame 应正常工作"""
         np.random.seed(42)
         n = 20
-        df = pd.DataFrame({
-            "factor_value": np.random.randn(n),
-            "market_cap": np.random.lognormal(mean=10, sigma=1, size=n),
-        }, index=[f"stock_{i}" for i in range(n)])
+        df = pd.DataFrame(
+            {
+                "factor_value": np.random.randn(n),
+                "market_cap": np.random.lognormal(mean=10, sigma=1, size=n),
+            },
+            index=[f"stock_{i}" for i in range(n)],
+        )
         result = self.service.neutralize_market_cap(df, "factor_value")
         assert list(result.index) == list(df.index)
 

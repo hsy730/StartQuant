@@ -2,11 +2,11 @@
 单元测试：防护关键Bug回归
 覆盖：除零保护、Session泄漏、线程安全、净值曲线、MACD编译、inf污染等
 """
+
 import pytest
 import numpy as np
 import pandas as pd
-from unittest.mock import patch, MagicMock
-from datetime import datetime
+from unittest.mock import patch
 
 
 class TestDivisionByZeroProtection:
@@ -15,6 +15,7 @@ class TestDivisionByZeroProtection:
     def test_smart_preprocessing_detector_cv_zero_denominator(self):
         """smart_preprocessing_detector: avg_market_cap=0 时不应崩溃"""
         from backend.utils.safe_math import safe_divide
+
         # 当分母为0时，safe_divide应返回default值
         result = safe_divide(100.0, 0.0, default=0.0)
         assert result == 0.0
@@ -22,7 +23,8 @@ class TestDivisionByZeroProtection:
     def test_smart_preprocessing_detector_cv_nan_denominator(self):
         """smart_preprocessing_detector: NaN分母应返回default"""
         from backend.utils.safe_math import safe_divide
-        result = safe_divide(100.0, float('nan'), default=0.0)
+
+        result = safe_divide(100.0, float("nan"), default=0.0)
         assert result == 0.0
 
     def test_factor_generator_valid_ratio_empty_factor_values(self):
@@ -74,6 +76,7 @@ class TestFormulaCompilerMACD:
     def test_macd_default_index(self):
         """MACD无第二参数时默认索引[0]"""
         from backend.services.formula_compiler_service import FormulaCompilerService
+
         compiler = FormulaCompilerService()
         tree = self._make_macd_tree()
         result = compiler.compile_formula(tree)
@@ -82,6 +85,7 @@ class TestFormulaCompilerMACD:
     def test_macd_integer_index(self):
         """MACD带整数索引时应正确解析"""
         from backend.services.formula_compiler_service import FormulaCompilerService
+
         compiler = FormulaCompilerService()
         tree = self._make_macd_tree(second_arg=1)
         result = compiler.compile_formula(tree)
@@ -90,6 +94,7 @@ class TestFormulaCompilerMACD:
     def test_macd_non_integer_arg_fallback(self):
         """MACD第二参数非整数时应回退到默认索引[0]"""
         from backend.services.formula_compiler_service import FormulaCompilerService
+
         compiler = FormulaCompilerService()
         # 传入字符串参数，无法解析为整数，应回退到[0]
         tree = {
@@ -185,11 +190,13 @@ class TestInputDataImmutability:
         """BaseMiningService应复制传入的DataFrame（规则3：输入数据不可变）"""
         from backend.services.base_mining_service import BaseMiningService
 
-        original_data = pd.DataFrame({
-            "close": [1.0, 2.0, 3.0],
-            "return": [0.01, 0.02, 0.03],
-        })
-        original_copy = original_data.copy()
+        original_data = pd.DataFrame(
+            {
+                "close": [1.0, 2.0, 3.0],
+                "return": [0.01, 0.02, 0.03],
+            }
+        )
+        original_data.copy()
 
         # BaseMiningService 是抽象类，创建具体子类来测试
         class ConcreteMiningService(BaseMiningService):
@@ -197,7 +204,7 @@ class TestInputDataImmutability:
                 return {}
 
         # 使用 patch 避免预计算因子时的外部依赖
-        with patch.object(BaseMiningService, '_precompute_base_factors', lambda self: None):
+        with patch.object(BaseMiningService, "_precompute_base_factors", lambda self: None):
             service = ConcreteMiningService(
                 base_factors=[],
                 data=original_data,
@@ -219,15 +226,17 @@ class TestInputDataImmutability:
         """DeepFactorMiningService应复制传入的DataFrame"""
         from backend.services.deep_factor_mining_service import DeepFactorMiningService
 
-        original_data = pd.DataFrame({
-            "close": [1.0, 2.0, 3.0],
-            "return": [0.01, 0.02, 0.03],
-        })
+        original_data = pd.DataFrame(
+            {
+                "close": [1.0, 2.0, 3.0],
+                "return": [0.01, 0.02, 0.03],
+            }
+        )
         original_copy = original_data.copy()
 
         # DeepFactorMiningService 继承自 BaseMiningService
         # 使用 patch 避免预计算因子和 PyTorch 依赖
-        with patch.object(DeepFactorMiningService, '__init__', lambda self, *a, **kw: None):
+        with patch.object(DeepFactorMiningService, "__init__", lambda self, *a, **kw: None):
             service = DeepFactorMiningService.__new__(DeepFactorMiningService)
             service.data = original_data.copy()
             # 修改service内部数据不应影响原始数据
@@ -241,6 +250,7 @@ class TestDatabaseSessionManagement:
     def test_get_db_context_manager_closes_on_exception(self):
         """get_db上下文管理器异常时应关闭session"""
         from backend.core.database import get_db
+
         with pytest.raises(ValueError):
             with get_db() as db:
                 assert db is not None
@@ -250,6 +260,7 @@ class TestDatabaseSessionManagement:
     def test_get_db_normal_close(self):
         """get_db正常退出时应关闭session"""
         from backend.core.database import get_db
+
         with get_db() as db:
             assert db is not None
         # Session should be closed
@@ -358,9 +369,7 @@ class TestPresetFactorDivisionSafety:
                         continue
                     # 允许除以字面量非零常量（如 / 4, / 3），这些不会除零
                     # 检测 " / 数字" 模式，数字为非零常量
-                    bare_var_division = re.search(r'/\s*(?![\d.])', code)
+                    re.search(r"/\s*(?![\d.])", code)
                     # 如果所有除法都是除以常量数字，则安全
-                    all_const_division = not re.search(r'/\s*[a-zA-Z_(]', code)
-                    assert all_const_division, (
-                        f"因子 '{factor['name']}' 的代码含裸除法: {code}"
-                    )
+                    all_const_division = not re.search(r"/\s*[a-zA-Z_(]", code)
+                    assert all_const_division, f"因子 '{factor['name']}' 的代码含裸除法: {code}"

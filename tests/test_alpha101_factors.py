@@ -3,6 +3,7 @@ Alpha101 因子模块单元测试
 
 验证 Alpha101 因子定义和计算的正确性
 """
+
 import pytest
 import numpy as np
 import pandas as pd
@@ -60,13 +61,15 @@ class TestAlpha101HelperFunctions:
         self.calculator = FactorCalculator()
         np.random.seed(42)
         n = 200
-        self.test_df = pd.DataFrame({
-            "open": np.cumsum(np.random.randn(n)) + 100,
-            "high": np.cumsum(np.random.randn(n)) + 101,
-            "low": np.cumsum(np.random.randn(n)) + 99,
-            "close": np.cumsum(np.random.randn(n)) + 100,
-            "volume": np.abs(np.random.randn(n)) * 1000000 + 500000,
-        })
+        self.test_df = pd.DataFrame(
+            {
+                "open": np.cumsum(np.random.randn(n)) + 100,
+                "high": np.cumsum(np.random.randn(n)) + 101,
+                "low": np.cumsum(np.random.randn(n)) + 99,
+                "close": np.cumsum(np.random.randn(n)) + 100,
+                "volume": np.abs(np.random.randn(n)) * 1000000 + 500000,
+            }
+        )
 
     def test_tsrank_returns_percentile(self):
         result = self.calculator.calculate(self.test_df, "TSRANK(close, 10)")
@@ -131,13 +134,15 @@ class TestAlpha101FactorCalculation:
         self.calculator = FactorCalculator()
         np.random.seed(42)
         n = 200
-        self.test_df = pd.DataFrame({
-            "open": np.cumsum(np.random.randn(n)) + 100,
-            "high": np.cumsum(np.random.randn(n)) + 101,
-            "low": np.cumsum(np.random.randn(n)) + 99,
-            "close": np.cumsum(np.random.randn(n)) + 100,
-            "volume": np.abs(np.random.randn(n)) * 1000000 + 500000,
-        })
+        self.test_df = pd.DataFrame(
+            {
+                "open": np.cumsum(np.random.randn(n)) + 100,
+                "high": np.cumsum(np.random.randn(n)) + 101,
+                "low": np.cumsum(np.random.randn(n)) + 99,
+                "close": np.cumsum(np.random.randn(n)) + 100,
+                "volume": np.abs(np.random.randn(n)) * 1000000 + 500000,
+            }
+        )
 
     def test_all_alpha101_factors_compute(self):
         alpha101 = get_alpha101_factors()
@@ -149,25 +154,18 @@ class TestAlpha101FactorCalculation:
 
     def test_alpha001_computation(self):
         result = self.calculator.calculate(
-            self.test_df,
-            "TSRANK(SIGNEDPOWER(IF(RETURNS(close) < 0, STD(RETURNS(close), 20), close), 2), 5) - 0.5"
+            self.test_df, "TSRANK(SIGNEDPOWER(IF(RETURNS(close) < 0, STD(RETURNS(close), 20), close), 2), 5) - 0.5"
         )
         assert isinstance(result, pd.Series)
         assert result.notna().sum() > 0
 
     def test_alpha101_computation(self):
-        result = self.calculator.calculate(
-            self.test_df,
-            "(close - open) / ((high - low) + 1e-10) * volume"
-        )
+        result = self.calculator.calculate(self.test_df, "(close - open) / ((high - low) + 1e-10) * volume")
         assert isinstance(result, pd.Series)
         assert result.notna().sum() > 0
 
     def test_alpha012_sign_volume_price(self):
-        result = self.calculator.calculate(
-            self.test_df,
-            "SIGN(DELTA(volume, 1)) * (-1 * DELTA(close, 1))"
-        )
+        result = self.calculator.calculate(self.test_df, "SIGN(DELTA(volume, 1)) * (-1 * DELTA(close, 1))")
         assert isinstance(result, pd.Series)
         assert result.notna().sum() > 0
 
@@ -188,24 +186,28 @@ class TestAlpha101EdgeCases:
         self.calculator = FactorCalculator()
 
     def test_constant_price_series(self):
-        df = pd.DataFrame({
-            "open": [100.0] * 50,
-            "high": [100.0] * 50,
-            "low": [100.0] * 50,
-            "close": [100.0] * 50,
-            "volume": [1000000] * 50,
-        })
+        df = pd.DataFrame(
+            {
+                "open": [100.0] * 50,
+                "high": [100.0] * 50,
+                "low": [100.0] * 50,
+                "close": [100.0] * 50,
+                "volume": [1000000] * 50,
+            }
+        )
         result = self.calculator.calculate(df, "-1 * CORR(open, volume, 10)")
         assert isinstance(result, pd.Series)
 
     def test_short_data_series(self):
-        df = pd.DataFrame({
-            "open": [100.0, 101.0, 102.0],
-            "high": [101.0, 102.0, 103.0],
-            "low": [99.0, 100.0, 101.0],
-            "close": [100.5, 101.5, 102.5],
-            "volume": [1000000, 1100000, 1200000],
-        })
+        df = pd.DataFrame(
+            {
+                "open": [100.0, 101.0, 102.0],
+                "high": [101.0, 102.0, 103.0],
+                "low": [99.0, 100.0, 101.0],
+                "close": [100.5, 101.5, 102.5],
+                "volume": [1000000, 1100000, 1200000],
+            }
+        )
         result = self.calculator.calculate(df, "DELTA(close, 1)")
         assert isinstance(result, pd.Series)
         assert len(result) == 3

@@ -10,7 +10,7 @@ NaN/Inf 序列化单元测试
 
 项目规则6：NaN/Inf序列化统一转为None — 禁止转为0.0
 """
-import pytest
+
 import numpy as np
 import pandas as pd
 
@@ -32,8 +32,11 @@ class TestEmptyMetricsReturnsNone:
         """BaseStrategy._empty_metrics 所有值应为 None"""
 
         class Dummy(BaseStrategy):
-            def generate_signals(self, df): return pd.Series(0, index=df.index)
-            def calculate_weights(self, df, signals): return pd.Series(0.0, index=df.index)
+            def generate_signals(self, df):
+                return pd.Series(0, index=df.index)
+
+            def calculate_weights(self, df, signals):
+                return pd.Series(0.0, index=df.index)
 
         empty = Dummy()._empty_metrics()
         for key, val in empty.items():
@@ -80,18 +83,18 @@ class TestSanitizeDict:
 
     def test_nan_becomes_none(self):
         """NaN 应转为 None"""
-        result = sanitize_dict({"value": float('nan')})
+        result = sanitize_dict({"value": float("nan")})
         assert result["value"] is None, f"NaN 应转为 None，实际为 {result['value']}"
 
     def test_inf_becomes_none(self):
         """Inf 应转为 None"""
-        result = sanitize_dict({"value": float('inf')})
-        assert result["value"] is None, f"Inf 应转为 None"
+        result = sanitize_dict({"value": float("inf")})
+        assert result["value"] is None, "Inf 应转为 None"
 
     def test_neg_inf_becomes_none(self):
         """-Inf 应转为 None"""
-        result = sanitize_dict({"value": float('-inf')})
-        assert result["value"] is None, f"-Inf 应转为 None"
+        result = sanitize_dict({"value": float("-inf")})
+        assert result["value"] is None, "-Inf 应转为 None"
 
     def test_normal_float_unchanged(self):
         """正常浮点数应保持不变"""
@@ -110,12 +113,12 @@ class TestSanitizeDict:
 
     def test_nested_dict(self):
         """嵌套字典中的 NaN 也应被转换"""
-        result = sanitize_dict({"outer": {"inner": float('nan')}})
+        result = sanitize_dict({"outer": {"inner": float("nan")}})
         assert result["outer"]["inner"] is None
 
     def test_list_values(self):
         """列表中的 NaN 也应被转换"""
-        result = sanitize_dict({"values": [1.0, float('nan'), 3.0]})
+        result = sanitize_dict({"values": [1.0, float("nan"), 3.0]})
         assert result["values"][1] is None
 
     def test_np_int64_to_int(self):
@@ -130,10 +133,9 @@ class TestBetaNaNToNone:
 
     def test_beta_nan_becomes_none(self):
         """beta 为 NaN 时应转为 None 而非 NaN"""
-        from backend.services.portfolio_analysis_service import PortfolioAnalysisService
 
         # 模拟 beta 为 NaN 的场景
-        beta = float('nan')
+        beta = float("nan")
         result = None if (isinstance(beta, float) and np.isnan(beta)) else float(beta)
         assert result is None, f"NaN beta 应转为 None，实际为 {result}"
 
@@ -150,7 +152,7 @@ class TestFactorScoreNaNPropagation:
     def test_nan_ic_mean_not_propagate(self):
         """IC均值为NaN时评分不应变为NaN"""
         # 模拟修复后的逻辑
-        ic_mean = float('nan')
+        ic_mean = float("nan")
         if isinstance(ic_mean, float) and np.isnan(ic_mean):
             ic_mean = 0.0
         score = min(ic_mean * 400, 40)
@@ -159,8 +161,8 @@ class TestFactorScoreNaNPropagation:
 
     def test_nan_ir_not_propagate(self):
         """IR为NaN时评分不应变为NaN"""
-        ir = float('nan')
+        ir = float("nan")
         if isinstance(ir, float) and np.isnan(ir):
             ir = 0.0
         score = min(abs(ir) * 200, 30)
-        assert not np.isnan(score), f"评分不应为NaN"
+        assert not np.isnan(score), "评分不应为NaN"

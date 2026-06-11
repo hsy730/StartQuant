@@ -8,15 +8,16 @@
 4. factor_stability_service截面IC计算iterrows→concat+groupby优化
 5. vectorbt_backtest_service横截面回测逐日循环→向量化优化
 """
+
 import numpy as np
 import pandas as pd
 import pytest
 import warnings
 
-
 # ============================================================
 # Fix 1: safe_divide numpy数组不再产生RuntimeWarning
 # ============================================================
+
 
 class TestSafeDivideNoWarning:
     """验证safe_divide对numpy数组不产生divide by zero警告"""
@@ -35,8 +36,7 @@ class TestSafeDivideNoWarning:
             # 检查是否有RuntimeWarning
             runtime_warnings = [x for x in w if issubclass(x.category, RuntimeWarning)]
             assert len(runtime_warnings) == 0, (
-                f"safe_divide不应产生RuntimeWarning，但产生了: "
-                f"{[str(x.message) for x in runtime_warnings]}"
+                f"safe_divide不应产生RuntimeWarning，但产生了: " f"{[str(x.message) for x in runtime_warnings]}"
             )
 
         # 结果应正确
@@ -92,6 +92,7 @@ class TestSafeDivideNoWarning:
 # Fix 2: factor_stability_service裸除法→safe_divide/safe_ir
 # ============================================================
 
+
 class TestStabilitySafeDivision:
     """验证稳定性服务使用safe_divide/safe_ir而非裸除法"""
 
@@ -103,15 +104,16 @@ class TestStabilitySafeDivision:
 
         # 构建一个std=0的IC序列（IC完全恒定）
         dates = pd.date_range("2023-01-01", periods=100, freq="B")
-        factor_data = pd.DataFrame({
-            "factor": np.random.randn(100),
-            "future_return": np.random.randn(100),
-        }, index=dates)
+        factor_data = pd.DataFrame(
+            {
+                "factor": np.random.randn(100),
+                "future_return": np.random.randn(100),
+            },
+            index=dates,
+        )
 
         # 这应该不抛出ZeroDivisionError
-        result = service.calculate_rolling_stability(
-            factor_data, "factor", "future_return", windows=[20]
-        )
+        result = service.calculate_rolling_stability(factor_data, "factor", "future_return", windows=[20])
 
         # 所有IR值应该是有限数或NaN，不应该是inf
         for window_key, stats in result.items():
@@ -130,15 +132,16 @@ class TestStabilitySafeDivision:
         ic_values = np.random.randn(100)
         ic_values = ic_values - ic_values.mean()  # 强制mean=0
 
-        factor_data = pd.DataFrame({
-            "factor": np.random.randn(100),
-            "future_return": pd.Series(ic_values, index=dates),
-        }, index=dates)
+        factor_data = pd.DataFrame(
+            {
+                "factor": np.random.randn(100),
+                "future_return": pd.Series(ic_values, index=dates),
+            },
+            index=dates,
+        )
 
         # 这应该不抛出ZeroDivisionError
-        result = service.calculate_rolling_stability(
-            factor_data, "factor", "future_return", windows=[20]
-        )
+        result = service.calculate_rolling_stability(factor_data, "factor", "future_return", windows=[20])
 
         # 所有CV值应该是有限数或NaN，不应该是inf
         for window_key, stats in result.items():
@@ -150,6 +153,7 @@ class TestStabilitySafeDivision:
 # ============================================================
 # Fix 3: weighted_ic_service overall_std裸比较修复
 # ============================================================
+
 
 class TestWeightedICStabilityScore:
     """验证weighted_ic_service使用安全比较"""
@@ -175,6 +179,7 @@ class TestWeightedICStabilityScore:
 # Fix 4: factor_stability_service截面IC用concat替代iterrows
 # ============================================================
 
+
 class TestCrossSectionalICPerformance:
     """验证截面IC计算使用向量化方法"""
 
@@ -194,29 +199,34 @@ class TestCrossSectionalICPerformance:
             factor_vals = np.random.randn(n_dates)
             return_vals = factor_vals * 0.3 + np.random.randn(n_dates) * 0.5
 
-            stock_df = pd.DataFrame({
-                "factor": factor_vals,
-                "future_return": return_vals,
-                "close": 100 + np.cumsum(np.random.randn(n_dates) * 0.5),
-            }, index=dates)
-            all_factor_data.append({
-                "stock_code": stock_code,
-                "data": stock_df,
-                "factor_series": pd.Series(factor_vals, index=dates).dropna(),
-            })
+            stock_df = pd.DataFrame(
+                {
+                    "factor": factor_vals,
+                    "future_return": return_vals,
+                    "close": 100 + np.cumsum(np.random.randn(n_dates) * 0.5),
+                },
+                index=dates,
+            )
+            all_factor_data.append(
+                {
+                    "stock_code": stock_code,
+                    "data": stock_df,
+                    "factor_series": pd.Series(factor_vals, index=dates).dropna(),
+                }
+            )
 
         # 向量化方法（concat + groupby）
         panel_frames = []
         for item in all_factor_data:
-            stock_df = item['data'][['factor', 'future_return']].copy()
-            stock_df['stock_code'] = item['stock_code']
+            stock_df = item["data"][["factor", "future_return"]].copy()
+            stock_df["stock_code"] = item["stock_code"]
             panel_frames.append(stock_df)
         panel_df = pd.concat(panel_frames)
 
         ic_values_new = []
         for date, group in panel_df.groupby(panel_df.index):
             if len(group) >= 3:
-                ic, _ = spearmanr(group['factor'].values, group['future_return'].values)
+                ic, _ = spearmanr(group["factor"].values, group["future_return"].values)
                 if not np.isnan(ic):
                     ic_values_new.append(ic)
 
@@ -231,6 +241,7 @@ class TestCrossSectionalICPerformance:
 # ============================================================
 # Fix 5: 横截面回测向量化信号生成
 # ============================================================
+
 
 class TestCrossSectionalBacktestVectorized:
     """验证横截面回测向量化信号生成正确性"""
@@ -305,12 +316,12 @@ class TestCrossSectionalBacktestVectorized:
         # 验证：向量化结果应与逐日结果一致
         # 注意：entries可能有细微差异因为shift(1).fillna(False)在首行处理
         # 但总体信号数应相近
-        assert abs(int(entries.sum().sum()) - int(ref_entries.sum().sum())) <= len(stocks), (
-            f"向量化入场信号({entries.sum().sum()})与参考实现({ref_entries.sum().sum()})差异过大"
-        )
-        assert abs(int(exits.sum().sum()) - int(ref_exits.sum().sum())) <= len(stocks), (
-            f"向量化出场信号({exits.sum().sum()})与参考实现({ref_exits.sum().sum()})差异过大"
-        )
+        assert abs(int(entries.sum().sum()) - int(ref_entries.sum().sum())) <= len(
+            stocks
+        ), f"向量化入场信号({entries.sum().sum()})与参考实现({ref_entries.sum().sum()})差异过大"
+        assert abs(int(exits.sum().sum()) - int(ref_exits.sum().sum())) <= len(
+            stocks
+        ), f"向量化出场信号({exits.sum().sum()})与参考实现({ref_exits.sum().sum()})差异过大"
 
     def test_vectorized_signal_performance(self):
         """向量化信号生成应比逐日循环快"""
@@ -321,13 +332,9 @@ class TestCrossSectionalBacktestVectorized:
         stocks = [f"stock_{i}" for i in range(50)]
 
         np.random.seed(42)
-        factor_df = pd.DataFrame(
-            np.random.randn(len(dates), len(stocks)),
-            index=dates, columns=stocks
-        )
+        factor_df = pd.DataFrame(np.random.randn(len(dates), len(stocks)), index=dates, columns=stocks)
         price_df = pd.DataFrame(
-            100 + np.cumsum(np.random.randn(len(dates), len(stocks)) * 0.5, axis=0),
-            index=dates, columns=stocks
+            100 + np.cumsum(np.random.randn(len(dates), len(stocks)) * 0.5, axis=0), index=dates, columns=stocks
         )
 
         # 向量化方法计时
@@ -351,14 +358,13 @@ class TestCrossSectionalBacktestVectorized:
         vectorized_time = time.perf_counter() - t0
 
         # 向量化方法应在1秒内完成（500日×50股）
-        assert vectorized_time < 2.0, (
-            f"向量化信号生成耗时{vectorized_time:.3f}s，超过2秒阈值"
-        )
+        assert vectorized_time < 2.0, f"向量化信号生成耗时{vectorized_time:.3f}s，超过2秒阈值"
 
 
 # ============================================================
 # 额外：验证safe_ir/safe_divide在factor_stability_service中被正确使用
 # ============================================================
+
 
 class TestStabilityServiceImports:
     """验证factor_stability_service正确导入了safe_math工具"""
@@ -379,12 +385,12 @@ class TestStabilityServiceImports:
 
         source = inspect.getsource(FactorStabilityService.calculate_rolling_stability)
         # 检查是否还存在 "ic_series.mean() / ic_series.std()" 这样的裸除法
-        assert "ic_series.mean() / ic_series.std()" not in source, (
-            "calculate_rolling_stability中不应有裸除法ic_series.mean() / ic_series.std()"
-        )
-        assert "ic_series.std() / ic_series.mean()" not in source, (
-            "calculate_rolling_stability中不应有裸除法ic_series.std() / ic_series.mean()"
-        )
+        assert (
+            "ic_series.mean() / ic_series.std()" not in source
+        ), "calculate_rolling_stability中不应有裸除法ic_series.mean() / ic_series.std()"
+        assert (
+            "ic_series.std() / ic_series.mean()" not in source
+        ), "calculate_rolling_stability中不应有裸除法ic_series.std() / ic_series.mean()"
 
 
 if __name__ == "__main__":

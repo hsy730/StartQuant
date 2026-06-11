@@ -3,7 +3,7 @@
 
 验证数据美颜流程的正确性和性能
 """
-import pytest
+
 import numpy as np
 import pandas as pd
 import time
@@ -36,37 +36,43 @@ class TestFactorPreprocessingPipeline:
         self.multi_index_data = []
         for date in dates:
             for stock in stock_codes:
-                self.multi_index_data.append({
-                    "date": date,
-                    "stock_code": stock,
-                    "factor_1": np.random.randn() * 10 + 5,  # 正态分布，有极端值
-                    "factor_2": np.random.randn() * 20 - 3,  # 不同均值和方差
-                    "market_cap": np.random.lognormal(mean=10, sigma=1),  # 对数正态分布
-                    "industry": np.random.choice(["Tech", "Finance", "Health", "Energy"]),
-                })
+                self.multi_index_data.append(
+                    {
+                        "date": date,
+                        "stock_code": stock,
+                        "factor_1": np.random.randn() * 10 + 5,  # 正态分布，有极端值
+                        "factor_2": np.random.randn() * 20 - 3,  # 不同均值和方差
+                        "market_cap": np.random.lognormal(mean=10, sigma=1),  # 对数正态分布
+                        "industry": np.random.choice(["Tech", "Finance", "Health", "Energy"]),
+                    }
+                )
 
         self.df_cross_sectional = pd.DataFrame(self.multi_index_data)
 
         # 创建时间序列格式数据（单股票）
-        self.df_time_series = pd.DataFrame({
-            "date": dates,
-            "factor_1": np.random.randn(n_dates) * 10 + 5,
-            "factor_2": np.random.randn(n_dates) * 20 - 3,
-            "close": 100 + np.cumsum(np.random.randn(n_dates)),
-            "market_cap": np.random.lognormal(mean=10, sigma=1, size=n_dates),
-            "industry": ["Tech"] * n_dates,  # 单行业
-        })
+        self.df_time_series = pd.DataFrame(
+            {
+                "date": dates,
+                "factor_1": np.random.randn(n_dates) * 10 + 5,
+                "factor_2": np.random.randn(n_dates) * 20 - 3,
+                "close": 100 + np.cumsum(np.random.randn(n_dates)),
+                "market_cap": np.random.lognormal(mean=10, sigma=1, size=n_dates),
+                "industry": ["Tech"] * n_dates,  # 单行业
+            }
+        )
         self.df_time_series.set_index("date", inplace=True)
 
     def test_mad_winsorization(self):
         """测试MAD法去极值"""
-        pipeline = FactorPreprocessingPipeline(config=PreprocessingConfig(
-            winsorize_method=WinsorizeMethod.MAD,
-            winsorize_n_sigma=3.0,
-            enable_market_cap_neutralization=False,
-            enable_industry_neutralization=False,
-            standardize_method=StandardizeMethod.ZSCORE,
-        ))
+        pipeline = FactorPreprocessingPipeline(
+            config=PreprocessingConfig(
+                winsorize_method=WinsorizeMethod.MAD,
+                winsorize_n_sigma=3.0,
+                enable_market_cap_neutralization=False,
+                enable_industry_neutralization=False,
+                standardize_method=StandardizeMethod.ZSCORE,
+            )
+        )
 
         factor_values = self.df_time_series["factor_1"]
         result, stats = pipeline.process_single_factor(factor_values)
@@ -80,13 +86,15 @@ class TestFactorPreprocessingPipeline:
 
     def test_percentile_winsorization(self):
         """测试百分位法去极值"""
-        pipeline = FactorPreprocessingPipeline(config=PreprocessingConfig(
-            winsorize_method=WinsorizeMethod.PERCENTILE,
-            winsorize_limits=(0.05, 0.95),  # 截断5%-95%分位之外的数据
-            enable_market_cap_neutralization=False,
-            enable_industry_neutralization=False,
-            standardize_method=None,  # 不标准化，只测试去极值
-        ))
+        pipeline = FactorPreprocessingPipeline(
+            config=PreprocessingConfig(
+                winsorize_method=WinsorizeMethod.PERCENTILE,
+                winsorize_limits=(0.05, 0.95),  # 截断5%-95%分位之外的数据
+                enable_market_cap_neutralization=False,
+                enable_industry_neutralization=False,
+                standardize_method=None,  # 不标准化，只测试去极值
+            )
+        )
 
         factor_values = self.df_time_series["factor_1"]
         original_min = factor_values.min()
@@ -98,17 +106,21 @@ class TestFactorPreprocessingPipeline:
         assert result.min() >= original_min, "最小值应该大于等于原始最小值"
         assert result.max() <= original_max, "最大值应该小于等于原始最大值"
 
-        print(f"✅ 百分位法去极值测试通过: [{original_min:.2f}, {original_max:.2f}] → [{result.min():.2f}, {result.max():.2f}]")
+        print(
+            f"✅ 百分位法去极值测试通过: [{original_min:.2f}, {original_max:.2f}] → [{result.min():.2f}, {result.max():.2f}]"
+        )
 
     def test_std_winsorization(self):
         """测试3σ法去极值"""
-        pipeline = FactorPreprocessingPipeline(config=PreprocessingConfig(
-            winsorize_method=WinsorizeMethod.STD,
-            winsorize_n_sigma=2.5,
-            enable_market_cap_neutralization=False,
-            enable_industry_neutralization=False,
-            standardize_method=None,
-        ))
+        pipeline = FactorPreprocessingPipeline(
+            config=PreprocessingConfig(
+                winsorize_method=WinsorizeMethod.STD,
+                winsorize_n_sigma=2.5,
+                enable_market_cap_neutralization=False,
+                enable_industry_neutralization=False,
+                standardize_method=None,
+            )
+        )
 
         factor_values = self.df_time_series["factor_1"]
         result, stats = pipeline.process_single_factor(factor_values)
@@ -123,12 +135,14 @@ class TestFactorPreprocessingPipeline:
 
     def test_zscore_standardization(self):
         """测试Z-score标准化"""
-        pipeline = FactorPreprocessingPipeline(config=PreprocessingConfig(
-            winsorize_method=None,  # 跳过去极值
-            enable_market_cap_neutralization=False,
-            enable_industry_neutralization=False,
-            standardize_method=StandardizeMethod.ZSCORE,
-        ))
+        pipeline = FactorPreprocessingPipeline(
+            config=PreprocessingConfig(
+                winsorize_method=None,  # 跳过去极值
+                enable_market_cap_neutralization=False,
+                enable_industry_neutralization=False,
+                standardize_method=StandardizeMethod.ZSCORE,
+            )
+        )
 
         factor_values = self.df_time_series["factor_1"]
         result, stats = pipeline.process_single_factor(factor_values)
@@ -141,12 +155,14 @@ class TestFactorPreprocessingPipeline:
 
     def test_rank_standardization(self):
         """测试Rank标准化"""
-        pipeline = FactorPreprocessingPipeline(config=PreprocessingConfig(
-            winsorize_method=None,
-            enable_market_cap_neutralization=False,
-            enable_industry_neutralization=False,
-            standardize_method=StandardizeMethod.RANK,
-        ))
+        pipeline = FactorPreprocessingPipeline(
+            config=PreprocessingConfig(
+                winsorize_method=None,
+                enable_market_cap_neutralization=False,
+                enable_industry_neutralization=False,
+                standardize_method=StandardizeMethod.RANK,
+            )
+        )
 
         factor_values = self.df_time_series["factor_1"]
         result, stats = pipeline.process_single_factor(factor_values)
@@ -154,7 +170,7 @@ class TestFactorPreprocessingPipeline:
         # 验证Rank标准化性质：值域在[0, 1]，近似均匀分布
         assert result.min() >= 0, "最小值应>=0"
         assert result.max() <= 1.0, "最大值应<=1"
-        
+
         # 检查分布是否相对均匀（不应集中在某个区间）
         quantiles = result.quantile([0.25, 0.5, 0.75])
         assert (quantiles >= 0.2).all() and (quantiles <= 0.8).all(), "四分位数应在[0.2, 0.8]范围内"
@@ -163,12 +179,14 @@ class TestFactorPreprocessingPipeline:
 
     def test_market_cap_neutralization(self):
         """测试市值中性化"""
-        pipeline = FactorPreprocessingPipeline(config=PreprocessingConfig(
-            winsorize_method=None,
-            enable_market_cap_neutralization=True,
-            enable_industry_neutralization=False,
-            standardize_method=None,
-        ))
+        pipeline = FactorPreprocessingPipeline(
+            config=PreprocessingConfig(
+                winsorize_method=None,
+                enable_market_cap_neutralization=True,
+                enable_industry_neutralization=False,
+                standardize_method=None,
+            )
+        )
 
         factor_values = self.df_time_series["factor_1"]
         market_cap = self.df_time_series["market_cap"]
@@ -186,11 +204,9 @@ class TestFactorPreprocessingPipeline:
         if valid_mask.sum() > 10:
             corr_after = result[valid_mask].corr(market_cap[valid_mask])
             reduction_ratio = abs(corr_after) / (abs(corr_before) + 1e-10)
-            
-            assert reduction_ratio < 0.8, (
-                f"市值相关性应降低80%以上，实际只降低了{(1-reduction_ratio)*100:.1f}%"
-            )
-            assert stats["neutralized"] == True, "统计信息应标记为已中性化"
+
+            assert reduction_ratio < 0.8, f"市值相关性应降低80%以上，实际只降低了{(1-reduction_ratio)*100:.1f}%"
+            assert stats["neutralized"], "统计信息应标记为已中性化"
 
         print(f"✅ 市值中性化测试通过: 相关性 {corr_before:.4f} → {corr_after:.4f}")
 
@@ -199,13 +215,15 @@ class TestFactorPreprocessingPipeline:
         # 使用横截面数据进行行业中性化测试
         df_test = self.df_cross_sectional.copy()
 
-        pipeline = FactorPreprocessingPipeline(config=PreprocessingConfig(
-            winsorize_method=None,
-            enable_market_cap_neutralization=False,
-            enable_industry_neutralization=True,
-            standardize_method=None,
-            cross_sectional=True,
-        ))
+        pipeline = FactorPreprocessingPipeline(
+            config=PreprocessingConfig(
+                winsorize_method=None,
+                enable_market_cap_neutralization=False,
+                enable_industry_neutralization=True,
+                standardize_method=None,
+                cross_sectional=True,
+            )
+        )
 
         processed_df, _ = pipeline.process_factor_dataframe(
             df=df_test,
@@ -218,22 +236,22 @@ class TestFactorPreprocessingPipeline:
         # 验证每个行业内因子的均值接近0（或至少比处理前更接近）
         for industry_name, group in processed_df.groupby("industry"):
             industry_mean = group["factor_1"].mean()
-            assert abs(industry_mean) < 1.0, (
-                f"行业{industry_name}的因子均值应为0附近，实际为{industry_mean:.4f}"
-            )
+            assert abs(industry_mean) < 1.0, f"行业{industry_name}的因子均值应为0附近，实际为{industry_mean:.4f}"
 
         print("✅ 行业中性化测试通过: 所有行业均值接近0")
 
     def test_full_pipeline_integration(self):
         """完整管道集成测试"""
-        pipeline = FactorPreprocessingPipeline(config=PreprocessingConfig(
-            winsorize_method=WinsorizeMethod.MAD,
-            winsorize_n_sigma=3.0,
-            enable_market_cap_neutralization=True,
-            enable_industry_neutralization=True,
-            standardize_method=StandardizeMethod.ZSCORE,
-            handle_missing="fill_zero",
-        ))
+        pipeline = FactorPreprocessingPipeline(
+            config=PreprocessingConfig(
+                winsorize_method=WinsorizeMethod.MAD,
+                winsorize_n_sigma=3.0,
+                enable_market_cap_neutralization=True,
+                enable_industry_neutralization=True,
+                standardize_method=StandardizeMethod.ZSCORE,
+                handle_missing="fill_zero",
+            )
+        )
 
         # 测试单因子完整流程
         result, stats = pipeline.process_single_factor(
@@ -248,10 +266,10 @@ class TestFactorPreprocessingPipeline:
         assert not np.isinf(result).any(), "不应有无穷大值"
         assert abs(result.mean()) < 0.1, "Z-score标准化后均值应接近0"
         assert abs(result.std() - 1.0) < 0.1, "Z-score标准化后标准差应接近1"
-        assert stats["neutralized"] == True, "应执行了中性化"
-        assert stats["standardized"] == True, "应执行了标准化"
+        assert stats["neutralized"], "应执行了中性化"
+        assert stats["standardized"], "应执行了标准化"
 
-        print(f"✅ 完整管道测试通过:")
+        print("✅ 完整管道测试通过:")
         print(f"   - 截断数量: {stats['winsorized_count']}")
         print(f"   - 中性化: {'是' if stats['neutralized'] else '否'}")
         print(f"   - 标准化: {'是' if stats['standardized'] else '否'}")
@@ -262,13 +280,16 @@ class TestFactorPreprocessingPipeline:
         factor_data = {}
         for stock_id in range(1, 11):  # 10只股票
             stock_code = f"{stock_id:06d}"
-            df = pd.DataFrame({
-                "factor_1": np.random.randn(100) * 15 + 5,
-                "factor_2": np.random.randn(100) * 25 - 8,
-                "market_cap": np.random.lognormal(mean=10, sigma=1.5, size=100),
-                "industry": np.random.choice(["Tech", "Finance"], size=100),
-                "close": 100 + np.cumsum(np.random.randn(100)),
-            }, index=pd.date_range(start="2023-01-01", periods=100, freq="B"))
+            df = pd.DataFrame(
+                {
+                    "factor_1": np.random.randn(100) * 15 + 5,
+                    "factor_2": np.random.randn(100) * 25 - 8,
+                    "market_cap": np.random.lognormal(mean=10, sigma=1.5, size=100),
+                    "industry": np.random.choice(["Tech", "Finance"], size=100),
+                    "close": 100 + np.cumsum(np.random.randn(100)),
+                },
+                index=pd.date_range(start="2023-01-01", periods=100, freq="B"),
+            )
             factor_data[stock_code] = df
 
         pipeline = FactorPreprocessingPipeline(config=CONSERVATIVE_CONFIG)
@@ -295,7 +316,7 @@ class TestFactorPreprocessingPipeline:
         # 性能要求：10只股票x100天x2因子 应在2秒内完成
         assert elapsed_time < 2.0, f"处理时间过长: {elapsed_time:.2f}秒"
 
-        print(f"✅ 多股票批量处理测试通过:")
+        print("✅ 多股票批量处理测试通过:")
         print(f"   - 处理股票数: {len(processed_data)}")
         print(f"   - 处理耗时: {elapsed_time:.3f}秒")
         # all_stats 结构: {stock_code: {factor_name: stats_dict}}
@@ -360,23 +381,27 @@ class TestFactorPreprocessingPipeline:
 
         for date in dates[:100]:  # 只用100天避免内存过大
             for stock in stocks[:50]:  # 只用50只股票
-                large_df.append({
-                    "date": date,
-                    "stock_code": stock,
-                    "factor_1": np.random.randn() * 20,
-                    "factor_2": np.random.randn() * 30,
-                    "factor_3": np.random.randn() * 15,
-                    "market_cap": np.random.lognormal(11, 1),
-                    "industry": np.random.choice(["Tech", "Finance", "Health", "Energy", "Consumer"]),
-                })
+                large_df.append(
+                    {
+                        "date": date,
+                        "stock_code": stock,
+                        "factor_1": np.random.randn() * 20,
+                        "factor_2": np.random.randn() * 30,
+                        "factor_3": np.random.randn() * 15,
+                        "market_cap": np.random.lognormal(11, 1),
+                        "industry": np.random.choice(["Tech", "Finance", "Health", "Energy", "Consumer"]),
+                    }
+                )
 
         df_large = pd.DataFrame(large_df)
 
-        pipeline = FactorPreprocessingPipeline(config=PreprocessingConfig(
-            winsorize_method=WinsorizeMethod.MAD,
-            standardize_method=StandardizeMethod.ZSCORE,
-            cross_sectional=True,
-        ))
+        pipeline = FactorPreprocessingPipeline(
+            config=PreprocessingConfig(
+                winsorize_method=WinsorizeMethod.MAD,
+                standardize_method=StandardizeMethod.ZSCORE,
+                cross_sectional=True,
+            )
+        )
 
         start_time = time.time()
         _, stats = pipeline.process_factor_dataframe(
@@ -389,9 +414,9 @@ class TestFactorPreprocessingPipeline:
         elapsed_time = time.time() - start_time
 
         total_samples = len(df_large)
-        throughput = total_samples / elapsed_time if elapsed_time > 0 else float('inf')
+        throughput = total_samples / elapsed_time if elapsed_time > 0 else float("inf")
 
-        print(f"🚀 大数据集性能测试:")
+        print("🚀 大数据集性能测试:")
         print(f"   - 总样本数: {total_samples:,}")
         print(f"   - 处理耗时: {elapsed_time:.3f}秒")
         print(f"   - 吞吐量: {throughput:,.0f} 样本/秒")

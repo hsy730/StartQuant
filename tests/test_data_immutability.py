@@ -9,7 +9,7 @@
 
 项目规则5：输入数据不可变 — 禁止就地修改传入的DataFrame
 """
-import pytest
+
 import numpy as np
 import pandas as pd
 
@@ -38,18 +38,18 @@ class TestDataPreprocessingImmutability:
         except Exception:
             pass  # 忽略执行错误，只关注数据是否被修改
 
-        assert existing_df.equals(original_existing), \
-            "incremental_update 不应修改传入的 existing_df"
-        assert new_df.equals(original_new), \
-            "incremental_update 不应修改传入的 new_df"
+        assert existing_df.equals(original_existing), "incremental_update 不应修改传入的 existing_df"
+        assert new_df.equals(original_new), "incremental_update 不应修改传入的 new_df"
 
     def test_detect_outliers_not_mutate_input(self):
         """detect_outliers 不应修改传入的 DataFrame"""
         service = DataPreprocessingService()
 
-        data = pd.DataFrame({
-            "value": [1, 2, 3, 4, 5, 100, 200],
-        })
+        data = pd.DataFrame(
+            {
+                "value": [1, 2, 3, 4, 5, 100, 200],
+            }
+        )
         original = data.copy()
 
         try:
@@ -69,6 +69,7 @@ class TestBaseStrategyImmutability:
         class BuyHold(BaseStrategy):
             def generate_signals(self, df):
                 return pd.Series(1, index=df.index)
+
             def calculate_weights(self, df, signals):
                 return pd.Series(1.0, index=df.index)
 
@@ -77,13 +78,16 @@ class TestBaseStrategyImmutability:
         dates = pd.date_range("2023-01-01", periods=50, freq="B")
         np.random.seed(42)
         close = 100 + np.cumsum(np.random.randn(50) * 0.5)
-        df = pd.DataFrame({
-            "open": close + np.random.randn(50) * 0.1,
-            "high": close + abs(np.random.randn(50) * 0.3),
-            "low": close - abs(np.random.randn(50) * 0.3),
-            "close": close,
-            "volume": np.random.randint(100000, 1000000, 50).astype(float),
-        }, index=dates)
+        df = pd.DataFrame(
+            {
+                "open": close + np.random.randn(50) * 0.1,
+                "high": close + abs(np.random.randn(50) * 0.3),
+                "low": close - abs(np.random.randn(50) * 0.3),
+                "close": close,
+                "volume": np.random.randint(100000, 1000000, 50).astype(float),
+            },
+            index=dates,
+        )
 
         original = df.copy()
         strategy.backtest(df)
@@ -102,10 +106,13 @@ class TestFactorDataImmutability:
         factor_data = {}
         for i in range(3):
             code = f"{600000 + i:06d}"
-            df = pd.DataFrame({
-                "close": 100 + np.cumsum(np.random.randn(50) * 0.5),
-                "factor_1": np.random.randn(50) * 10 + 5,
-            }, index=dates)
+            df = pd.DataFrame(
+                {
+                    "close": 100 + np.cumsum(np.random.randn(50) * 0.5),
+                    "factor_1": np.random.randn(50) * 10 + 5,
+                },
+                index=dates,
+            )
             factor_data[code] = df
 
         # 深拷贝原始数据用于后续比较
@@ -113,6 +120,7 @@ class TestFactorDataImmutability:
 
         # 传入各种服务方法（可能内部修改数据）
         from backend.services.factor_correlation_service import FactorCorrelationService
+
         service = FactorCorrelationService()
         try:
             service.analyze_correlation(factor_data, ["factor_1"])
@@ -121,5 +129,4 @@ class TestFactorDataImmutability:
 
         # 验证原始数据未被修改
         for code in factor_data:
-            assert factor_data[code].equals(original_data[code]), \
-                f"factor_data['{code}'] 不应被服务方法修改"
+            assert factor_data[code].equals(original_data[code]), f"factor_data['{code}'] 不应被服务方法修改"

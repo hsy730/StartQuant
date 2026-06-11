@@ -12,6 +12,7 @@ factor_generator_service.py 因子生成器服务测试
 - preselect_factors
 - calculate_factor_metrics
 """
+
 import sys
 import os
 import random
@@ -22,12 +23,12 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 # NumPy 2.0 兼容
-if not hasattr(np, 'NINF'):
+if not hasattr(np, "NINF"):
     np.NINF = -np.inf
-if not hasattr(np, 'PINF'):
+if not hasattr(np, "PINF"):
     np.PINF = np.inf
 
-from backend.services.factor_generator_service import FactorGeneratorService
+from backend.services.factor_generator_service import FactorGeneratorService  # noqa: E402
 
 
 class TestGenerateBinaryCombinations:
@@ -48,9 +49,7 @@ class TestGenerateBinaryCombinations:
 
     def test_two_base_factors_depth1_should_generate_all_operator_pairs(self):
         """2个基础因子、深度1应生成所有运算符组合"""
-        result = self.service.generate_binary_combinations(
-            ["f1", "f2"], max_depth=1
-        )
+        result = self.service.generate_binary_combinations(["f1", "f2"], max_depth=1)
         # 2个因子取2组合 = 1对 × 6运算符 = 6个表达式
         assert len(result) == 6
         # 验证每个运算符都出现（/ 使用 safe_divide 格式）
@@ -62,26 +61,20 @@ class TestGenerateBinaryCombinations:
 
     def test_two_base_factors_expressions_should_contain_both_factors(self):
         """2个因子的表达式应包含两个因子名"""
-        result = self.service.generate_binary_combinations(
-            ["alpha", "beta"], max_depth=1
-        )
+        result = self.service.generate_binary_combinations(["alpha", "beta"], max_depth=1)
         for expr in result:
             assert "alpha" in expr
             assert "beta" in expr
 
     def test_three_base_factors_depth1_should_generate_c2_pairs(self):
         """3个基础因子、深度1应生成 C(3,2)=3 对 × 6运算符 = 18个"""
-        result = self.service.generate_binary_combinations(
-            ["f1", "f2", "f3"], max_depth=1
-        )
+        result = self.service.generate_binary_combinations(["f1", "f2", "f3"], max_depth=1)
         assert len(result) == 18
 
     def test_depth2_should_add_nested_expressions(self):
         """深度2应增加嵌套3因子表达式"""
         random.seed(42)
-        result = self.service.generate_binary_combinations(
-            ["f1", "f2", "f3", "f4"], max_depth=2
-        )
+        result = self.service.generate_binary_combinations(["f1", "f2", "f3", "f4"], max_depth=2)
         # 深度1: C(4,2)*6 = 36; 深度2: min(100//2, 50) = 50
         # 总数受 max_combinations 限制
         assert len(result) <= 100
@@ -92,19 +85,14 @@ class TestGenerateBinaryCombinations:
     def test_depth2_with_3_factors_should_generate_nested(self):
         """3个因子、深度2应生成嵌套表达式"""
         random.seed(42)
-        result = self.service.generate_binary_combinations(
-            ["f1", "f2", "f3"], max_depth=2
-        )
+        result = self.service.generate_binary_combinations(["f1", "f2", "f3"], max_depth=2)
         # 深度1: C(3,2)*6 = 18; 深度2: min(max_combinations//2, 50)
         # 应有嵌套表达式（3个因子，格式为 ((a op b) op c)）
         nested_exprs = [e for e in result if e.count("(") >= 3]
         if len(nested_exprs) == 0:
             # 也可能是 max_combinations 限制导致深度2未生成
             # 检查是否有包含3个不同因子的表达式
-            three_factor_exprs = [
-                e for e in result
-                if "f1" in e and "f2" in e and "f3" in e
-            ]
+            three_factor_exprs = [e for e in result if "f1" in e and "f2" in e and "f3" in e]
             assert len(three_factor_exprs) > 0 or len(result) >= 18
 
     def test_depth3_should_add_deeper_nested_expressions(self):
@@ -125,39 +113,29 @@ class TestGenerateBinaryCombinations:
 
     def test_depth2_insufficient_factors_should_skip(self):
         """深度2但因子不足3个应跳过深度2生成"""
-        result = self.service.generate_binary_combinations(
-            ["f1", "f2"], max_depth=2
-        )
+        result = self.service.generate_binary_combinations(["f1", "f2"], max_depth=2)
         # 只有深度1: C(2,2)*6 = 6
         assert len(result) == 6
 
     def test_depth3_insufficient_factors_should_skip(self):
         """深度3但因子不足4个应跳过深度3生成"""
         random.seed(42)
-        result = self.service.generate_binary_combinations(
-            ["f1", "f2", "f3"], max_depth=3
-        )
+        result = self.service.generate_binary_combinations(["f1", "f2", "f3"], max_depth=3)
         # 深度1 + 深度2，无深度3
         assert len(result) > 0
 
     def test_expressions_should_be_balanced_parentheses(self):
         """所有生成的表达式括号应匹配"""
-        result = self.service.generate_binary_combinations(
-            ["f1", "f2", "f3", "f4"], max_depth=3
-        )
+        result = self.service.generate_binary_combinations(["f1", "f2", "f3", "f4"], max_depth=3)
         for expr in result:
             assert expr.count("(") == expr.count(")"), f"括号不匹配: {expr}"
 
     def test_reproducibility_with_same_seed(self):
         """相同随机种子应产生相同结果"""
         random.seed(123)
-        result1 = self.service.generate_binary_combinations(
-            ["f1", "f2", "f3", "f4"], max_depth=3
-        )
+        result1 = self.service.generate_binary_combinations(["f1", "f2", "f3", "f4"], max_depth=3)
         random.seed(123)
-        result2 = self.service.generate_binary_combinations(
-            ["f1", "f2", "f3", "f4"], max_depth=3
-        )
+        result2 = self.service.generate_binary_combinations(["f1", "f2", "f3", "f4"], max_depth=3)
         assert result1 == result2
 
 
@@ -179,17 +157,13 @@ class TestGenerateStatisticalCombinations:
 
     def test_window_functions_should_use_rolling(self):
         """窗口函数应使用 rolling() 语法"""
-        result = self.service.generate_statistical_combinations(
-            ["close"], window_sizes=[5]
-        )
+        result = self.service.generate_statistical_combinations(["close"], window_sizes=[5])
         rolling_exprs = [e for e in result if "rolling" in e]
         assert len(rolling_exprs) > 0
 
     def test_window_functions_should_respect_window_sizes(self):
         """窗口函数应使用指定的窗口大小"""
-        result = self.service.generate_statistical_combinations(
-            ["close"], window_sizes=[5, 10]
-        )
+        result = self.service.generate_statistical_combinations(["close"], window_sizes=[5, 10])
         assert any("rolling(5" in e for e in result)
         assert any("rolling(10" in e for e in result)
 
@@ -231,8 +205,9 @@ class TestGenerateStatisticalCombinations:
     def test_zscore_should_generate_special_expression(self):
         """zscore 应生成特殊的 (x - mean)/std 表达式"""
         result = self.service.generate_statistical_combinations(["close"])
-        zscore_exprs = [e for e in result if "zscore" in e.lower() or
-                        ("rolling(252" in e and "mean()" in e and "std()" in e)]
+        zscore_exprs = [
+            e for e in result if "zscore" in e.lower() or ("rolling(252" in e and "mean()" in e and "std()" in e)
+        ]
         assert len(zscore_exprs) > 0
 
     def test_quantile_should_generate_multiple_quantiles(self):
@@ -247,16 +222,12 @@ class TestGenerateStatisticalCombinations:
 
     def test_max_combinations_should_limit_result(self):
         """max_combinations 应限制返回数量"""
-        result = self.service.generate_statistical_combinations(
-            ["f1", "f2", "f3"], max_combinations=10
-        )
+        result = self.service.generate_statistical_combinations(["f1", "f2", "f3"], max_combinations=10)
         assert len(result) <= 10
 
     def test_multiple_factors_should_generate_for_each(self):
         """多个基础因子应为每个因子生成统计表达式"""
-        result = self.service.generate_statistical_combinations(
-            ["f1", "f2"], window_sizes=[5], max_combinations=200
-        )
+        result = self.service.generate_statistical_combinations(["f1", "f2"], window_sizes=[5], max_combinations=200)
         f1_exprs = [e for e in result if "f1" in e]
         f2_exprs = [e for e in result if "f2" in e]
         assert len(f1_exprs) > 0
@@ -320,9 +291,7 @@ class TestGenerateIndicatorCombinations:
 
     def test_custom_price_column_should_be_used(self):
         """自定义价格列名应在表达式中使用"""
-        result = self.service.generate_indicator_combinations(
-            ["momentum"], price_column="adj_close"
-        )
+        result = self.service.generate_indicator_combinations(["momentum"], price_column="adj_close")
         assert any("adj_close" in e for e in result)
 
     def test_default_price_column_is_close(self):
@@ -332,9 +301,7 @@ class TestGenerateIndicatorCombinations:
 
     def test_max_combinations_should_limit_result(self):
         """max_combinations 应限制返回数量"""
-        result = self.service.generate_indicator_combinations(
-            ["f1", "f2"], max_combinations=5
-        )
+        result = self.service.generate_indicator_combinations(["f1", "f2"], max_combinations=5)
         assert len(result) <= 5
 
     def test_sma_should_generate_division_and_subtraction(self):
@@ -361,9 +328,7 @@ class TestGenerateHybridFactors:
 
     def test_result_should_contain_dict_entries(self):
         """结果应为字典列表"""
-        result = self.service.generate_hybrid_factors(
-            ["f1", "f2", "f3"], n_factors=20
-        )
+        result = self.service.generate_hybrid_factors(["f1", "f2", "f3"], n_factors=20)
         for item in result:
             assert isinstance(item, dict)
             assert "expression" in item
@@ -372,52 +337,40 @@ class TestGenerateHybridFactors:
 
     def test_result_types_should_include_expected_categories(self):
         """结果类型应包含 binary_operation, statistical, indicator_based"""
-        result = self.service.generate_hybrid_factors(
-            ["f1", "f2", "f3", "f4", "f5"], n_factors=50
-        )
+        result = self.service.generate_hybrid_factors(["f1", "f2", "f3", "f4", "f5"], n_factors=50)
         types = {item["type"] for item in result}
         # 至少应包含部分类型
         assert len(types) > 0
 
     def test_n_factors_should_limit_result_count(self):
         """n_factors 应限制返回数量"""
-        result = self.service.generate_hybrid_factors(
-            ["f1", "f2", "f3"], n_factors=10
-        )
+        result = self.service.generate_hybrid_factors(["f1", "f2", "f3"], n_factors=10)
         assert len(result) <= 10
 
     def test_complexity_should_be_low_medium_or_high(self):
         """复杂度应为 low, medium, high 之一"""
-        result = self.service.generate_hybrid_factors(
-            ["f1", "f2", "f3"], n_factors=20
-        )
+        result = self.service.generate_hybrid_factors(["f1", "f2", "f3"], n_factors=20)
         valid_complexities = {"low", "medium", "high"}
         for item in result:
             assert item["complexity"] in valid_complexities
 
     def test_binary_operation_type_should_have_medium_complexity(self):
         """binary_operation 类型应为 medium 复杂度"""
-        result = self.service.generate_hybrid_factors(
-            ["f1", "f2", "f3"], n_factors=50
-        )
+        result = self.service.generate_hybrid_factors(["f1", "f2", "f3"], n_factors=50)
         binary_items = [item for item in result if item["type"] == "binary_operation"]
         for item in binary_items:
             assert item["complexity"] == "medium"
 
     def test_statistical_type_should_have_low_complexity(self):
         """statistical 类型应为 low 复杂度"""
-        result = self.service.generate_hybrid_factors(
-            ["f1", "f2", "f3"], n_factors=50
-        )
+        result = self.service.generate_hybrid_factors(["f1", "f2", "f3"], n_factors=50)
         stat_items = [item for item in result if item["type"] == "statistical"]
         for item in stat_items:
             assert item["complexity"] == "low"
 
     def test_indicator_based_type_should_have_high_complexity(self):
         """indicator_based 类型应为 high 复杂度"""
-        result = self.service.generate_hybrid_factors(
-            ["f1", "f2", "f3"], n_factors=50
-        )
+        result = self.service.generate_hybrid_factors(["f1", "f2", "f3"], n_factors=50)
         indicator_items = [item for item in result if item["type"] == "indicator_based"]
         for item in indicator_items:
             assert item["complexity"] == "high"
@@ -425,14 +378,10 @@ class TestGenerateHybridFactors:
     def test_result_should_be_shuffled(self):
         """结果应被打乱顺序（非固定排列）"""
         random.seed(42)
-        result1 = self.service.generate_hybrid_factors(
-            ["f1", "f2", "f3", "f4"], n_factors=30
-        )
+        result1 = self.service.generate_hybrid_factors(["f1", "f2", "f3", "f4"], n_factors=30)
         # 两次不同种子应产生不同顺序
         random.seed(99)
-        result2 = self.service.generate_hybrid_factors(
-            ["f1", "f2", "f3", "f4"], n_factors=30
-        )
+        result2 = self.service.generate_hybrid_factors(["f1", "f2", "f3", "f4"], n_factors=30)
         # 表达式集合应大致相同，但顺序可能不同
         exprs1 = [item["expression"] for item in result1]
         exprs2 = [item["expression"] for item in result2]
@@ -537,9 +486,7 @@ class TestCompileExpressionToCode:
 
     def test_custom_data_column_should_be_used(self):
         """自定义数据列名应在代码中使用"""
-        code = self.service.compile_expression_to_code(
-            "(close + open)", data_column="adj_close"
-        )
+        code = self.service.compile_expression_to_code("(close + open)", data_column="adj_close")
         assert "adj_close" in code
 
     def test_default_data_column_is_close(self):
@@ -748,17 +695,13 @@ class TestPreselectFactors:
 
     def test_empty_factors_should_return_empty(self):
         """空因子列表应返回空列表"""
-        result = self.service.preselect_factors(
-            [], {}, pd.Series(dtype=float)
-        )
+        result = self.service.preselect_factors([], {}, pd.Series(dtype=float))
         assert result == []
 
     def test_factor_not_in_data_map_should_be_skipped(self):
         """不在数据映射中的因子应被跳过"""
         factors = [{"expression": "nonexistent_factor"}]
-        result = self.service.preselect_factors(
-            factors, {}, pd.Series(np.random.randn(100))
-        )
+        result = self.service.preselect_factors(factors, {}, pd.Series(np.random.randn(100)))
         assert result == []
 
     def test_low_ic_factor_should_be_filtered_out(self):
@@ -768,8 +711,7 @@ class TestPreselectFactors:
         factor_data_map = {"low_ic_factor": factor_values}
 
         result = self.service.preselect_factors(
-            factors, factor_data_map, return_data,
-            ic_threshold=0.03, ir_threshold=0.5
+            factors, factor_data_map, return_data, ic_threshold=0.03, ir_threshold=0.5
         )
         # 不相关的因子IC很低，应被过滤
         assert len(result) == 0
@@ -781,8 +723,7 @@ class TestPreselectFactors:
         factor_data_map = {"high_ic_factor": factor_values}
 
         result = self.service.preselect_factors(
-            factors, factor_data_map, return_data,
-            ic_threshold=0.01, ir_threshold=0.0
+            factors, factor_data_map, return_data, ic_threshold=0.01, ir_threshold=0.0
         )
         # 相关因子应通过IC阈值
         assert len(result) >= 0  # 可能通过也可能不通过，取决于数据
@@ -795,10 +736,7 @@ class TestPreselectFactors:
         factors = [{"expression": "sparse_factor"}]
         factor_data_map = {"sparse_factor": factor_values}
 
-        result = self.service.preselect_factors(
-            factors, factor_data_map, return_data,
-            min_valid_ratio=0.7
-        )
+        result = self.service.preselect_factors(factors, factor_data_map, return_data, min_valid_ratio=0.7)
         # 80% NaN → 有效比例 20/100 = 0.2 < 0.7
         assert len(result) == 0
 
@@ -809,8 +747,7 @@ class TestPreselectFactors:
         factor_data_map = {"test_factor": factor_values}
 
         result = self.service.preselect_factors(
-            factors, factor_data_map, return_data,
-            ic_threshold=0.0, ir_threshold=0.0
+            factors, factor_data_map, return_data, ic_threshold=0.0, ir_threshold=0.0
         )
         if len(result) > 0:
             assert "ic" in result[0]
@@ -824,12 +761,10 @@ class TestPreselectFactors:
         factor_data_map = {"test_factor": factor_values}
 
         result_low = self.service.preselect_factors(
-            factors, factor_data_map, return_data,
-            ic_threshold=0.001, ir_threshold=0.0
+            factors, factor_data_map, return_data, ic_threshold=0.001, ir_threshold=0.0
         )
         result_high = self.service.preselect_factors(
-            factors, factor_data_map, return_data,
-            ic_threshold=0.99, ir_threshold=0.0
+            factors, factor_data_map, return_data, ic_threshold=0.99, ir_threshold=0.0
         )
         # 低阈值应比高阈值通过更多因子
         assert len(result_low) >= len(result_high)
@@ -842,10 +777,7 @@ class TestPreselectFactors:
         factors = [{"expression": "constant_factor"}]
         factor_data_map = {"constant_factor": factor_values}
 
-        result = self.service.preselect_factors(
-            factors, factor_data_map, return_data,
-            ic_threshold=0.0
-        )
+        result = self.service.preselect_factors(factors, factor_data_map, return_data, ic_threshold=0.0)
         # 常数因子与随机收益率的IC为NaN
         assert len(result) == 0
 
@@ -1005,6 +937,7 @@ class TestGlobalInstance:
     def test_global_instance_should_exist(self):
         """全局实例应存在"""
         from backend.services.factor_generator_service import factor_generator_service
+
         assert factor_generator_service is not None
         assert isinstance(factor_generator_service, FactorGeneratorService)
 

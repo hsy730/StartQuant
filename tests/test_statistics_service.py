@@ -3,9 +3,9 @@ statistics_service.py 高级统计分析服务测试
 
 覆盖 StatisticsService 的所有公开方法，包括正常路径、边界条件和异常输入。
 """
+
 import sys
 import os
-import warnings
 import numpy as np
 import pandas as pd
 import pytest
@@ -13,17 +13,17 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 # NumPy 2.0 兼容
-if not hasattr(np, 'NINF'):
+if not hasattr(np, "NINF"):
     np.NINF = -np.inf
-if not hasattr(np, 'PINF'):
+if not hasattr(np, "PINF"):
     np.PINF = np.inf
 
-from backend.services.statistics_service import StatisticsService
-
+from backend.services.statistics_service import StatisticsService  # noqa: E402
 
 # ============================================================
 # t_test_ic 测试
 # ============================================================
+
 
 class TestTTestIC:
     """IC序列t检验测试"""
@@ -52,7 +52,7 @@ class TestTTestIC:
         ic = pd.Series(np.random.randn(200) * 0.02 + 0.05)
         result = self.svc.t_test_ic(ic, confidence_level=0.95)
         assert result["p_value"] < 0.05
-        assert result["is_significant"] == True
+        assert result["is_significant"]
 
     def test_zero_mean_ic_should_not_be_significant(self):
         """均值为零的IC序列不应显著"""
@@ -118,6 +118,7 @@ class TestTTestIC:
 # ============================================================
 # test_monotonicity 测试
 # ============================================================
+
 
 class TestMonotonicity:
     """分层单调性检验测试"""
@@ -205,6 +206,7 @@ class TestMonotonicity:
 # calculate_factor_decay 测试
 # ============================================================
 
+
 class TestFactorDecay:
     """因子衰减测试"""
 
@@ -263,6 +265,7 @@ class TestFactorDecay:
 # calculate_factor_crowding 测试
 # ============================================================
 
+
 class TestFactorCrowding:
     """因子拥挤度测试"""
 
@@ -283,7 +286,7 @@ class TestFactorCrowding:
         """拥挤度 = 1/(1+std) 应在[0, 1]之间"""
         df = pd.DataFrame({"factor_a": np.random.randn(200) * 10 + 5})
         result = self.svc.calculate_factor_crowding(df, "factor_a", window=20)
-        valid = result.dropna()
+        result.dropna()
         # 前几个值因min_periods=1且std=NaN，safe_divide返回0.0
         # 跳过前面不够窗口长度的值，检查窗口充分后的值
         result_after_warmup = result.iloc[20:]
@@ -330,6 +333,7 @@ class TestFactorCrowding:
 # ============================================================
 # calculate_turnover 测试
 # ============================================================
+
 
 class TestTurnover:
     """因子换手率测试"""
@@ -386,6 +390,7 @@ class TestTurnover:
 # ============================================================
 # analyze_quantile_returns 测试
 # ============================================================
+
 
 class TestAnalyzeQuantileReturns:
     """分层收益分析测试"""
@@ -464,6 +469,7 @@ class TestAnalyzeQuantileReturns:
 # calculate_ic_predictability 测试
 # ============================================================
 
+
 class TestICPredictability:
     """IC可预测性（自相关）测试"""
 
@@ -517,6 +523,7 @@ class TestICPredictability:
 # calculate_rolling_ic_stability 测试
 # ============================================================
 
+
 class TestRollingICStability:
     """滚动IC稳定性测试"""
 
@@ -567,6 +574,7 @@ class TestRollingICStability:
 # calculate_factor_correlation_matrix 测试
 # ============================================================
 
+
 class TestFactorCorrelationMatrix:
     """因子相关性矩阵测试"""
 
@@ -576,10 +584,12 @@ class TestFactorCorrelationMatrix:
 
     def test_two_factors_should_return_2x2_matrix(self):
         """两个因子应返回2x2相关矩阵"""
-        df = pd.DataFrame({
-            "factor_a": np.random.randn(100),
-            "factor_b": np.random.randn(100),
-        })
+        df = pd.DataFrame(
+            {
+                "factor_a": np.random.randn(100),
+                "factor_b": np.random.randn(100),
+            }
+        )
         result = self.svc.calculate_factor_correlation_matrix(df, ["factor_a", "factor_b"])
 
         assert isinstance(result, pd.DataFrame)
@@ -599,10 +609,12 @@ class TestFactorCorrelationMatrix:
 
     def test_uncorrelated_factors_should_have_low_correlation(self):
         """不相关因子应有低相关系数"""
-        df = pd.DataFrame({
-            "factor_a": np.random.randn(500),
-            "factor_b": np.random.randn(500),
-        })
+        df = pd.DataFrame(
+            {
+                "factor_a": np.random.randn(500),
+                "factor_b": np.random.randn(500),
+            }
+        )
         result = self.svc.calculate_factor_correlation_matrix(df, ["factor_a", "factor_b"])
         assert abs(result.loc["factor_a", "factor_b"]) < 0.3
 
@@ -615,19 +627,23 @@ class TestFactorCorrelationMatrix:
 
     def test_all_nan_df_should_return_empty_dataframe(self):
         """全NaN的DataFrame应返回空DataFrame"""
-        df = pd.DataFrame({
-            "factor_a": [np.nan] * 10,
-            "factor_b": [np.nan] * 10,
-        })
+        df = pd.DataFrame(
+            {
+                "factor_a": [np.nan] * 10,
+                "factor_b": [np.nan] * 10,
+            }
+        )
         result = self.svc.calculate_factor_correlation_matrix(df, ["factor_a", "factor_b"])
         assert result.empty
 
     def test_with_some_nan_should_drop_and_calculate(self):
         """含部分NaN应dropna后计算"""
-        df = pd.DataFrame({
-            "factor_a": np.random.randn(100),
-            "factor_b": np.random.randn(100),
-        })
+        df = pd.DataFrame(
+            {
+                "factor_a": np.random.randn(100),
+                "factor_b": np.random.randn(100),
+            }
+        )
         df.iloc[5, 0] = np.nan
         df.iloc[20, 1] = np.nan
         result = self.svc.calculate_factor_correlation_matrix(df, ["factor_a", "factor_b"])
@@ -635,11 +651,13 @@ class TestFactorCorrelationMatrix:
 
     def test_symmetry_of_correlation_matrix(self):
         """相关矩阵应对称"""
-        df = pd.DataFrame({
-            "factor_a": np.random.randn(100),
-            "factor_b": np.random.randn(100),
-            "factor_c": np.random.randn(100),
-        })
+        df = pd.DataFrame(
+            {
+                "factor_a": np.random.randn(100),
+                "factor_b": np.random.randn(100),
+                "factor_c": np.random.randn(100),
+            }
+        )
         result = self.svc.calculate_factor_correlation_matrix(df, ["factor_a", "factor_b", "factor_c"])
         # 检查对称性
         for f1 in result.index:
@@ -651,6 +669,7 @@ class TestFactorCorrelationMatrix:
 # analyze_factor_interactions 测试
 # ============================================================
 
+
 class TestFactorInteractions:
     """因子交互效应分析测试"""
 
@@ -660,10 +679,12 @@ class TestFactorInteractions:
 
     def test_two_factors_degree2_should_have_interactions(self):
         """两个因子二阶交互应包含交互项"""
-        df = pd.DataFrame({
-            "factor_a": np.random.randn(100),
-            "factor_b": np.random.randn(100),
-        })
+        df = pd.DataFrame(
+            {
+                "factor_a": np.random.randn(100),
+                "factor_b": np.random.randn(100),
+            }
+        )
         result = self.svc.analyze_factor_interactions(df, ["factor_a", "factor_b"], degree=2)
 
         assert "interaction_features" in result
@@ -674,10 +695,12 @@ class TestFactorInteractions:
 
     def test_interaction_flag_should_be_correct(self):
         """交互项标记应正确"""
-        df = pd.DataFrame({
-            "factor_a": np.random.randn(100),
-            "factor_b": np.random.randn(100),
-        })
+        df = pd.DataFrame(
+            {
+                "factor_a": np.random.randn(100),
+                "factor_b": np.random.randn(100),
+            }
+        )
         result = self.svc.analyze_factor_interactions(df, ["factor_a", "factor_b"], degree=2)
 
         feature_info = result["feature_info"]
@@ -690,10 +713,12 @@ class TestFactorInteractions:
 
     def test_insufficient_data_should_return_empty(self):
         """数据不足时应返回空结果"""
-        df = pd.DataFrame({
-            "factor_a": [1.0, 2.0],
-            "factor_b": [3.0, 4.0],
-        })
+        df = pd.DataFrame(
+            {
+                "factor_a": [1.0, 2.0],
+                "factor_b": [3.0, 4.0],
+            }
+        )
         result = self.svc.analyze_factor_interactions(df, ["factor_a", "factor_b"], degree=2)
         assert result["interaction_features"] == []
         assert result["feature_importance"] == {}
@@ -710,10 +735,12 @@ class TestFactorInteractions:
 
     def test_with_nan_should_drop_and_calculate(self):
         """含NaN应dropna后计算"""
-        df = pd.DataFrame({
-            "factor_a": np.random.randn(100),
-            "factor_b": np.random.randn(100),
-        })
+        df = pd.DataFrame(
+            {
+                "factor_a": np.random.randn(100),
+                "factor_b": np.random.randn(100),
+            }
+        )
         df.iloc[5, 0] = np.nan
         df.iloc[20, 1] = np.nan
         result = self.svc.analyze_factor_interactions(df, ["factor_a", "factor_b"], degree=2)
@@ -721,10 +748,12 @@ class TestFactorInteractions:
 
     def test_degree1_should_have_no_interactions(self):
         """degree=1不应有交互项或平方项"""
-        df = pd.DataFrame({
-            "factor_a": np.random.randn(100),
-            "factor_b": np.random.randn(100),
-        })
+        df = pd.DataFrame(
+            {
+                "factor_a": np.random.randn(100),
+                "factor_b": np.random.randn(100),
+            }
+        )
         result = self.svc.analyze_factor_interactions(df, ["factor_a", "factor_b"], degree=1)
 
         features = result["interaction_features"]
@@ -738,6 +767,7 @@ class TestFactorInteractions:
 # ============================================================
 # 集成/边界条件测试
 # ============================================================
+
 
 class TestEdgeCasesAndIntegration:
     """边界条件和集成测试"""
@@ -761,10 +791,12 @@ class TestEdgeCasesAndIntegration:
 
     def test_factor_decay_with_constant_price(self):
         """恒定价格因子衰减应能处理（pct_change产生0）"""
-        df = pd.DataFrame({
-            "close": [100.0] * 300,
-            "factor_a": np.random.randn(300),
-        })
+        df = pd.DataFrame(
+            {
+                "close": [100.0] * 300,
+                "factor_a": np.random.randn(300),
+            }
+        )
         result = self.svc.calculate_factor_decay(df, "factor_a", max_periods=3)
         # 恒定价格 → 收益率为0/NaN → IC为NaN
         assert len(result) == 3
@@ -792,11 +824,13 @@ class TestEdgeCasesAndIntegration:
 
     def test_correlation_matrix_with_three_factors(self):
         """三因子相关矩阵应为3x3"""
-        df = pd.DataFrame({
-            "f1": np.random.randn(100),
-            "f2": np.random.randn(100),
-            "f3": np.random.randn(100),
-        })
+        df = pd.DataFrame(
+            {
+                "f1": np.random.randn(100),
+                "f2": np.random.randn(100),
+                "f3": np.random.randn(100),
+            }
+        )
         result = self.svc.calculate_factor_correlation_matrix(df, ["f1", "f2", "f3"])
         assert result.shape == (3, 3)
 

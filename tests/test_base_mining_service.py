@@ -11,13 +11,13 @@ BaseMiningService 基类单元测试
 - Z-Score归一化 (_update_zscore_stats, _apply_batch_zscore)
 - 抽象方法约束 (mine_factors)
 """
+
 import pytest
 import numpy as np
 import pandas as pd
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import MagicMock, patch
 import sys
 import os
-import warnings
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -28,14 +28,14 @@ if not hasattr(np, "PINF"):
     np.PINF = np.inf
 
 # Mock 掉重依赖链（data_service → cache_service → sqlalchemy）
-import unittest.mock as _mock
+import unittest.mock as _mock  # noqa: E402
+
 _mock_ds = _mock.MagicMock()
 sys.modules.setdefault("backend.services.data_service", _mock.MagicMock(data_service=_mock_ds))
 sys.modules.setdefault("backend.services.cache_service", _mock.MagicMock())
 sys.modules.setdefault("backend.services.factor_service", _mock.MagicMock())
 
-from backend.services.base_mining_service import BaseMiningService
-
+from backend.services.base_mining_service import BaseMiningService  # noqa: E402
 
 # ============================================================================
 # 测试辅助
@@ -205,18 +205,14 @@ class TestStockPoolManagement:
     def test_refresh_stock_sample_small_pool(self):
         """小股票池应全部选入评估样本"""
         svc = create_service(max_eval_stocks=50)
-        svc.stock_pool_base_factor_values = {
-            f"60000{i}": {} for i in range(5)
-        }
+        svc.stock_pool_base_factor_values = {f"60000{i}": {} for i in range(5)}
         svc._refresh_stock_sample()
         assert len(svc._sampled_stock_codes) == 5
 
     def test_refresh_stock_sample_large_pool(self):
         """大股票池应随机抽样到 max_eval_stocks"""
         svc = create_service(max_eval_stocks=10)
-        svc.stock_pool_base_factor_values = {
-            f"60000{i:03d}": {} for i in range(50)
-        }
+        svc.stock_pool_base_factor_values = {f"60000{i:03d}": {} for i in range(50)}
         svc._refresh_stock_sample()
         assert len(svc._sampled_stock_codes) == 10
         # 所有抽样代码应在原始池中
@@ -237,18 +233,12 @@ class TestStockPoolManagement:
             "600000": create_mock_data(),
             "000001": create_mock_data(),
         }
-        with patch.object(
-            svc, "stock_pool_data", {}
-        ):
-            with patch(
-                "backend.services.base_mining_service.data_service"
-            ) as mock_ds:
+        with patch.object(svc, "stock_pool_data", {}):
+            with patch("backend.services.base_mining_service.data_service") as mock_ds:
                 mock_ds.get_multiple_stocks_data.return_value = mock_data
                 # 需要mock factor_calculator
                 svc.factor_calculator = MagicMock()
-                svc.factor_calculator.calculate.return_value = pd.Series(
-                    np.random.randn(200)
-                )
+                svc.factor_calculator.calculate.return_value = pd.Series(np.random.randn(200))
                 svc.set_stock_pool(["600000", "000001"], "2023-01-01", "2023-12-31")
                 mock_ds.get_multiple_stocks_data.assert_called_once_with(
                     ["600000", "000001"], "2023-01-01", "2023-12-31"
@@ -329,11 +319,13 @@ class TestCVPenalty:
             # 因子值在不同fold中与收益的关系完全不同
             factor = pd.Series(np.random.randn(n) * 0.1, name="factor")
             # 前1/3正相关，中1/3负相关，后1/3不相关
-            ret = np.concatenate([
-                factor.iloc[:100].values * 0.5 + np.random.randn(100) * 0.01,
-                -factor.iloc[100:200].values * 0.5 + np.random.randn(100) * 0.01,
-                np.random.randn(100) * 0.01,
-            ])
+            ret = np.concatenate(
+                [
+                    factor.iloc[:100].values * 0.5 + np.random.randn(100) * 0.01,
+                    -factor.iloc[100:200].values * 0.5 + np.random.randn(100) * 0.01,
+                    np.random.randn(100) * 0.01,
+                ]
+            )
             factor_values_dict[code] = factor
             svc.stock_pool_return_values[code] = pd.Series(ret)
 
@@ -344,9 +336,7 @@ class TestCVPenalty:
         """数据不足时惩罚为 0"""
         svc = create_service(cv_folds=3)
         # 少于 cv_folds * 20 的数据
-        factor_values_dict = {
-            "600000": pd.Series(np.random.randn(30))
-        }
+        factor_values_dict = {"600000": pd.Series(np.random.randn(30))}
         svc.stock_pool_return_values["600000"] = pd.Series(np.random.randn(30))
         penalty = svc._cv_penalty(factor_values_dict)
         assert penalty == 0.0
@@ -601,9 +591,7 @@ class TestApplyBatchZscore:
     def test_non_combined_returns_unchanged(self):
         """非 combined 目标应原样返回"""
         svc = create_service(fitness_objective="ic_mean")
-        factors = [
-            {"fitness": 0.5, "validation": {"_raw_ic_mean": 0.05, "_raw_ir": 1.0}}
-        ]
+        factors = [{"fitness": 0.5, "validation": {"_raw_ic_mean": 0.05, "_raw_ir": 1.0}}]
         result = svc._apply_batch_zscore(factors)
         assert result == factors
 
@@ -616,9 +604,7 @@ class TestApplyBatchZscore:
     def test_too_few_factors_returns_unchanged(self):
         """因子数不足时应保持原分数"""
         svc = create_service(fitness_objective="combined")
-        factors = [
-            {"fitness": 0.5, "validation": {"_raw_ic_mean": 0.05, "_raw_ir": 1.0}}
-        ]
+        factors = [{"fitness": 0.5, "validation": {"_raw_ic_mean": 0.05, "_raw_ir": 1.0}}]
         result = svc._apply_batch_zscore(factors)
         # 只有1个因子，<2，应返回原列表
         assert result[0]["fitness"] == 0.5
@@ -848,15 +834,10 @@ class TestIntegrationScenarios:
         # 设置股票池收益数据
         n = 300
         for code in ["600000", "000001", "300001"]:
-            svc.stock_pool_return_values[code] = pd.Series(
-                np.random.randn(n) * 0.02
-            )
+            svc.stock_pool_return_values[code] = pd.Series(np.random.randn(n) * 0.02)
 
         # 计算 CV 惩罚
-        factor_values_dict = {
-            code: pd.Series(np.random.randn(n) * 0.1)
-            for code in ["600000", "000001", "300001"]
-        }
+        factor_values_dict = {code: pd.Series(np.random.randn(n) * 0.1) for code in ["600000", "000001", "300001"]}
         penalty = svc._cv_penalty(factor_values_dict)
         assert 0.0 <= penalty <= 1.0
 
@@ -864,11 +845,7 @@ class TestIntegrationScenarios:
         """多次 _route_fitness 应累积 IC/IR 值"""
         svc = create_service(fitness_objective="ic_mean")
         for i in range(5):
-            ic_results = {
-                "spearman_ic": {
-                    "1D": {"mean_ic": 0.03 + i * 0.01, "std_ic": 0.02}
-                }
-            }
+            ic_results = {"spearman_ic": {"1D": {"mean_ic": 0.03 + i * 0.01, "std_ic": 0.02}}}
             svc._route_fitness(ic_results)
 
         # 应有5个收集的值

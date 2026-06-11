@@ -1,7 +1,9 @@
 """
 Issue1 修复验证: BacktestService委托VectorBT时传递use_tradable_mask参数
 """
-import sys, os
+
+import sys
+import os
 import numpy as np
 import pandas as pd
 
@@ -17,7 +19,8 @@ def run(name, fn):
         r = fn()
         _passed += 1
         print(f"  [PASS] {name}")
-        if r: print(f"         {r}")
+        if r:
+            print(f"         {r}")
     except Exception as e:
         _failed += 1
         print(f"  [FAIL] {name}: {e}")
@@ -26,23 +29,28 @@ def run(name, fn):
 def make_data(n=80, seed=42):
     np.random.seed(seed)
     dates = pd.date_range("2023-01-01", periods=n, freq="B")
-    close = np.maximum(100 + np.cumsum(np.random.randn(n)*2), 1)
+    close = np.maximum(100 + np.cumsum(np.random.randn(n) * 2), 1)
     factor = np.random.randn(n) * 3
-    return pd.DataFrame({
-        "close": close, "factor_x": factor,
-        "tradable_mask": True,
-        "is_limit_up": False, "is_limit_down": False,
-    }, index=dates)
+    return pd.DataFrame(
+        {
+            "close": close,
+            "factor_x": factor,
+            "tradable_mask": True,
+            "is_limit_up": False,
+            "is_limit_down": False,
+        },
+        index=dates,
+    )
 
 
 # Test 1: VectorBT路径接受use_tradable_mask且不报错
 def test_vbt_accepts_mask():
     from backend.services.backtest_service import BacktestService
+
     svc = BacktestService(initial_capital=1e6)
     df = make_data(seed=42)
 
-    r = svc.single_factor_backtest(df=df, factor_name="factor_x",
-                                     percentile=50, use_tradable_mask=True)
+    r = svc.single_factor_backtest(df=df, factor_name="factor_x", percentile=50, use_tradable_mask=True)
     assert r["engine"] == "vectorbt"
     assert "mask_statistics" in r
     ms = r["mask_statistics"]
@@ -54,11 +62,11 @@ def test_vbt_accepts_mask():
 # Test 2: VectorBT路径 use_tradable_mask=False时不应用mask
 def test_vbt_no_mask():
     from backend.services.backtest_service import BacktestService
+
     svc = BacktestService(initial_capital=1e6)
     df = make_data(seed=43)
 
-    r = svc.single_factor_backtest(df=df, factor_name="factor_x",
-                                     percentile=50, use_tradable_mask=False)
+    r = svc.single_factor_backtest(df=df, factor_name="factor_x", percentile=50, use_tradable_mask=False)
     assert r["engine"] == "vectorbt"
     ms = r["mask_statistics"]
     assert ms["mask_applied"] is False
@@ -68,6 +76,7 @@ def test_vbt_no_mask():
 # Test 3: 有不可交易日时，VectorBT正确过滤
 def test_vbt_mask_filters():
     from backend.services.backtest_service import BacktestService
+
     svc = BacktestService(initial_capital=1e6)
     df = make_data(n=100, seed=44)
     # 模拟20%不可交易（停牌/涨跌停）
@@ -76,8 +85,7 @@ def test_vbt_mask_filters():
     mask.loc[non_trade_idx] = False
     df["tradable_mask"] = mask
 
-    r = svc.single_factor_backtest(df=df, factor_name="factor_x",
-                                     percentile=50, use_tradable_mask=True)
+    r = svc.single_factor_backtest(df=df, factor_name="factor_x", percentile=50, use_tradable_mask=True)
     ms = r["mask_statistics"]
     assert ms["tradable_ratio"] < 1.0
     assert ms["total_days"] - ms["tradable_days"] == len(non_trade_idx)

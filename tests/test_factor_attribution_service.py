@@ -4,23 +4,22 @@ FactorAttributionService 因子贡献度分解服务测试
 覆盖 _calculate_contribution、_decompose_alpha_beta、_decompose_return、
 analyze_attribution 四个核心方法，包含正常场景和边界条件。
 """
+
 import sys
 import os
-import warnings
 import numpy as np
 import pandas as pd
-import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 # NumPy 2.0 兼容
-if not hasattr(np, 'NINF'):
+if not hasattr(np, "NINF"):
     np.NINF = -np.inf
-if not hasattr(np, 'PINF'):
+if not hasattr(np, "PINF"):
     np.PINF = np.inf
 
-from backend.services.factor_attribution_service import FactorAttributionService
+from backend.services.factor_attribution_service import FactorAttributionService  # noqa: E402
 
 
 def _make_factor_data(
@@ -70,9 +69,13 @@ class TestCalculateContribution:
         result = self.service._calculate_contribution(factor_data, "test_factor")
 
         expected_keys = [
-            "ic", "ic_pvalue", "high_exposure_return",
-            "low_exposure_return", "long_short_return",
-            "contribution_ratio", "sample_size",
+            "ic",
+            "ic_pvalue",
+            "high_exposure_return",
+            "low_exposure_return",
+            "long_short_return",
+            "contribution_ratio",
+            "sample_size",
         ]
         for key in expected_keys:
             assert key in result, f"缺少字段: {key}"
@@ -118,9 +121,7 @@ class TestCalculateContribution:
     def test_missing_close_column_should_return_error(self):
         """缺少close列时应返回错误"""
         dates = pd.bdate_range(start="2024-01-02", periods=30, freq="B")
-        factor_data = {
-            "600001": pd.DataFrame({"test_factor": np.random.randn(30)}, index=dates)
-        }
+        factor_data = {"600001": pd.DataFrame({"test_factor": np.random.randn(30)}, index=dates)}
         result = self.service._calculate_contribution(factor_data, "test_factor")
         assert "error" in result
 
@@ -261,8 +262,13 @@ class TestDecomposeReturn:
         stats = result["overall_stats"]
 
         expected_keys = [
-            "avg_daily_return", "annual_return", "cumulative_return",
-            "volatility_annual", "daily_volatility", "sharpe_ratio", "win_rate",
+            "avg_daily_return",
+            "annual_return",
+            "cumulative_return",
+            "volatility_annual",
+            "daily_volatility",
+            "sharpe_ratio",
+            "win_rate",
         ]
         for key in expected_keys:
             assert key in stats, f"缺少字段: {key}"
@@ -274,8 +280,14 @@ class TestDecomposeReturn:
 
         for code, stock_stats in result["return_by_stock"].items():
             expected_keys = [
-                "avg_daily_return", "annual_return", "cumulative_return",
-                "volatility", "daily_volatility", "sharpe", "win_rate", "count",
+                "avg_daily_return",
+                "annual_return",
+                "cumulative_return",
+                "volatility",
+                "daily_volatility",
+                "sharpe",
+                "win_rate",
+                "count",
             ]
             for key in expected_keys:
                 assert key in stock_stats, f"股票 {code} 缺少字段: {key}"
@@ -301,9 +313,7 @@ class TestDecomposeReturn:
     def test_single_day_data_should_return_error(self):
         """只有一天数据（无法计算收益率）应返回错误"""
         dates = pd.bdate_range(start="2024-01-02", periods=1, freq="B")
-        factor_data = {
-            "600001": pd.DataFrame({"test_factor": [1.0], "close": [10.0]}, index=dates)
-        }
+        factor_data = {"600001": pd.DataFrame({"test_factor": [1.0], "close": [10.0]}, index=dates)}
         result = self.service._decompose_return(factor_data, "test_factor")
         assert "error" in result
 

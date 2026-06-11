@@ -4,6 +4,7 @@ safe_math.py 安全除法工具测试
 项目规则要求所有除法使用 safe_divide，所有 IR 计算使用 safe_ir，
 禁止裸除法和 +1e-10 hack。
 """
+
 import sys
 import os
 import numpy as np
@@ -13,12 +14,12 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 # NumPy 2.0 兼容
-if not hasattr(np, 'NINF'):
+if not hasattr(np, "NINF"):
     np.NINF = -np.inf
-if not hasattr(np, 'PINF'):
+if not hasattr(np, "PINF"):
     np.PINF = np.inf
 
-from backend.utils.safe_math import safe_divide, safe_ir, safe_series_divide
+from backend.utils.safe_math import safe_divide, safe_ir, safe_series_divide  # noqa: E402
 
 
 class TestSafeDivideScalar:
@@ -335,7 +336,7 @@ class TestSafeDivideEdgeCases:
 
     def test_safe_divide_float_nan_denominator_scalar(self):
         """Python float('nan') 作为分母应返回默认值"""
-        result = safe_divide(10.0, float('nan'))
+        result = safe_divide(10.0, float("nan"))
         assert result is None
 
 
@@ -470,7 +471,6 @@ class TestWithDbDecorator:
     def test_with_db_explicit_db_overrides(self):
         """显式传入db时应使用传入的session"""
         from backend.core.database import with_db, get_db
-        from sqlalchemy.orm import Session
 
         @with_db
         def my_func(db=None):
@@ -484,14 +484,12 @@ class TestWithDbDecorator:
         """@with_db 应在使用后关闭session"""
         from backend.core.database import with_db
 
-        closed_sessions = []
-
         @with_db
         def my_func(db=None):
             # 记录session引用
             return db
 
-        db = my_func()
+        my_func()
         # Session should be closed after the function returns
         # We can't directly check if it's closed, but we verify it doesn't leak
 

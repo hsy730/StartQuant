@@ -11,14 +11,13 @@
 7. 横截面模式检测
 8. 严格模式 vs 标准模式对比
 """
-import pytest
+
 import numpy as np
 import pandas as pd
 from backend.services.lookahead_bias_detector import (
     LookaheadBiasDetector,
     lookahead_bias_detector,
     strict_lookahead_bias_detector,
-    BiasCheckResult,
     BiasRiskLevel,
     LookaheadBiasDetectionResult,
 )
@@ -47,21 +46,17 @@ class TestLookaheadBiasDetectorNormalFactor:
 
     def test_normal_factor_ic_check_passes(self):
         """正常因子的 IC 应在安全范围内"""
-        result = lookahead_bias_detector.detect(
-            factor_values=self.factor, return_values=self.returns
-        )
+        result = lookahead_bias_detector.detect(factor_values=self.factor, return_values=self.returns)
         ic_check = next((c for c in result.checks if c.check_name == "ic_magnitude"), None)
         assert ic_check is not None
-        assert ic_check.passed == True
+        assert ic_check.passed
 
     def test_normal_factor_autocorr_check_passes(self):
         """正常因子的自相关应在安全范围内"""
-        result = lookahead_bias_detector.detect(
-            factor_values=self.factor, return_values=self.returns
-        )
+        result = lookahead_bias_detector.detect(factor_values=self.factor, return_values=self.returns)
         ac_check = next((c for c in result.checks if c.check_name == "autocorrelation_lag1"), None)
         assert ac_check is not None
-        assert ac_check.passed == True
+        assert ac_check.passed
 
 
 class TestLookaheadBiasDetectorPerfectIC:
@@ -83,26 +78,22 @@ class TestLookaheadBiasDetectorPerfectIC:
         # IC 会非常高，至少应触发 warning 或 error
         ic_check = next((c for c in result.checks if c.check_name == "ic_magnitude"), None)
         assert ic_check is not None
-        assert ic_check.passed == False  # IC 应超过阈值
+        assert not ic_check.passed  # IC 应超过阈值
 
     def test_perfect_rank_corr_should_detect_bias(self):
         """高排名相关系数应被检测"""
-        result = lookahead_bias_detector.detect(
-            factor_values=self.factor, return_values=self.returns
-        )
+        result = lookahead_bias_detector.detect(factor_values=self.factor, return_values=self.returns)
         rc_check = next((c for c in result.checks if c.check_name == "rank_correlation"), None)
         assert rc_check is not None
         # Spearman 相关性应该很高
-        assert rc_check.passed == False
+        assert not rc_check.passed
 
     def test_perfect_ic_ir_should_be_high(self):
         """完美IC的 IR 应该极高"""
-        result = lookahead_bias_detector.detect(
-            factor_values=self.factor, return_values=self.returns
-        )
+        result = lookahead_bias_detector.detect(factor_values=self.factor, return_values=self.returns)
         ir_check = next((c for c in result.checks if c.check_name == "ir_magnitude"), None)
         assert ir_check is not None
-        assert ir_check.passed == False
+        assert not ir_check.passed
 
 
 class TestLookaheadBiasDetectorConstantFactor:
@@ -116,9 +107,7 @@ class TestLookaheadBiasDetectorConstantFactor:
 
     def test_constant_factor_detected(self):
         """恒定值因子应被检测"""
-        result = lookahead_bias_detector.detect(
-            factor_values=self.constant_factor, return_values=self.returns
-        )
+        result = lookahead_bias_detector.detect(factor_values=self.constant_factor, return_values=self.returns)
         vc_check = next((c for c in result.checks if c.check_name == "value_constancy"), None)
         assert vc_check is not None
         assert vc_check.passed is False
@@ -126,9 +115,7 @@ class TestLookaheadBiasDetectorConstantFactor:
 
     def test_near_constant_factor_warning(self):
         """近乎恒定的因子应产生警告"""
-        result = lookahead_bias_detector.detect(
-            factor_values=self.near_constant, return_values=self.returns
-        )
+        result = lookahead_bias_detector.detect(factor_values=self.near_constant, return_values=self.returns)
         vc_check = next((c for c in result.checks if c.check_name == "value_constancy"), None)
         assert vc_check is not None
         # 极小噪声因子可能触发 warning（变化过于规律）或 error
@@ -148,9 +135,7 @@ class TestLookaheadBiasDetectorHighAutocorrelation:
 
     def test_high_autocorrelation_detected(self):
         """高自相关应被检测到"""
-        result = lookahead_bias_detector.detect(
-            factor_values=self.high_ac_factor, return_values=self.returns
-        )
+        result = lookahead_bias_detector.detect(factor_values=self.high_ac_factor, return_values=self.returns)
         ac_check = next((c for c in result.checks if c.check_name == "autocorrelation_lag1"), None)
         assert ac_check is not None
         # 累积序列的自相关通常很高
@@ -164,10 +149,10 @@ class TestLookaheadBiasDetectorBacktestMetrics:
     def test_unrealistic_backtest_metrics(self):
         """不真实的回测指标应被检测"""
         fake_metrics = {
-            "annual_return": 8.0,      # 800% 年化收益
-            "sharpe_ratio": 15.0,       # 夏普比率 15
-            "win_rate": 0.98,           # 胜率 98%
-            "max_drawdown": 0.0001,     # 最大回撤 0.01%
+            "annual_return": 8.0,  # 800% 年化收益
+            "sharpe_ratio": 15.0,  # 夏普比率 15
+            "win_rate": 0.98,  # 胜率 98%
+            "max_drawdown": 0.0001,  # 最大回撤 0.01%
         }
         result = lookahead_bias_detector.detect(
             factor_values=pd.Series(np.random.randn(252)),
@@ -182,10 +167,10 @@ class TestLookaheadBiasDetectorBacktestMetrics:
     def test_normal_backtest_metrics_pass(self):
         """正常的回测指标应通过"""
         normal_metrics = {
-            "annual_return": 0.15,     # 15% 年化
-            "sharpe_ratio": 1.5,       # 夏普 1.5
-            "win_rate": 0.55,          # 胜率 55%
-            "max_drawdown": 0.15,      # 最大回撤 15%
+            "annual_return": 0.15,  # 15% 年化
+            "sharpe_ratio": 1.5,  # 夏普 1.5
+            "win_rate": 0.55,  # 胜率 55%
+            "max_drawdown": 0.15,  # 最大回撤 15%
         }
         result = lookahead_bias_detector.detect(
             factor_values=pd.Series(np.random.randn(252)),
@@ -204,9 +189,7 @@ class TestLookaheadBiasDetectorInsufficientData:
         """样本数不足时应返回 SAFE（无法判断）"""
         tiny_factor = pd.Series([1.0, 2.0, 3.0])
         tiny_returns = pd.Series([0.01, -0.01, 0.02])
-        result = lookahead_bias_detector.detect(
-            factor_values=tiny_factor, return_values=tiny_returns
-        )
+        result = lookahead_bias_detector.detect(factor_values=tiny_factor, return_values=tiny_returns)
         assert result.has_bias is False
         assert result.risk_level == BiasRiskLevel.SAFE
         assert len(result.checks) == 1  # 只有 data_sufficiency 检查
@@ -237,12 +220,14 @@ class TestLookaheadBiasDetectorCrossSectional:
             for i in range(n_stocks):
                 factor_val = np.random.randn()
                 ret_val = 0.01 * factor_val + np.random.randn() * 0.03
-                rows.append({
-                    "date": date,
-                    "stock_code": f"{i:06d}",
-                    "factor_value": factor_val,
-                    "return": ret_val,
-                })
+                rows.append(
+                    {
+                        "date": date,
+                        "stock_code": f"{i:06d}",
+                        "factor_value": factor_val,
+                        "return": ret_val,
+                    }
+                )
 
         self.cs_df = pd.DataFrame(rows)
 
@@ -269,7 +254,7 @@ class TestLookaheadBiasDetectorCrossSectional:
         # 泄漏因子应有高风险
         ic_check = next((c for c in result.checks if c.check_name == "cross_sectional_ic_mean"), None)
         assert ic_check is not None
-        assert ic_check.passed == False
+        assert not ic_check.passed
 
 
 class TestLookaheadBiasDetectorStrictMode:
@@ -296,8 +281,8 @@ class TestLookaheadBiasDetectorQuantileAnomaly:
     def test_extreme_quantile_spread(self):
         """极端分层收益差应被检测"""
         quantile_returns = {
-            "Q1": pd.Series([-0.05] * 60),   # Q1 每天 -5%
-            "Q5": pd.Series([0.06] * 60),    # Q5 每天 +6%
+            "Q1": pd.Series([-0.05] * 60),  # Q1 每天 -5%
+            "Q5": pd.Series([0.06] * 60),  # Q5 每天 +6%
         }
         result = lookahead_bias_detector.detect(
             factor_values=pd.Series(np.random.randn(252)),
@@ -306,7 +291,7 @@ class TestLookaheadBiasDetectorQuantileAnomaly:
         )
         spread_check = next((c for c in result.checks if c.check_name == "quantile_spread"), None)
         assert spread_check is not None
-        assert spread_check.passed == False
+        assert not spread_check.passed
 
 
 class TestLookaheadBiasDetectorTemporalConsistency:

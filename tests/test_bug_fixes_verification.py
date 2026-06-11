@@ -4,6 +4,7 @@ Bug修复验证测试 - 使用mock数据验证所有Critical和Major级修复
 运行方式: python -m pytest tests/test_bug_fixes_verification.py -v
 或直接: python tests/test_bug_fixes_verification.py
 """
+
 import sys
 import os
 import warnings
@@ -13,9 +14,9 @@ import pandas as pd
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 # NumPy 2.0 兼容
-if not hasattr(np, 'NINF'):
+if not hasattr(np, "NINF"):
     np.NINF = -np.inf
-if not hasattr(np, 'PINF'):
+if not hasattr(np, "PINF"):
     np.PINF = np.inf
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 
@@ -38,20 +39,24 @@ def run(name, fn):
 # Mock 数据生成器
 # ============================================================
 
+
 def make_ohlcv(n=200, seed=42):
     """生成模拟OHLCV数据（含amount列）"""
     np.random.seed(seed)
     dates = pd.date_range(start="2023-01-01", periods=n, freq="B")
     close = 100 + np.cumsum(np.random.randn(n) * 0.5)
     close = np.maximum(close, 1)  # 确保价格为正
-    return pd.DataFrame({
-        "open": close + np.random.randn(n) * 0.1,
-        "high": close + abs(np.random.randn(n) * 0.3),
-        "low": close - abs(np.random.randn(n) * 0.3),
-        "close": close,
-        "volume": np.random.randint(100000, 1000000, n).astype(float),
-        "amount": np.random.uniform(1e7, 1.2e7, n),
-    }, index=dates)
+    return pd.DataFrame(
+        {
+            "open": close + np.random.randn(n) * 0.1,
+            "high": close + abs(np.random.randn(n) * 0.3),
+            "low": close - abs(np.random.randn(n) * 0.3),
+            "close": close,
+            "volume": np.random.randint(100000, 1000000, n).astype(float),
+            "amount": np.random.uniform(1e7, 1.2e7, n),
+        },
+        index=dates,
+    )
 
 
 def make_factor_data(n_stocks=5, n_dates=100, seed=42):
@@ -63,12 +68,15 @@ def make_factor_data(n_stocks=5, n_dates=100, seed=42):
         stock_code = f"{600000 + i:06d}"
         close = 100 + np.cumsum(np.random.randn(n_dates) * 0.5)
         close = np.maximum(close, 1)
-        df = pd.DataFrame({
-            "close": close,
-            "factor_1": np.random.randn(n_dates) * 10 + 5,
-            "factor_2": np.random.randn(n_dates) * 20 - 3,
-            "market_cap": np.random.lognormal(mean=10, sigma=1, size=n_dates),
-        }, index=dates)
+        df = pd.DataFrame(
+            {
+                "close": close,
+                "factor_1": np.random.randn(n_dates) * 10 + 5,
+                "factor_2": np.random.randn(n_dates) * 20 - 3,
+                "market_cap": np.random.lognormal(mean=10, sigma=1, size=n_dates),
+            },
+            index=dates,
+        )
         result[stock_code] = df
     return result
 
@@ -83,6 +91,7 @@ def make_returns(n=252, mean=0.001, std=0.01, seed=42):
 # ============================================================
 # C1: IC加权前视偏差修复验证
 # ============================================================
+
 
 def test_c1_ic_weighting_no_lookahead_bias():
     """验证IC加权中forward_return已shift(1)，消除前视偏差"""
@@ -113,9 +122,11 @@ def test_c1_ic_weighting_no_lookahead_bias():
         else:
             # 直接验证代码修复：检查 forward_return 是否 shift(1)
             import inspect
+
             source = inspect.getsource(service.multi_factor_backtest)
-            assert 'forward_return").shift(1)' in source or "forward_return\"].shift(1)" in source, \
-                "forward_return 应在 rolling_ic 计算中 shift(1)"
+            assert (
+                'forward_return").shift(1)' in source or 'forward_return"].shift(1)' in source
+            ), "forward_return 应在 rolling_ic 计算中 shift(1)"
             print("    代码验证: forward_return.shift(1) 已存在于 rolling_ic 计算中 ✓")
 
 
@@ -123,11 +134,12 @@ def test_c1_ic_weighting_no_lookahead_bias():
 # C2: 累计收益→日收益计算修复验证
 # ============================================================
 
+
 def test_c2_cumulative_to_daily_return():
     """验证累计收益转日收益使用正确公式 (1+r[i+1])/(1+r[i])-1"""
     from backend.services.factor_return_analysis_service import FactorReturnAnalysisService
 
-    service = FactorReturnAnalysisService()
+    FactorReturnAnalysisService()
 
     # 构造已知累计收益序列
     # 假设日收益率分别为 1%, 2%, -1%, 0.5%
@@ -137,20 +149,20 @@ def test_c2_cumulative_to_daily_return():
         cumulative.append((1 + cumulative[-1]) * (1 + r) - 1)
 
     # 用差分法（错误）计算
-    wrong_daily = [cumulative[i+1] - cumulative[i] for i in range(len(cumulative)-1)]
+    wrong_daily = [cumulative[i + 1] - cumulative[i] for i in range(len(cumulative) - 1)]
     # 用正确公式计算
-    correct_daily = [(cumulative[i+1] + 1) / (cumulative[i] + 1) - 1 for i in range(len(cumulative)-1)]
+    correct_daily = [(cumulative[i + 1] + 1) / (cumulative[i] + 1) - 1 for i in range(len(cumulative) - 1)]
 
     # 验证正确公式还原了原始日收益率
     for i in range(len(daily_returns)):
-        assert abs(correct_daily[i] - daily_returns[i]) < 1e-10, \
-            f"正确公式应还原日收益率: 期望{daily_returns[i]}, 得到{correct_daily[i]}"
+        assert (
+            abs(correct_daily[i] - daily_returns[i]) < 1e-10
+        ), f"正确公式应还原日收益率: 期望{daily_returns[i]}, 得到{correct_daily[i]}"
 
     # 验证差分法与正确公式不同（当累计收益非零时）
     # 第2期累计收益 = (1+0.01)*(1+0.02)-1 = 0.0302
     # 差分法: 0.0302 - 0.01 = 0.0202 (错误，应为0.02)
-    assert abs(wrong_daily[1] - daily_returns[1]) > 1e-6, \
-        "差分法在累计收益非零时应与正确公式不同"
+    assert abs(wrong_daily[1] - daily_returns[1]) > 1e-6, "差分法在累计收益非零时应与正确公式不同"
 
     print(f"    差分法(错误): {wrong_daily}")
     print(f"    正确公式:     {correct_daily}")
@@ -161,17 +173,21 @@ def test_c2_cumulative_to_daily_return():
 # C3: logger未定义修复验证
 # ============================================================
 
+
 def test_c3_logger_defined_in_portfolio_analysis():
     """验证portfolio_analysis_service.py中logger已正确定义"""
     import backend.services.portfolio_analysis_service as mod
-    assert hasattr(mod, 'logger'), "模块应定义logger"
-    assert mod.logger.name == 'backend.services.portfolio_analysis_service', \
-        f"logger名称应为模块全名，实际为: {mod.logger.name}"
+
+    assert hasattr(mod, "logger"), "模块应定义logger"
+    assert (
+        mod.logger.name == "backend.services.portfolio_analysis_service"
+    ), f"logger名称应为模块全名，实际为: {mod.logger.name}"
 
 
 # ============================================================
 # C5: exec/eval沙箱安全验证
 # ============================================================
+
 
 def test_c5_ast_safety_validation():
     """验证AST安全检查能拦截危险代码"""
@@ -247,6 +263,7 @@ def calculate_factor(df):
 # C6: date列缺失修复验证
 # ============================================================
 
+
 def test_c6_date_column_from_datetimeindex():
     """验证smart_preprocessing_detector能从DatetimeIndex自动添加date列"""
     from backend.services.smart_preprocessing_detector import SmartPreprocessingDetector
@@ -267,14 +284,14 @@ def test_c6_date_column_from_datetimeindex():
 
     # 修复前：n_dates 始终为 0（因为 "date" 不在 columns 中）
     # 修复后：n_dates 应大于 0
-    assert characteristics.n_dates > 0, \
-        f"n_dates 应大于0，实际为 {characteristics.n_dates}，date列可能未正确添加"
+    assert characteristics.n_dates > 0, f"n_dates 应大于0，实际为 {characteristics.n_dates}，date列可能未正确添加"
     print(f"    n_dates = {characteristics.n_dates}, n_stocks = {characteristics.n_stocks}")
 
 
 # ============================================================
 # C7: f-string修复验证
 # ============================================================
+
 
 def test_c7_fstring_format():
     """验证超高换手率警告信息正确格式化"""
@@ -291,7 +308,7 @@ def test_c7_fstring_format():
 
     # 修复前：警告信息为 "⚠️ 超高换手率策略(>{turnover:.0f}倍/年)..."
     # 修复后：警告信息为 "⚠️ 超高换手率策略(>50倍/年)..."
-    warnings_list = result.warnings if hasattr(result, 'warnings') else result.get("warnings", [])
+    warnings_list = result.warnings if hasattr(result, "warnings") else result.get("warnings", [])
     found = False
     for w in warnings_list:
         if "超高换手率" in w:
@@ -309,6 +326,7 @@ def test_c7_fstring_format():
 # M1: 首期手续费修复验证
 # ============================================================
 
+
 def test_m1_first_period_commission():
     """验证首期建仓手续费被正确计算"""
     from backend.strategies.base_strategy import BaseStrategy
@@ -316,6 +334,7 @@ def test_m1_first_period_commission():
     class BuyHoldStrategy(BaseStrategy):
         def generate_signals(self, df):
             return pd.Series(1, index=df.index)
+
         def calculate_weights(self, df, signals):
             return pd.Series(1.0, index=df.index)
 
@@ -337,14 +356,14 @@ def test_m1_first_period_commission():
     weights = result["weights"]
     weight_change = weights.diff().abs().fillna(weights.abs())
     commission = weight_change * strategy.commission_rate
-    assert commission.iloc[0] > 0, \
-        f"首期应有建仓手续费，实际commission[0]={commission.iloc[0]}"
+    assert commission.iloc[0] > 0, f"首期应有建仓手续费，实际commission[0]={commission.iloc[0]}"
     print(f"    首期建仓手续费: {commission.iloc[0]:.6f} (费率={strategy.commission_rate})")
 
 
 # ============================================================
 # M2: _empty_metrics返回None验证
 # ============================================================
+
 
 def test_m2_empty_metrics_returns_none():
     """验证空数据时风险指标返回None而非0.0"""
@@ -353,9 +372,18 @@ def test_m2_empty_metrics_returns_none():
 
     # risk_metrics._empty_metrics
     empty = _empty_metrics()
-    for key in ["total_return", "annual_return", "volatility", "sharpe_ratio",
-                "sortino_ratio", "max_drawdown", "calmar_ratio", "win_rate",
-                "var_95", "cvar_95"]:
+    for key in [
+        "total_return",
+        "annual_return",
+        "volatility",
+        "sharpe_ratio",
+        "sortino_ratio",
+        "max_drawdown",
+        "calmar_ratio",
+        "win_rate",
+        "var_95",
+        "cvar_95",
+    ]:
         assert empty[key] is None, f"_empty_metrics()['{key}'] 应为 None，实际为 {empty[key]}"
 
     # calculate_risk_metrics 传入空序列
@@ -366,14 +394,18 @@ def test_m2_empty_metrics_returns_none():
 
     # base_strategy._empty_metrics
     class DummyStrategy(BaseStrategy):
-        def generate_signals(self, df): return pd.Series(0, index=df.index)
-        def calculate_weights(self, df, signals): return pd.Series(0.0, index=df.index)
+        def generate_signals(self, df):
+            return pd.Series(0, index=df.index)
+
+        def calculate_weights(self, df, signals):
+            return pd.Series(0.0, index=df.index)
 
     strategy = DummyStrategy()
     empty_metrics = strategy._empty_metrics()
     for key in empty_metrics:
-        assert empty_metrics[key] is None, \
-            f"BaseStrategy._empty_metrics()['{key}'] 应为 None，实际为 {empty_metrics[key]}"
+        assert (
+            empty_metrics[key] is None
+        ), f"BaseStrategy._empty_metrics()['{key}'] 应为 None，实际为 {empty_metrics[key]}"
 
     print("    risk_metrics._empty_metrics: 全部为 None ✓")
     print("    BaseStrategy._empty_metrics: 全部为 None ✓")
@@ -382,6 +414,7 @@ def test_m2_empty_metrics_returns_none():
 # ============================================================
 # M6: 回撤符号约定验证
 # ============================================================
+
 
 def test_m6_drawdown_negative_convention():
     """验证回撤计算返回负值，与empyrical约定一致"""
@@ -395,14 +428,14 @@ def test_m6_drawdown_negative_convention():
     drawdown = service.calculate_drawdown(equity)
 
     # 回撤应为负值或零
-    assert (drawdown <= 0).all() or drawdown.isna().any(), \
-        f"回撤应为负值，实际包含正值: {drawdown[drawdown > 0].tolist()}"
+    assert (
+        drawdown <= 0
+    ).all() or drawdown.isna().any(), f"回撤应为负值，实际包含正值: {drawdown[drawdown > 0].tolist()}"
 
     # 最大回撤点（净值90时）应为 -0.1818... 即 (90-110)/110
     min_dd = drawdown.min()
     expected_max_dd = (90 - 110) / 110  # ≈ -0.1818
-    assert abs(min_dd - expected_max_dd) < 0.01, \
-        f"最大回撤应为 {expected_max_dd:.4f}，实际为 {min_dd:.4f}"
+    assert abs(min_dd - expected_max_dd) < 0.01, f"最大回撤应为 {expected_max_dd:.4f}，实际为 {min_dd:.4f}"
 
     print(f"    最大回撤: {min_dd:.4f} (应为负值)")
 
@@ -411,20 +444,24 @@ def test_m6_drawdown_negative_convention():
 # M7+M8+M9: 除零保护验证
 # ============================================================
 
+
 def test_m7_rank_ir_nan_std_protection():
     """验证Rank_IR在std为NaN时返回0.0而非NaN"""
     from backend.services.analysis_service import AnalysisService
 
-    service = AnalysisService()
+    AnalysisService()
 
     # 构造一个IC序列，其rank IC的std可能为NaN（如常数序列）
     # 直接测试 _calculate_single_stock_ic_stats 的行为
     # 通过构造极端数据来触发
     dates = pd.date_range("2023-01-01", periods=10, freq="B")
-    df = pd.DataFrame({
-        "close": [100] * 10,  # 价格不变 → 收益率全为0
-        "factor_1": [5.0] * 10,  # 因子值不变 → IC std为0
-    }, index=dates)
+    pd.DataFrame(
+        {
+            "close": [100] * 10,  # 价格不变 → 收益率全为0
+            "factor_1": [5.0] * 10,  # 因子值不变 → IC std为0
+        },
+        index=dates,
+    )
 
     # 这种极端情况下不应抛出异常
     try:
@@ -466,12 +503,13 @@ def test_m9_weighted_ir_no_1e10_hack():
         ir = None
 
     assert ir is None, f"std为0时IR应为None，实际为 {ir}"
-    print(f"    std=0时IR=None (修复前为5e8)")
+    print("    std=0时IR=None (修复前为5e8)")
 
 
 # ============================================================
 # M10: 权重总和为0验证
 # ============================================================
+
 
 def test_m10_zero_weight_sum_returns_error():
     """验证权重总和为0时返回错误信息"""
@@ -480,11 +518,13 @@ def test_m10_zero_weight_sum_returns_error():
     service = PortfolioAnalysisService()
 
     # 构造权重全为0的持仓
-    positions = pd.DataFrame({
-        "stock_code": ["000001", "000002", "000003"],
-        "weight": [0.0, 0.0, 0.0],
-        "industry": ["Tech", "Finance", "Health"],
-    })
+    positions = pd.DataFrame(
+        {
+            "stock_code": ["000001", "000002", "000003"],
+            "weight": [0.0, 0.0, 0.0],
+            "industry": ["Tech", "Finance", "Health"],
+        }
+    )
 
     # 使用 calculate_concentration 方法（接受 positions + weight_column）
     result = service.calculate_concentration(positions, weight_column="weight")
@@ -497,6 +537,7 @@ def test_m10_zero_weight_sum_returns_error():
 # ============================================================
 # M15: 横截面分析使用截面平均收益率验证
 # ============================================================
+
 
 def test_m15_cross_section_uses_average_returns():
     """验证稳定性分析使用截面平均收益率而非单只股票"""
@@ -515,16 +556,21 @@ def test_m15_cross_section_uses_average_returns():
         np.random.seed(42 + i)
         close = 100 + np.cumsum(np.random.randn(n_dates) * (0.5 + i * 0.3))
         close = np.maximum(close, 1)
-        df = pd.DataFrame({
-            "close": close,
-            "factor_1": np.random.randn(n_dates) * 10 + 5,
-        }, index=dates)
+        df = pd.DataFrame(
+            {
+                "close": close,
+                "factor_1": np.random.randn(n_dates) * 10 + 5,
+            },
+            index=dates,
+        )
         df["future_return"] = df["close"].pct_change().shift(-1)
 
-        all_factor_data.append({
-            "stock_code": stock_code,
-            "data": df,
-        })
+        all_factor_data.append(
+            {
+                "stock_code": stock_code,
+                "data": df,
+            }
+        )
 
     # 调用 comprehensive_stability_test
     # 修复前：使用 all_factor_data[0] 的 future_return（仅第一只股票）
@@ -548,6 +594,7 @@ def test_m15_cross_section_uses_average_returns():
 # M16: IC显著性检验clip一致性验证
 # ============================================================
 
+
 def test_m16_ic_significance_clip_consistency():
     """验证IC显著性检验中t统计量和标准误差使用相同的clip值"""
     from backend.services.enhanced_analysis_service import EnhancedAnalysisService
@@ -570,7 +617,7 @@ def test_m16_ic_significance_clip_consistency():
     # 验证置信区间宽度不为0
     if "ci_lower" in result and "ci_upper" in result:
         ci_width = result["ci_upper"] - result["ci_lower"]
-        assert ci_width > 0, f"置信区间宽度应大于0"
+        assert ci_width > 0, "置信区间宽度应大于0"
 
     print(f"    IC显著性: se={result.get('se', 'N/A')}, t={result.get('t_statistic', 'N/A')}")
 
@@ -578,6 +625,7 @@ def test_m16_ic_significance_clip_consistency():
 # ============================================================
 # M18: NaN传播导致评分失真验证
 # ============================================================
+
 
 def test_m18_nan_score_not_distorted():
     """验证NaN值不会导致因子评分变为NaN"""
@@ -588,9 +636,9 @@ def test_m18_nan_score_not_distorted():
     # 构造包含NaN的因子分析结果
     factor_results = {
         "factor_1": {
-            "ic_mean": float('nan'),  # NaN值
-            "ir": float('nan'),
-            "stability_score": float('nan'),
+            "ic_mean": float("nan"),  # NaN值
+            "ir": float("nan"),
+            "stability_score": float("nan"),
             "positive_ratio": 0.6,
         }
     }
@@ -599,8 +647,7 @@ def test_m18_nan_score_not_distorted():
     # 修复后：NaN 值被替换为 0.0，评分正常计算
     try:
         score = service._calculate_quality_score(factor_results)
-        assert not isinstance(score, float) or not np.isnan(score), \
-            f"quality_score 不应为 NaN，实际为 {score}"
+        assert not isinstance(score, float) or not np.isnan(score), f"quality_score 不应为 NaN，实际为 {score}"
         print(f"    含NaN数据的评分: {score}")
     except AttributeError:
         # 方法名可能不同，尝试其他方式
@@ -611,17 +658,19 @@ def test_m18_nan_score_not_distorted():
 # M19: 全局warnings抑制移除验证
 # ============================================================
 
+
 def test_m19_no_global_warnings_suppression():
     """验证backtest_service不再全局抑制divide by zero警告"""
     import backend.services.backtest_service as mod
 
     # 检查模块级代码不再设置全局 warnings.filterwarnings("ignore", ".*divide by zero.*")
     # 这很难直接测试，但可以验证模块能正常导入且不崩溃
-    assert hasattr(mod, 'BacktestService'), "BacktestService 应可正常导入"
+    assert hasattr(mod, "BacktestService"), "BacktestService 应可正常导入"
 
     # 验证 statistics_service 不再抑制 invalid value 警告
     import backend.services.statistics_service as stats_mod
-    assert hasattr(stats_mod, 'StatisticsService'), "StatisticsService 应可正常导入"
+
+    assert hasattr(stats_mod, "StatisticsService"), "StatisticsService 应可正常导入"
 
     print("    模块导入正常，全局warnings抑制已移除")
 
@@ -630,15 +679,14 @@ def test_m19_no_global_warnings_suppression():
 # M20: 静默异常改为日志记录验证
 # ============================================================
 
+
 def test_m20_no_silent_exceptions():
     """验证comprehensive_scoring_service和stock_ranker_service有logger"""
     import backend.services.comprehensive_scoring_service as scoring_mod
     import backend.services.stock_ranker_service as ranker_mod
 
-    assert hasattr(scoring_mod, 'logger'), \
-        "comprehensive_scoring_service 应定义 logger"
-    assert hasattr(ranker_mod, 'logger'), \
-        "stock_ranker_service 应定义 logger"
+    assert hasattr(scoring_mod, "logger"), "comprehensive_scoring_service 应定义 logger"
+    assert hasattr(ranker_mod, "logger"), "stock_ranker_service 应定义 logger"
 
     print("    comprehensive_scoring_service.logger ✓")
     print("    stock_ranker_service.logger ✓")
@@ -648,22 +696,26 @@ def test_m20_no_silent_exceptions():
 # Minor: 市值加权除零保护验证
 # ============================================================
 
+
 def test_minor_market_cap_weighted_zero_protection():
     """验证市值加权在所有市值为NaN时不崩溃"""
     from backend.services.factor_return_analysis_service import FactorReturnAnalysisService
 
-    service = FactorReturnAnalysisService()
+    FactorReturnAnalysisService()
 
     # 构造市值全为NaN的数据
     n = 50
     dates = pd.date_range("2023-01-01", periods=n, freq="B")
-    df = pd.DataFrame({
-        "close": 100 + np.cumsum(np.random.randn(n) * 0.5),
-        "factor_1": np.random.randn(n) * 10 + 5,
-        "market_cap": [float('nan')] * n,  # 全NaN市值
-        "future_return": np.random.randn(n) * 0.01,
-        "stock_code": "600000",
-    }, index=dates)
+    pd.DataFrame(
+        {
+            "close": 100 + np.cumsum(np.random.randn(n) * 0.5),
+            "factor_1": np.random.randn(n) * 10 + 5,
+            "market_cap": [float("nan")] * n,  # 全NaN市值
+            "future_return": np.random.randn(n) * 0.01,
+            "stock_code": "600000",
+        },
+        index=dates,
+    )
 
     # 不应崩溃
     print("    全NaN市值数据测试通过（未抛出异常）")
@@ -672,6 +724,7 @@ def test_minor_market_cap_weighted_zero_protection():
 # ============================================================
 # Minor: CV系数mean=0时返回None验证
 # ============================================================
+
 
 def test_minor_cv_returns_none_when_mean_zero():
     """验证变异系数在均值为0时返回None"""
@@ -682,12 +735,13 @@ def test_minor_cv_returns_none_when_mean_zero():
     cv = float(latest_std / latest_mean) if latest_mean != 0 else None
 
     assert cv is None, f"均值为0时CV应为None，实际为 {cv}"
-    print(f"    mean=0时CV=None ✓")
+    print("    mean=0时CV=None ✓")
 
 
 # ============================================================
 # Minor: 测试数据含amount列验证
 # ============================================================
+
 
 def test_minor_factor_validation_with_amount():
     """验证因子验证测试数据包含amount列"""
@@ -713,6 +767,7 @@ def test_minor_factor_validation_with_amount():
 # Minor: handle_outliers用非异常值均值验证
 # ============================================================
 
+
 def test_minor_replace_uses_non_outlier_mean():
     """验证replace方法使用非异常值的均值"""
     from backend.services.data_preprocessing_service import DataPreprocessingService
@@ -730,14 +785,14 @@ def test_minor_replace_uses_non_outlier_mean():
         full_mean = data["value"].mean()
 
         # 非异常值均值应远小于全样本均值
-        assert non_outlier_mean < full_mean, \
-            f"非异常值均值({non_outlier_mean})应小于全样本均值({full_mean})"
+        assert non_outlier_mean < full_mean, f"非异常值均值({non_outlier_mean})应小于全样本均值({full_mean})"
         print(f"    全样本均值: {full_mean:.1f}, 非异常值均值: {non_outlier_mean:.1f}")
 
 
 # ============================================================
 # Minor: incremental_update不修改传入DataFrame验证
 # ============================================================
+
 
 def test_minor_incremental_update_no_mutation():
     """验证incremental_update不修改传入的DataFrame"""
@@ -749,14 +804,18 @@ def test_minor_incremental_update_no_mutation():
     dates1 = pd.date_range("2023-01-01", periods=10, freq="B")
     dates2 = pd.date_range("2023-01-15", periods=5, freq="B")
 
-    existing_df = pd.DataFrame({
-        "date": dates1,
-        "value": range(10),
-    })
-    new_df = pd.DataFrame({
-        "date": dates2,
-        "value": range(10, 15),
-    })
+    existing_df = pd.DataFrame(
+        {
+            "date": dates1,
+            "value": range(10),
+        }
+    )
+    new_df = pd.DataFrame(
+        {
+            "date": dates2,
+            "value": range(10, 15),
+        }
+    )
 
     # 记录原始数据
     original_existing = existing_df.copy()
@@ -769,16 +828,15 @@ def test_minor_incremental_update_no_mutation():
         pass
 
     # 验证原始数据未被修改
-    assert existing_df.equals(original_existing), \
-        "incremental_update不应修改传入的existing_df"
-    assert new_df.equals(original_new), \
-        "incremental_update不应修改传入的new_df"
+    assert existing_df.equals(original_existing), "incremental_update不应修改传入的existing_df"
+    assert new_df.equals(original_new), "incremental_update不应修改传入的new_df"
     print("    传入DataFrame未被修改 ✓")
 
 
 # ============================================================
 # Minor: 重复import清理验证
 # ============================================================
+
 
 def test_minor_no_duplicate_scipy_import():
     """验证factor_validation_service不再有重复的scipy import"""
@@ -794,8 +852,8 @@ def test_minor_no_duplicate_scipy_import():
     if has_stats and has_scipy_stats:
         # 检查 scipy_stats 是否仅在 "from scipy import stats as scipy_stats" 中出现
         # 如果已修复，scipy_stats 不应再出现
-        lines_with_scipy_stats = [l for l in source.split('\n') if 'scipy_stats' in l]
-        import_lines = [l for l in lines_with_scipy_stats if 'import' in l]
+        lines_with_scipy_stats = [line for line in source.split("\n") if "scipy_stats" in line]
+        import_lines = [line for line in lines_with_scipy_stats if "import" in line]
         if import_lines:
             assert False, f"仍有重复的scipy import: {import_lines}"
 

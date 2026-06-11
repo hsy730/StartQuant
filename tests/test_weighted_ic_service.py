@@ -5,9 +5,9 @@ WeightedICService 加权IC服务测试
 _adjust_for_correlation、_calculate_optimal_weights、_calculate_stability_score、
 _align_ic_series 七个核心方法，包含正常场景和边界条件。
 """
+
 import sys
 import os
-import warnings
 import numpy as np
 import pandas as pd
 import pytest
@@ -15,21 +15,21 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 # NumPy 2.0 兼容
-if not hasattr(np, 'NINF'):
+if not hasattr(np, "NINF"):
     np.NINF = -np.inf
-if not hasattr(np, 'PINF'):
+if not hasattr(np, "PINF"):
     np.PINF = np.inf
 
-from backend.services.weighted_ic_service import (
+from backend.services.weighted_ic_service import (  # noqa: E402
     WeightedICService,
     WeightedICConfig,
     WeightingMethod,
 )
 
-
 # ──────────────────────────────────────────
 # 辅助函数
 # ──────────────────────────────────────────
+
 
 def _make_ic_series(
     n: int = 100,
@@ -74,9 +74,7 @@ def _make_factor_ic_dict(
 
     result = {}
     for i, name in enumerate(factor_names):
-        result[name] = _make_ic_series(
-            n=n, mean=means[i], std=stds[i], seed=seeds[i]
-        )
+        result[name] = _make_ic_series(n=n, mean=means[i], std=stds[i], seed=seeds[i])
     return result
 
 
@@ -110,9 +108,11 @@ class TestCalculateWeightedIC:
 
     def test_normal_ir_weight_should_return_success(self):
         """IR加权模式下正常输入应返回成功结果"""
-        service = WeightedICService(WeightedICConfig(
-            weighting_method=WeightingMethod.IR_WEIGHT,
-        ))
+        service = WeightedICService(
+            WeightedICConfig(
+                weighting_method=WeightingMethod.IR_WEIGHT,
+            )
+        )
         factor_ic_dict = _make_factor_ic_dict()
         result = service.calculate_weighted_ic(factor_ic_dict)
 
@@ -125,9 +125,11 @@ class TestCalculateWeightedIC:
 
     def test_weighted_ic_stats_should_be_valid(self):
         """加权IC统计量应为合理数值"""
-        service = WeightedICService(WeightedICConfig(
-            weighting_method=WeightingMethod.IR_WEIGHT,
-        ))
+        service = WeightedICService(
+            WeightedICConfig(
+                weighting_method=WeightingMethod.IR_WEIGHT,
+            )
+        )
         factor_ic_dict = _make_factor_ic_dict(means=[0.05, 0.03, 0.01])
         result = service.calculate_weighted_ic(factor_ic_dict)
 
@@ -141,23 +143,21 @@ class TestCalculateWeightedIC:
 
     def test_factor_weights_should_sum_to_one(self):
         """因子权重之和应近似为1"""
-        service = WeightedICService(WeightedICConfig(
-            weighting_method=WeightingMethod.IR_WEIGHT,
-        ))
+        service = WeightedICService(
+            WeightedICConfig(
+                weighting_method=WeightingMethod.IR_WEIGHT,
+            )
+        )
         factor_ic_dict = _make_factor_ic_dict()
         result = service.calculate_weighted_ic(factor_ic_dict)
 
-        total_weight = sum(
-            v["weight"] for v in result["factor_weights"].values()
-        )
+        total_weight = sum(v["weight"] for v in result["factor_weights"].values())
         assert total_weight == pytest.approx(1.0, abs=1e-6)
 
     def test_contribution_analysis_should_have_all_factors(self):
         """贡献度分析应包含所有因子"""
         service = WeightedICService()
-        factor_ic_dict = _make_factor_ic_dict(
-            factor_names=["f1", "f2", "f3"]
-        )
+        factor_ic_dict = _make_factor_ic_dict(factor_names=["f1", "f2", "f3"])
         result = service.calculate_weighted_ic(factor_ic_dict)
 
         contrib = result["contribution_analysis"]
@@ -203,16 +203,16 @@ class TestCalculateWeightedIC:
     def test_with_correlation_adjustment_should_produce_adjustment_info(self):
         """提供相关性矩阵且开启调整时，应返回调整信息"""
         factor_names = ["f1", "f2"]
-        service = WeightedICService(WeightedICConfig(
-            weighting_method=WeightingMethod.EQUAL_WEIGHT,
-            correlation_adjustment=True,
-        ))
+        service = WeightedICService(
+            WeightedICConfig(
+                weighting_method=WeightingMethod.EQUAL_WEIGHT,
+                correlation_adjustment=True,
+            )
+        )
         factor_ic_dict = _make_factor_ic_dict(factor_names=factor_names)
         # 高相关矩阵
         corr_matrix = _make_corr_matrix(factor_names, [(0, 1, 0.85)])
-        result = service.calculate_weighted_ic(
-            factor_ic_dict, factor_correlation_matrix=corr_matrix
-        )
+        result = service.calculate_weighted_ic(factor_ic_dict, factor_correlation_matrix=corr_matrix)
 
         assert result.get("success") is True
         assert result["correlation_adjustment"] is not None
@@ -229,14 +229,14 @@ class TestCalculateWeightedIC:
     def test_correlation_adjustment_disabled_should_not_adjust(self):
         """关闭相关性调整时，即使提供矩阵也不调整"""
         factor_names = ["f1", "f2"]
-        service = WeightedICService(WeightedICConfig(
-            correlation_adjustment=False,
-        ))
+        service = WeightedICService(
+            WeightedICConfig(
+                correlation_adjustment=False,
+            )
+        )
         factor_ic_dict = _make_factor_ic_dict(factor_names=factor_names)
         corr_matrix = _make_corr_matrix(factor_names, [(0, 1, 0.9)])
-        result = service.calculate_weighted_ic(
-            factor_ic_dict, factor_correlation_matrix=corr_matrix
-        )
+        result = service.calculate_weighted_ic(factor_ic_dict, factor_correlation_matrix=corr_matrix)
 
         assert result["correlation_adjustment"] is None
 
@@ -246,9 +246,11 @@ class TestCalculateWeightedICAllMethods:
 
     def test_equal_weight_should_assign_equal_weights(self):
         """等权法应分配相同权重"""
-        service = WeightedICService(WeightedICConfig(
-            weighting_method=WeightingMethod.EQUAL_WEIGHT,
-        ))
+        service = WeightedICService(
+            WeightedICConfig(
+                weighting_method=WeightingMethod.EQUAL_WEIGHT,
+            )
+        )
         factor_ic_dict = _make_factor_ic_dict(
             factor_names=["f1", "f2", "f3"],
             means=[0.05, 0.01, 0.08],
@@ -261,9 +263,11 @@ class TestCalculateWeightedICAllMethods:
 
     def test_ir_weight_should_favor_high_ir_factor(self):
         """IR加权应偏向高IR因子"""
-        service = WeightedICService(WeightedICConfig(
-            weighting_method=WeightingMethod.IR_WEIGHT,
-        ))
+        service = WeightedICService(
+            WeightedICConfig(
+                weighting_method=WeightingMethod.IR_WEIGHT,
+            )
+        )
         # f1: 高均值低标准差 → 高IR; f2: 低均值高标准差 → 低IR
         factor_ic_dict = _make_factor_ic_dict(
             factor_names=["f1", "f2"],
@@ -278,9 +282,11 @@ class TestCalculateWeightedICAllMethods:
 
     def test_abs_ic_weight_should_favor_high_abs_ic(self):
         """IC绝对值加权应偏向|IC均值|大的因子"""
-        service = WeightedICService(WeightedICConfig(
-            weighting_method=WeightingMethod.ABS_IC_WEIGHT,
-        ))
+        service = WeightedICService(
+            WeightedICConfig(
+                weighting_method=WeightingMethod.ABS_IC_WEIGHT,
+            )
+        )
         factor_ic_dict = _make_factor_ic_dict(
             factor_names=["f1", "f2"],
             means=[0.1, 0.01],
@@ -294,24 +300,30 @@ class TestCalculateWeightedICAllMethods:
 
     def test_decay_weight_should_favor_recent_performance(self):
         """衰减加权应更重视近期表现"""
-        service = WeightedICService(WeightedICConfig(
-            weighting_method=WeightingMethod.DECAY_WEIGHT,
-            decay_half_life=30,
-        ))
+        service = WeightedICService(
+            WeightedICConfig(
+                weighting_method=WeightingMethod.DECAY_WEIGHT,
+                decay_half_life=30,
+            )
+        )
         # f1: 近期IC高; f2: 近期IC低
         np.random.seed(100)
         n = 100
         dates = pd.bdate_range(start="2023-01-03", periods=n, freq="B")
         # f1: 前半低后半高
-        vals_f1 = np.concatenate([
-            np.random.randn(50) * 0.05 - 0.02,
-            np.random.randn(50) * 0.05 + 0.08,
-        ])
+        vals_f1 = np.concatenate(
+            [
+                np.random.randn(50) * 0.05 - 0.02,
+                np.random.randn(50) * 0.05 + 0.08,
+            ]
+        )
         # f2: 前半高后半低
-        vals_f2 = np.concatenate([
-            np.random.randn(50) * 0.05 + 0.08,
-            np.random.randn(50) * 0.05 - 0.02,
-        ])
+        vals_f2 = np.concatenate(
+            [
+                np.random.randn(50) * 0.05 + 0.08,
+                np.random.randn(50) * 0.05 - 0.02,
+            ]
+        )
         factor_ic_dict = {
             "f1": pd.Series(vals_f1, index=dates),
             "f2": pd.Series(vals_f2, index=dates),
@@ -324,9 +336,11 @@ class TestCalculateWeightedICAllMethods:
 
     def test_optimal_weight_should_produce_valid_weights(self):
         """最优加权应产生有效权重（总和为1）"""
-        service = WeightedICService(WeightedICConfig(
-            weighting_method=WeightingMethod.OPTIMAL_WEIGHT,
-        ))
+        service = WeightedICService(
+            WeightedICConfig(
+                weighting_method=WeightingMethod.OPTIMAL_WEIGHT,
+            )
+        )
         factor_ic_dict = _make_factor_ic_dict(
             factor_names=["f1", "f2", "f3"],
         )
@@ -411,24 +425,13 @@ class TestCalculateFactorImportance:
 
         # 高相关矩阵
         corr_matrix = _make_corr_matrix(factor_names, [(0, 1, 0.9)])
-        result_with_corr = service.calculate_factor_importance(
-            factor_ic_dict, factor_correlation_matrix=corr_matrix
-        )
+        result_with_corr = service.calculate_factor_importance(factor_ic_dict, factor_correlation_matrix=corr_matrix)
 
         # 有相关性惩罚时，至少一个因子分数应低于无惩罚版本
-        scores_no_corr = {
-            r["factor_name"]: r["total_score"]
-            for r in result_no_corr["ranking"]
-        }
-        scores_with_corr = {
-            r["factor_name"]: r["total_score"]
-            for r in result_with_corr["ranking"]
-        }
+        scores_no_corr = {r["factor_name"]: r["total_score"] for r in result_no_corr["ranking"]}
+        scores_with_corr = {r["factor_name"]: r["total_score"] for r in result_with_corr["ranking"]}
         # 高相关时，uniqueness_penalty > 0，分数应降低
-        has_penalty = any(
-            scores_with_corr[name] < scores_no_corr[name]
-            for name in factor_names
-        )
+        has_penalty = any(scores_with_corr[name] < scores_no_corr[name] for name in factor_names)
         assert has_penalty
 
     def test_empty_dict_should_return_success_with_empty_ranking(self):
@@ -462,9 +465,11 @@ class TestCalculateWeights:
 
     def test_equal_weight(self):
         """等权法：所有因子权重相同"""
-        service = WeightedICService(WeightedICConfig(
-            weighting_method=WeightingMethod.EQUAL_WEIGHT,
-        ))
+        service = WeightedICService(
+            WeightedICConfig(
+                weighting_method=WeightingMethod.EQUAL_WEIGHT,
+            )
+        )
         ic_stats = {
             "f1": {"ir": 0.5, "mean_ic": 0.03, "std_ic": 0.06},
             "f2": {"ir": 1.0, "mean_ic": 0.08, "std_ic": 0.08},
@@ -475,9 +480,11 @@ class TestCalculateWeights:
 
     def test_ir_weight_with_negative_ir(self):
         """IR加权：负IR因子权重应为0（max(ir, 0)），正IR因子权重为1"""
-        service = WeightedICService(WeightedICConfig(
-            weighting_method=WeightingMethod.IR_WEIGHT,
-        ))
+        service = WeightedICService(
+            WeightedICConfig(
+                weighting_method=WeightingMethod.IR_WEIGHT,
+            )
+        )
         ic_stats = {
             "f1": {"ir": 0.8, "mean_ic": 0.05, "std_ic": 0.06},
             "f2": {"ir": -0.3, "mean_ic": -0.02, "std_ic": 0.07},
@@ -488,9 +495,11 @@ class TestCalculateWeights:
 
     def test_ir_weight_all_negative_ir_should_fallback_equal(self):
         """IR加权：所有IR为负时应回退到等权"""
-        service = WeightedICService(WeightedICConfig(
-            weighting_method=WeightingMethod.IR_WEIGHT,
-        ))
+        service = WeightedICService(
+            WeightedICConfig(
+                weighting_method=WeightingMethod.IR_WEIGHT,
+            )
+        )
         ic_stats = {
             "f1": {"ir": -0.5, "mean_ic": -0.03, "std_ic": 0.06},
             "f2": {"ir": -0.2, "mean_ic": -0.01, "std_ic": 0.05},
@@ -502,9 +511,11 @@ class TestCalculateWeights:
 
     def test_abs_ic_weight(self):
         """IC绝对值加权：|IC|大的因子权重更高"""
-        service = WeightedICService(WeightedICConfig(
-            weighting_method=WeightingMethod.ABS_IC_WEIGHT,
-        ))
+        service = WeightedICService(
+            WeightedICConfig(
+                weighting_method=WeightingMethod.ABS_IC_WEIGHT,
+            )
+        )
         ic_stats = {
             "f1": {"ir": 0.5, "mean_ic": 0.1, "std_ic": 0.2},
             "f2": {"ir": 0.3, "mean_ic": 0.03, "std_ic": 0.1},
@@ -514,10 +525,12 @@ class TestCalculateWeights:
 
     def test_decay_weight(self):
         """衰减加权：应使用ic_series计算衰减加权均值"""
-        service = WeightedICService(WeightedICConfig(
-            weighting_method=WeightingMethod.DECAY_WEIGHT,
-            decay_half_life=30,
-        ))
+        service = WeightedICService(
+            WeightedICConfig(
+                weighting_method=WeightingMethod.DECAY_WEIGHT,
+                decay_half_life=30,
+            )
+        )
         np.random.seed(42)
         ic_series = pd.Series(np.random.randn(60) * 0.1 + 0.03)
         ic_stats = {
@@ -528,9 +541,11 @@ class TestCalculateWeights:
 
     def test_decay_weight_without_ic_series_should_use_mean(self):
         """衰减加权：无ic_series时回退到|mean_ic|"""
-        service = WeightedICService(WeightedICConfig(
-            weighting_method=WeightingMethod.DECAY_WEIGHT,
-        ))
+        service = WeightedICService(
+            WeightedICConfig(
+                weighting_method=WeightingMethod.DECAY_WEIGHT,
+            )
+        )
         ic_stats = {
             "f1": {"ir": 0.3, "mean_ic": 0.05, "std_ic": 0.1},
         }
@@ -539,9 +554,11 @@ class TestCalculateWeights:
 
     def test_factor_not_in_ic_stats_should_be_excluded(self):
         """不在ic_stats中的因子不应出现在权重中"""
-        service = WeightedICService(WeightedICConfig(
-            weighting_method=WeightingMethod.EQUAL_WEIGHT,
-        ))
+        service = WeightedICService(
+            WeightedICConfig(
+                weighting_method=WeightingMethod.EQUAL_WEIGHT,
+            )
+        )
         ic_stats = {
             "f1": {"ir": 0.5, "mean_ic": 0.03, "std_ic": 0.06},
         }
@@ -551,9 +568,11 @@ class TestCalculateWeights:
 
     def test_unknown_method_should_fallback_equal(self):
         """未知加权方法应回退到等权"""
-        service = WeightedICService(WeightedICConfig(
-            weighting_method=WeightingMethod.EQUAL_WEIGHT,
-        ))
+        service = WeightedICService(
+            WeightedICConfig(
+                weighting_method=WeightingMethod.EQUAL_WEIGHT,
+            )
+        )
         # 手动设置一个无效方法
         service.config.weighting_method = "nonexistent"
         ic_stats = {
@@ -574,9 +593,7 @@ class TestAdjustForCorrelation:
         weights = {"f1": 0.6, "f2": 0.4}
         corr_matrix = _make_corr_matrix(factor_names, [(0, 1, 0.3)])
 
-        adjusted, info = service._adjust_for_correlation(
-            weights, corr_matrix, factor_names
-        )
+        adjusted, info = service._adjust_for_correlation(weights, corr_matrix, factor_names)
 
         assert "adjustments" in info
         assert len(info["adjustments"]) == 0
@@ -591,9 +608,7 @@ class TestAdjustForCorrelation:
         weights = {"f1": 0.7, "f2": 0.3}
         corr_matrix = _make_corr_matrix(factor_names, [(0, 1, 0.85)])
 
-        adjusted, info = service._adjust_for_correlation(
-            weights, corr_matrix, factor_names
-        )
+        adjusted, info = service._adjust_for_correlation(weights, corr_matrix, factor_names)
 
         # f2权重较低，应被缩减
         assert len(info["adjustments"]) > 0
@@ -609,9 +624,7 @@ class TestAdjustForCorrelation:
         weights = {"f1": 0.6, "f2": 0.4}
         corr_matrix = _make_corr_matrix(factor_names, [(0, 1, 0.7)])
 
-        adjusted, info = service._adjust_for_correlation(
-            weights, corr_matrix, factor_names
-        )
+        adjusted, info = service._adjust_for_correlation(weights, corr_matrix, factor_names)
 
         assert len(info["adjustments"]) == 0
 
@@ -622,9 +635,7 @@ class TestAdjustForCorrelation:
         weights = {"f1": 0.6, "f2": 0.4}
         corr_matrix = _make_corr_matrix(factor_names, [(0, 1, 0.71)])
 
-        adjusted, info = service._adjust_for_correlation(
-            weights, corr_matrix, factor_names
-        )
+        adjusted, info = service._adjust_for_correlation(weights, corr_matrix, factor_names)
 
         assert len(info["adjustments"]) > 0
 
@@ -635,9 +646,7 @@ class TestAdjustForCorrelation:
         weights = {"f1": 0.7, "f2": 0.3}
         corr_matrix = _make_corr_matrix(factor_names, [(0, 1, 1.0)])
 
-        adjusted, info = service._adjust_for_correlation(
-            weights, corr_matrix, factor_names
-        )
+        adjusted, info = service._adjust_for_correlation(weights, corr_matrix, factor_names)
 
         # reduction_factor = 1 - (1.0 - 0.7) * 0.5 = 0.85
         # f2被缩减: 0.3 * 0.85 = 0.255
@@ -651,9 +660,7 @@ class TestAdjustForCorrelation:
         weights = {"f1": 0.6, "f2": 0.4}
         corr_matrix = _make_corr_matrix(factor_names, [(0, 1, 0.9)])
 
-        _, info = service._adjust_for_correlation(
-            weights, corr_matrix, factor_names
-        )
+        _, info = service._adjust_for_correlation(weights, corr_matrix, factor_names)
 
         assert "original_weights" in info
         assert "adjusted_weights" in info
@@ -666,13 +673,9 @@ class TestAdjustForCorrelation:
         factor_names = ["f1", "f2", "f3"]
         weights = {"f1": 0.5, "f2": 0.3, "f3": 0.2}
         # f1-f2 高相关, f1-f3 和 f2-f3 低相关
-        corr_matrix = _make_corr_matrix(
-            factor_names, [(0, 1, 0.85), (0, 2, 0.3), (1, 2, 0.2)]
-        )
+        corr_matrix = _make_corr_matrix(factor_names, [(0, 1, 0.85), (0, 2, 0.3), (1, 2, 0.2)])
 
-        adjusted, info = service._adjust_for_correlation(
-            weights, corr_matrix, factor_names
-        )
+        adjusted, info = service._adjust_for_correlation(weights, corr_matrix, factor_names)
 
         # f2权重低于f1，f1-f2高相关，f2应被缩减
         assert len(info["adjustments"]) > 0
@@ -687,9 +690,7 @@ class TestAdjustForCorrelation:
         weights = {"f1": 0.6, "f2": 0.4}  # f3不在权重中
         corr_matrix = _make_corr_matrix(factor_names, [(0, 1, 0.85)])
 
-        adjusted, info = service._adjust_for_correlation(
-            weights, corr_matrix, factor_names
-        )
+        adjusted, info = service._adjust_for_correlation(weights, corr_matrix, factor_names)
         # 不应报错
         assert "f1" in adjusted
         assert "f2" in adjusted
@@ -700,13 +701,9 @@ class TestAdjustForCorrelation:
         factor_names = ["f1", "f2"]
         weights = {"f1": 0.6, "f2": 0.4}
         # 矩阵中只有f1，没有f2
-        corr_matrix = pd.DataFrame(
-            {"f1": [1.0]}, index=["f1"]
-        )
+        corr_matrix = pd.DataFrame({"f1": [1.0]}, index=["f1"])
 
-        adjusted, info = service._adjust_for_correlation(
-            weights, corr_matrix, factor_names
-        )
+        adjusted, info = service._adjust_for_correlation(weights, corr_matrix, factor_names)
         # 不应报错，无调整
         assert len(info["adjustments"]) == 0
 
@@ -805,10 +802,12 @@ class TestCalculateStabilityScore:
         np.random.seed(42)
         n = 100
         # 前半正后半负 → 不稳定
-        values = np.concatenate([
-            np.random.randn(50) * 0.05 + 0.1,
-            np.random.randn(50) * 0.05 - 0.1,
-        ])
+        values = np.concatenate(
+            [
+                np.random.randn(50) * 0.05 + 0.1,
+                np.random.randn(50) * 0.05 - 0.1,
+            ]
+        )
         dates = pd.bdate_range(start="2023-01-03", periods=n, freq="B")
         ic_series = pd.Series(values, index=dates)
 
@@ -942,9 +941,11 @@ class TestBoundaryConditions:
 
     def test_all_zero_ir_with_ir_weight(self):
         """所有因子IR为0时，IR加权应回退到等权"""
-        service = WeightedICService(WeightedICConfig(
-            weighting_method=WeightingMethod.IR_WEIGHT,
-        ))
+        service = WeightedICService(
+            WeightedICConfig(
+                weighting_method=WeightingMethod.IR_WEIGHT,
+            )
+        )
         # 常数IC → std=0 → IR=0（safe_ir返回default=0.0）
         np.random.seed(42)
         n = 100
@@ -1004,9 +1005,11 @@ class TestBoundaryConditions:
 
     def test_negative_ic_factor_with_abs_ic_weight(self):
         """负IC因子在IC绝对值加权下应获得正权重"""
-        service = WeightedICService(WeightedICConfig(
-            weighting_method=WeightingMethod.ABS_IC_WEIGHT,
-        ))
+        service = WeightedICService(
+            WeightedICConfig(
+                weighting_method=WeightingMethod.ABS_IC_WEIGHT,
+            )
+        )
         np.random.seed(42)
         n = 100
         dates = pd.bdate_range(start="2023-01-03", periods=n, freq="B")
@@ -1053,15 +1056,11 @@ class TestBoundaryConditions:
             seeds=[1, 2],
         )
         corr_matrix = _make_corr_matrix(factor_names, [(0, 1, 0.9)])
-        result = service.calculate_factor_importance(
-            factor_ic_dict, factor_correlation_matrix=corr_matrix
-        )
+        result = service.calculate_factor_importance(factor_ic_dict, factor_correlation_matrix=corr_matrix)
 
         if result.get("success"):
             # 至少一个因子应有uniqueness_penalty
-            has_penalty = any(
-                "uniqueness_penalty" in r for r in result["ranking"]
-            )
+            has_penalty = any("uniqueness_penalty" in r for r in result["ranking"])
             assert has_penalty
 
     def test_reduction_factor_formula(self):
@@ -1072,14 +1071,10 @@ class TestBoundaryConditions:
         corr_value = 0.9
         corr_matrix = _make_corr_matrix(factor_names, [(0, 1, corr_value)])
 
-        _, info = service._adjust_for_correlation(
-            weights, corr_matrix, factor_names
-        )
+        _, info = service._adjust_for_correlation(weights, corr_matrix, factor_names)
 
         # reduction_factor = 1 - (0.9 - 0.7) * 0.5 = 0.9
         expected_reduction = 1.0 - (corr_value - 0.7) * 0.5
         # 检查adjustments中的reduction_factor
         for adj_key, adj_val in info["adjustments"].items():
-            assert adj_val["reduction_factor"] == pytest.approx(
-                expected_reduction, abs=1e-6
-            )
+            assert adj_val["reduction_factor"] == pytest.approx(expected_reduction, abs=1e-6)

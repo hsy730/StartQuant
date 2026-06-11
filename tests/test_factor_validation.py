@@ -4,9 +4,9 @@ factor_validation_service.py 因子验证服务测试
 覆盖IC验证、Rank IC验证、IR验证、稳定性验证等核心功能。
 使用公共API validate_factor() 进行测试。
 """
+
 import sys
 import os
-import warnings
 import numpy as np
 import pandas as pd
 import pytest
@@ -14,12 +14,12 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 # NumPy 2.0 兼容
-if not hasattr(np, 'NINF'):
+if not hasattr(np, "NINF"):
     np.NINF = -np.inf
-if not hasattr(np, 'PINF'):
+if not hasattr(np, "PINF"):
     np.PINF = np.inf
 
-from backend.services.factor_validation_service import FactorValidationService
+from backend.services.factor_validation_service import FactorValidationService  # noqa: E402
 
 
 def make_factor_return_data(n=200, seed=42):

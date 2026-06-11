@@ -4,9 +4,9 @@ risk_metrics.py 统一风险指标入口测试
 项目规则要求所有风险指标（Sharpe/Sortino/MaxDD/Calmar/VaR/CVaR）
 通过 risk_metrics.py 统一入口，底层委托 empyrical。
 """
+
 import sys
 import os
-import warnings
 import numpy as np
 import pandas as pd
 import pytest
@@ -14,12 +14,12 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 # NumPy 2.0 兼容
-if not hasattr(np, 'NINF'):
+if not hasattr(np, "NINF"):
     np.NINF = -np.inf
-if not hasattr(np, 'PINF'):
+if not hasattr(np, "PINF"):
     np.PINF = np.inf
 
-from backend.services.risk_metrics import calculate_risk_metrics, _empty_metrics
+from backend.services.risk_metrics import calculate_risk_metrics, _empty_metrics  # noqa: E402
 
 
 class TestCalculateRiskMetrics:
@@ -34,9 +34,16 @@ class TestCalculateRiskMetrics:
         result = calculate_risk_metrics(returns)
 
         expected_keys = [
-            "total_return", "annual_return", "volatility", "sharpe_ratio",
-            "sortino_ratio", "max_drawdown", "calmar_ratio", "win_rate",
-            "var_95", "cvar_95"
+            "total_return",
+            "annual_return",
+            "volatility",
+            "sharpe_ratio",
+            "sortino_ratio",
+            "max_drawdown",
+            "calmar_ratio",
+            "win_rate",
+            "var_95",
+            "cvar_95",
         ]
         for key in expected_keys:
             assert key in result, f"缺少指标: {key}"
@@ -144,9 +151,16 @@ class TestEmptyMetrics:
         """空指标应包含所有键"""
         result = _empty_metrics()
         expected_keys = [
-            "total_return", "annual_return", "volatility", "sharpe_ratio",
-            "sortino_ratio", "max_drawdown", "calmar_ratio", "win_rate",
-            "var_95", "cvar_95"
+            "total_return",
+            "annual_return",
+            "volatility",
+            "sharpe_ratio",
+            "sortino_ratio",
+            "max_drawdown",
+            "calmar_ratio",
+            "win_rate",
+            "var_95",
+            "cvar_95",
         ]
         for key in expected_keys:
             assert key in result

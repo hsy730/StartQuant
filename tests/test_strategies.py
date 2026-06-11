@@ -1,9 +1,9 @@
 """
 策略模块测试 - 覆盖均值回归策略和动量策略
 """
+
 import sys
 import os
-import warnings
 import numpy as np
 import pandas as pd
 import pytest
@@ -11,13 +11,13 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 # NumPy 2.0 兼容
-if not hasattr(np, 'NINF'):
+if not hasattr(np, "NINF"):
     np.NINF = -np.inf
-if not hasattr(np, 'PINF'):
+if not hasattr(np, "PINF"):
     np.PINF = np.inf
 
-from backend.strategies.mean_reversion_strategy import MeanReversionStrategy
-from backend.strategies.momentum_strategy import MomentumStrategy
+from backend.strategies.mean_reversion_strategy import MeanReversionStrategy  # noqa: E402
+from backend.strategies.momentum_strategy import MomentumStrategy  # noqa: E402
 
 
 def make_price_df(n=200, seed=42):
@@ -25,13 +25,16 @@ def make_price_df(n=200, seed=42):
     np.random.seed(seed)
     dates = pd.date_range(start="2023-01-01", periods=n, freq="B")
     close = 100 + np.cumsum(np.random.randn(n) * 0.5)
-    return pd.DataFrame({
-        "close": close,
-        "open": close + np.random.randn(n) * 0.1,
-        "high": close + abs(np.random.randn(n) * 0.3),
-        "low": close - abs(np.random.randn(n) * 0.3),
-        "volume": np.random.randint(100000, 1000000, n),
-    }, index=dates)
+    return pd.DataFrame(
+        {
+            "close": close,
+            "open": close + np.random.randn(n) * 0.1,
+            "high": close + abs(np.random.randn(n) * 0.3),
+            "low": close - abs(np.random.randn(n) * 0.3),
+            "volume": np.random.randint(100000, 1000000, n),
+        },
+        index=dates,
+    )
 
 
 class TestMeanReversionStrategy:
@@ -57,13 +60,16 @@ class TestMeanReversionStrategy:
     def test_constant_price_should_not_crash(self):
         """恒定价格（std=0）不应崩溃"""
         strategy = MeanReversionStrategy(lookback_window=20, entry_threshold=2.0)
-        df = pd.DataFrame({
-            "close": [100.0] * 200,
-            "open": [100.0] * 200,
-            "high": [100.0] * 200,
-            "low": [100.0] * 200,
-            "volume": [1000000] * 200,
-        }, index=pd.date_range(start="2023-01-01", periods=200, freq="B"))
+        df = pd.DataFrame(
+            {
+                "close": [100.0] * 200,
+                "open": [100.0] * 200,
+                "high": [100.0] * 200,
+                "low": [100.0] * 200,
+                "volume": [1000000] * 200,
+            },
+            index=pd.date_range(start="2023-01-01", periods=200, freq="B"),
+        )
         signals = strategy.generate_signals(df)
         # 恒定价格时zscore应为NaN，信号应为0
         assert not signals.isna().any(), "信号不应包含NaN"
@@ -73,18 +79,23 @@ class TestMeanReversionStrategy:
         strategy = MeanReversionStrategy(lookback_window=20, entry_threshold=1.5)
         dates = pd.date_range(start="2023-01-01", periods=200, freq="B")
         # 先稳定再突然下跌，下跌后价格继续波动（确保rolling_std非零）
-        close = np.concatenate([
-            np.ones(100) * 100,  # 稳定期
-            np.ones(5) * 80,     # 突然下跌
-            80 + np.random.randn(95) * 2,  # 下跌后继续波动
-        ])
-        df = pd.DataFrame({
-            "close": close,
-            "open": close,
-            "high": close + 1,
-            "low": close - 1,
-            "volume": 1000000,
-        }, index=dates)
+        close = np.concatenate(
+            [
+                np.ones(100) * 100,  # 稳定期
+                np.ones(5) * 80,  # 突然下跌
+                80 + np.random.randn(95) * 2,  # 下跌后继续波动
+            ]
+        )
+        df = pd.DataFrame(
+            {
+                "close": close,
+                "open": close,
+                "high": close + 1,
+                "low": close - 1,
+                "volume": 1000000,
+            },
+            index=dates,
+        )
         signals = strategy.generate_signals(df)
         # 下跌后应有买入信号（zscore < -entry_threshold）
         assert (signals == 1).any()
@@ -143,13 +154,16 @@ class TestMomentumStrategy:
         strategy = MomentumStrategy(momentum_window=20)
         dates = pd.date_range(start="2023-01-01", periods=100, freq="B")
         close = 100 + np.arange(100) * 0.5  # 持续上涨
-        df = pd.DataFrame({
-            "close": close,
-            "open": close,
-            "high": close + 1,
-            "low": close - 1,
-            "volume": 1000000,
-        }, index=dates)
+        df = pd.DataFrame(
+            {
+                "close": close,
+                "open": close,
+                "high": close + 1,
+                "low": close - 1,
+                "volume": 1000000,
+            },
+            index=dates,
+        )
         signals = strategy.generate_signals(df)
         # 上涨趋势中应有买入信号
         assert (signals.iloc[-30:] == 1).any()
@@ -159,13 +173,16 @@ class TestMomentumStrategy:
         strategy = MomentumStrategy(momentum_window=20)
         dates = pd.date_range(start="2023-01-01", periods=100, freq="B")
         close = 200 - np.arange(100) * 0.5  # 持续下跌
-        df = pd.DataFrame({
-            "close": close,
-            "open": close,
-            "high": close + 1,
-            "low": close - 1,
-            "volume": 1000000,
-        }, index=dates)
+        df = pd.DataFrame(
+            {
+                "close": close,
+                "open": close,
+                "high": close + 1,
+                "low": close - 1,
+                "volume": 1000000,
+            },
+            index=dates,
+        )
         signals = strategy.generate_signals(df)
         # 下跌趋势中应有卖出信号
         assert (signals.iloc[-30:] == -1).any()

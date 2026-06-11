@@ -8,7 +8,7 @@
 - 公式验证（allowed, disallowed, syntax error）
 - 复杂公式编译与执行验证
 """
-import pytest
+
 import numpy as np
 import pandas as pd
 
@@ -209,7 +209,7 @@ class TestCompileStatFunctions:
         }
         code = compiler.compile_formula(tree)
         # 默认窗口为20
-        assert 'rolling(20)' in code
+        assert "rolling(20)" in code
         assert 'df["close"]' in code
 
     def test_compile_zscore_custom_window(self):
@@ -224,7 +224,7 @@ class TestCompileStatFunctions:
             ],
         }
         code = compiler.compile_formula(tree)
-        assert 'rolling(10)' in code
+        assert "rolling(10)" in code
         assert 'df["close"]' in code
 
 
@@ -277,15 +277,18 @@ class TestCompileComplexFormula:
         assert code == 'safe_series_divide(df["close"], SMA(df["close"], timeperiod=20))'
 
         # 创建测试数据并执行
-        df = pd.DataFrame({
-            "close": np.random.seed(42) or np.cumsum(np.random.randn(50)) + 100,
-        })
+        df = pd.DataFrame(
+            {
+                "close": np.random.seed(42) or np.cumsum(np.random.randn(50)) + 100,
+            }
+        )
 
         # 模拟 SMA 函数（使用 pandas rolling mean）
         def SMA(series, timeperiod=20):
             return series.rolling(window=timeperiod).mean()
 
         from backend.utils.safe_math import safe_series_divide
+
         local_vars = {"df": df, "SMA": SMA, "np": np, "safe_series_divide": safe_series_divide}
         result = eval(code, {"__builtins__": {}}, local_vars)
 

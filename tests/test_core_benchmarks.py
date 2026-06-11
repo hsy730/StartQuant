@@ -12,15 +12,15 @@
 运行方式：
   pytest tests/test_core_benchmarks.py -v
 """
+
 import time
 import numpy as np
 import pandas as pd
-import pytest
-
 
 # ============================================================================
 # 辅助工具：生成测试数据
 # ============================================================================
+
 
 def make_factor_series(n=500, seed=42, with_outliers=True):
     """生成模拟因子值序列"""
@@ -52,13 +52,15 @@ def make_ohlcv_df(n=500, seed=42):
     """生成模拟OHLCV数据"""
     rng = np.random.RandomState(seed)
     close = 10 + np.cumsum(rng.randn(n) * 0.1)
-    return pd.DataFrame({
-        "open": close + rng.randn(n) * 0.05,
-        "high": close + abs(rng.randn(n) * 0.1),
-        "low": close - abs(rng.randn(n) * 0.1),
-        "close": close,
-        "volume": rng.randint(100000, 10000000, n).astype(float),
-    })
+    return pd.DataFrame(
+        {
+            "open": close + rng.randn(n) * 0.05,
+            "high": close + abs(rng.randn(n) * 0.1),
+            "low": close - abs(rng.randn(n) * 0.1),
+            "close": close,
+            "volume": rng.randint(100000, 10000000, n).astype(float),
+        }
+    )
 
 
 def make_cross_sectional_df(n_stocks=50, n_dates=100, seed=42):
@@ -69,21 +71,24 @@ def make_cross_sectional_df(n_stocks=50, n_dates=100, seed=42):
     for stock_i in range(n_stocks):
         stock_code = f"{600000 + stock_i:06d}"
         for date in dates:
-            rows.append({
-                "date": date,
-                "stock_code": stock_code,
-                "factor_value": rng.randn() * 0.05,
-                "market_cap": np.exp(rng.randn() * 2 + 20),
-                "industry": f"IND_{rng.randint(0, 5)}",
-                "close": 10 + rng.randn() * 0.5,
-                "return": rng.randn() * 0.02,
-            })
+            rows.append(
+                {
+                    "date": date,
+                    "stock_code": stock_code,
+                    "factor_value": rng.randn() * 0.05,
+                    "market_cap": np.exp(rng.randn() * 2 + 20),
+                    "industry": f"IND_{rng.randint(0, 5)}",
+                    "close": 10 + rng.randn() * 0.5,
+                    "return": rng.randn() * 0.02,
+                }
+            )
     return pd.DataFrame(rows)
 
 
 # ============================================================================
 # 模块1: 数据预处理基准测试
 # ============================================================================
+
 
 class TestPreprocessingPipeline:
     """预处理管道正确性与性能基准"""
@@ -95,6 +100,7 @@ class TestPreprocessingPipeline:
             PreprocessingConfig,
             WinsorizeMethod,
         )
+
         data = make_factor_series(with_outliers=True)
         pipeline = FactorPreprocessingPipeline(
             config=PreprocessingConfig(winsorize_method=WinsorizeMethod.MAD, winsorize_n_sigma=3.0)
@@ -116,6 +122,7 @@ class TestPreprocessingPipeline:
             PreprocessingConfig,
             WinsorizeMethod,
         )
+
         # 构造MAD=0的数据（超过50%的值相同）
         data = pd.Series([1.0] * 80 + [2.0, 3.0, -1.0, -2.0] * 5)
         pipeline = FactorPreprocessingPipeline(
@@ -132,6 +139,7 @@ class TestPreprocessingPipeline:
             PreprocessingConfig,
             WinsorizeMethod,
         )
+
         data = pd.Series([5.0] * 100)
         pipeline = FactorPreprocessingPipeline(
             config=PreprocessingConfig(winsorize_method=WinsorizeMethod.MAD, winsorize_n_sigma=3.0)
@@ -146,6 +154,7 @@ class TestPreprocessingPipeline:
             PreprocessingConfig,
             WinsorizeMethod,
         )
+
         data = make_factor_series(with_outliers=True)
         pipeline = FactorPreprocessingPipeline(
             config=PreprocessingConfig(
@@ -163,6 +172,7 @@ class TestPreprocessingPipeline:
             PreprocessingConfig,
             WinsorizeMethod,
         )
+
         data = make_factor_series(with_outliers=True)
         pipeline = FactorPreprocessingPipeline(
             config=PreprocessingConfig(winsorize_method=WinsorizeMethod.STD, winsorize_n_sigma=3.0)
@@ -173,6 +183,7 @@ class TestPreprocessingPipeline:
     def test_market_cap_neutralization_reduces_correlation(self):
         """市值中性化应显著降低因子与市值的相关性"""
         from backend.services.factor_preprocessing_pipeline import FactorPreprocessingPipeline, PreprocessingConfig
+
         n = 500
         factor = make_factor_series(n)
         market_cap = make_market_cap_series(n)
@@ -187,13 +198,14 @@ class TestPreprocessingPipeline:
         corr_before = np.corrcoef(factor, np.log(market_cap))[0, 1]
         valid = result.notna() & market_cap.notna() & (market_cap > 0)
         corr_after = np.corrcoef(result[valid], np.log(market_cap[valid]))[0, 1] if valid.sum() > 10 else 0
-        assert abs(corr_after) < abs(corr_before) * 0.3, (
-            f"市值中性化后相关性应降低: before={corr_before:.4f}, after={corr_after:.4f}"
-        )
+        assert (
+            abs(corr_after) < abs(corr_before) * 0.3
+        ), f"市值中性化后相关性应降低: before={corr_before:.4f}, after={corr_after:.4f}"
 
     def test_industry_neutralization_reduces_industry_effect(self):
         """行业中性化应消除行业间系统性差异"""
         from backend.services.factor_preprocessing_pipeline import FactorPreprocessingPipeline, PreprocessingConfig
+
         n = 500
         factor = make_factor_series(n)
         industry = make_industry_series(n, n_industries=5)
@@ -215,6 +227,7 @@ class TestPreprocessingPipeline:
     def test_joint_neutralization(self):
         """联合回归中性化应同时消除市值和行业效应"""
         from backend.services.factor_preprocessing_pipeline import FactorPreprocessingPipeline, PreprocessingConfig
+
         n = 500
         factor = make_factor_series(n)
         market_cap = make_market_cap_series(n)
@@ -233,28 +246,39 @@ class TestPreprocessingPipeline:
 
     def test_zscore_standardization(self):
         """Z-score标准化后均值≈0，标准差≈1"""
-        from backend.services.factor_preprocessing_pipeline import FactorPreprocessingPipeline, PreprocessingConfig, StandardizeMethod
-        data = make_factor_series()
-        pipeline = FactorPreprocessingPipeline(
-            config=PreprocessingConfig(standardize_method=StandardizeMethod.ZSCORE)
+        from backend.services.factor_preprocessing_pipeline import (
+            FactorPreprocessingPipeline,
+            PreprocessingConfig,
+            StandardizeMethod,
         )
+
+        data = make_factor_series()
+        pipeline = FactorPreprocessingPipeline(config=PreprocessingConfig(standardize_method=StandardizeMethod.ZSCORE))
         result = pipeline._standardize(data)
         assert abs(result.mean()) < 0.01, f"Z-score后均值={result.mean():.4f}，应接近0"
         assert abs(result.std() - 1.0) < 0.05, f"Z-score后标准差={result.std():.4f}，应接近1"
 
     def test_rank_standardization(self):
         """Rank标准化后值在[0,1]区间"""
-        from backend.services.factor_preprocessing_pipeline import FactorPreprocessingPipeline, PreprocessingConfig, StandardizeMethod
-        data = make_factor_series()
-        pipeline = FactorPreprocessingPipeline(
-            config=PreprocessingConfig(standardize_method=StandardizeMethod.RANK)
+        from backend.services.factor_preprocessing_pipeline import (
+            FactorPreprocessingPipeline,
+            PreprocessingConfig,
+            StandardizeMethod,
         )
+
+        data = make_factor_series()
+        pipeline = FactorPreprocessingPipeline(config=PreprocessingConfig(standardize_method=StandardizeMethod.RANK))
         result = pipeline._standardize(data)
         assert result.min() >= 0 and result.max() <= 1, "Rank标准化后值应在[0,1]"
 
     def test_median_mad_standardization(self):
         """Median-MAD标准化应抗异常值"""
-        from backend.services.factor_preprocessing_pipeline import FactorPreprocessingPipeline, PreprocessingConfig, StandardizeMethod
+        from backend.services.factor_preprocessing_pipeline import (
+            FactorPreprocessingPipeline,
+            PreprocessingConfig,
+            StandardizeMethod,
+        )
+
         data = make_factor_series(with_outliers=True)
         pipeline = FactorPreprocessingPipeline(
             config=PreprocessingConfig(standardize_method=StandardizeMethod.MEDIAN_MAD)
@@ -264,7 +288,8 @@ class TestPreprocessingPipeline:
 
     def test_full_pipeline_end_to_end(self):
         """完整管道端到端测试"""
-        from backend.services.factor_preprocessing_pipeline import FactorPreprocessingPipeline, PreprocessingConfig
+        from backend.services.factor_preprocessing_pipeline import FactorPreprocessingPipeline
+
         n = 500
         factor = make_factor_series(n)
         market_cap = make_market_cap_series(n)
@@ -278,6 +303,7 @@ class TestPreprocessingPipeline:
     def test_missing_value_handling(self):
         """缺失值处理应正确工作"""
         from backend.services.factor_preprocessing_pipeline import FactorPreprocessingPipeline, PreprocessingConfig
+
         data = make_factor_series(n=200)
         data.iloc[10:20] = np.nan  # 注入10个NaN
         assert data.isna().sum() == 10
@@ -295,7 +321,8 @@ class TestPreprocessingPipeline:
 
     def test_performance_large_dataset(self):
         """性能基准：100万样本处理应<2秒"""
-        from backend.services.factor_preprocessing_pipeline import FactorPreprocessingPipeline, PreprocessingConfig
+        from backend.services.factor_preprocessing_pipeline import FactorPreprocessingPipeline
+
         n = 1_000_000
         rng = np.random.RandomState(42)
         factor = pd.Series(rng.randn(n) * 0.05 + 0.01)
@@ -314,12 +341,14 @@ class TestPreprocessingPipeline:
 # 模块2: 因子计算基准测试
 # ============================================================================
 
+
 class TestFactorCalculator:
     """因子计算器正确性基准"""
 
     def test_cross_function_operator_precedence(self):
         """CROSS函数应正确检测金叉（Bug#2修复验证）"""
         from backend.services.factor_service import FactorCalculator
+
         calc = FactorCalculator()
         # 构造明确的金叉场景：x从下方穿越y
         x = pd.Series([1, 2, 3, 2, 1], dtype=float)
@@ -328,13 +357,14 @@ class TestFactorCalculator:
         result = cross_func(x, y)
         # 第2个位置(索引1): x(2)不大于y(2), 不算金叉
         # 第3个位置(索引2): x(3)>y(2)且x.shift(1)(2)<=y.shift(1)(2) → 金叉!
-        assert result.iloc[2] == True, "索引2应为金叉点"
-        assert result.iloc[0] == False
-        assert result.iloc[3] == False
+        assert result.iloc[2], "索引2应为金叉点"
+        assert not result.iloc[0]
+        assert not result.iloc[3]
 
     def test_cross_function_with_scalars(self):
         """CROSS函数在非Series输入时也应正确工作"""
         from backend.services.factor_service import FactorCalculator
+
         calc = FactorCalculator()
         cross_func = calc.mylanguage_funcs["CROSS"]
         x = pd.Series([1, 2, 3, 2, 1], dtype=float)
@@ -345,6 +375,7 @@ class TestFactorCalculator:
     def test_const_function_default_length(self):
         """CONST函数不指定length时应返回标量（Bug#5修复验证）"""
         from backend.services.factor_service import FactorCalculator
+
         calc = FactorCalculator()
         const_func = calc.mylanguage_funcs["CONST"]
         # 不指定length，应返回标量
@@ -359,6 +390,7 @@ class TestFactorCalculator:
     def test_ref_function(self):
         """REF函数应正确引用N日前的值"""
         from backend.services.factor_service import FactorCalculator
+
         calc = FactorCalculator()
         ref_func = calc.mylanguage_funcs["REF"]
         s = pd.Series([10, 20, 30, 40, 50], dtype=float)
@@ -370,6 +402,7 @@ class TestFactorCalculator:
     def test_hhv_llv_functions(self):
         """HHV/LLV应正确计算N日最高/最低值"""
         from backend.services.factor_service import FactorCalculator
+
         calc = FactorCalculator()
         hhv = calc.mylanguage_funcs["HHV"]
         llv = calc.mylanguage_funcs["LLV"]
@@ -380,6 +413,7 @@ class TestFactorCalculator:
     def test_barslast_function(self):
         """BARSLAST应正确计算距上次条件满足的周期数"""
         from backend.services.factor_service import FactorCalculator
+
         calc = FactorCalculator()
         barslast = calc.mylanguage_funcs["BARSLAST"]
         condition = pd.Series([True, False, False, True, False, False, False])
@@ -393,6 +427,7 @@ class TestFactorCalculator:
     def test_if_function(self):
         """IF条件函数应正确工作"""
         from backend.services.factor_service import FactorCalculator
+
         calc = FactorCalculator()
         if_func = calc.mylanguage_funcs["IF"]
         cond = pd.Series([True, False, True, False])
@@ -402,6 +437,7 @@ class TestFactorCalculator:
     def test_expression_calculation(self):
         """表达式形式的因子计算应正确工作"""
         from backend.services.factor_service import FactorCalculator
+
         calc = FactorCalculator()
         df = make_ohlcv_df()
         result = calc.calculate(df, "close / SMA(close, timeperiod=20)")
@@ -411,6 +447,7 @@ class TestFactorCalculator:
     def test_performance_factor_calculation(self):
         """性能基准：单因子x100股票x250天应<2秒"""
         from backend.services.factor_service import FactorCalculator
+
         calc = FactorCalculator()
         df = make_ohlcv_df(n=250)
         start = time.time()
@@ -425,23 +462,31 @@ class TestFactorCalculator:
 # 模块3: 因子分析基准测试
 # ============================================================================
 
+
 class TestAnalysisService:
     """因子分析正确性基准"""
 
     def test_calculate_ic_ir_does_not_modify_input(self):
         """calculate_ic_ir不应修改输入数据（Bug#3修复验证）"""
         from backend.services.analysis_service import AnalysisService
+
         n = 200
         dates = pd.date_range("2023-01-01", periods=n, freq="B")
         factor_data = {
-            "600000": pd.DataFrame({
-                "close": 10 + np.random.randn(n).cumsum() * 0.1,
-                "factor1": np.random.randn(n) * 0.05,
-            }, index=dates),
-            "600001": pd.DataFrame({
-                "close": 10 + np.random.randn(n).cumsum() * 0.1,
-                "factor1": np.random.randn(n) * 0.05,
-            }, index=dates),
+            "600000": pd.DataFrame(
+                {
+                    "close": 10 + np.random.randn(n).cumsum() * 0.1,
+                    "factor1": np.random.randn(n) * 0.05,
+                },
+                index=dates,
+            ),
+            "600001": pd.DataFrame(
+                {
+                    "close": 10 + np.random.randn(n).cumsum() * 0.1,
+                    "factor1": np.random.randn(n) * 0.05,
+                },
+                index=dates,
+            ),
         }
         # 记录原始列
         original_cols_0 = set(factor_data["600000"].columns)
@@ -455,14 +500,13 @@ class TestAnalysisService:
             pass  # alphalens可能因数据质量失败，但不应影响副作用检测
 
         # 验证输入未被修改
-        assert set(factor_data["600000"].columns) == original_cols_0, (
-            "calculate_ic_ir不应修改输入factor_data的列"
-        )
+        assert set(factor_data["600000"].columns) == original_cols_0, "calculate_ic_ir不应修改输入factor_data的列"
         assert set(factor_data["600001"].columns) == original_cols_1
 
     def test_rolling_ir_no_inf(self):
         """rolling_ir不应产生inf值（Bug#4修复验证）"""
         from backend.services.analysis_service import AnalysisService
+
         service = AnalysisService()
         ic_series = {"factor1": pd.Series([0.0] * 100)}
         result = service._calculate_rolling_ir(ic_series, window=20)
@@ -474,14 +518,18 @@ class TestAnalysisService:
     def test_single_stock_ic_calculation(self):
         """单股票IC计算应返回有效结果"""
         from backend.services.analysis_service import AnalysisService
+
         n = 200
         dates = pd.date_range("2023-01-01", periods=n, freq="B")
         rng = np.random.RandomState(42)
         factor_data = {
-            "600000": pd.DataFrame({
-                "close": 10 + rng.randn(n).cumsum() * 0.1,
-                "factor1": rng.randn(n) * 0.05,
-            }, index=dates),
+            "600000": pd.DataFrame(
+                {
+                    "close": 10 + rng.randn(n).cumsum() * 0.1,
+                    "factor1": rng.randn(n) * 0.05,
+                },
+                index=dates,
+            ),
         }
         service = AnalysisService()
         # calculate_ic_ir会自动添加future_return列
@@ -495,19 +543,22 @@ class TestAnalysisService:
     def test_lookahead_bias_detector_safe_factor(self):
         """未来函数检测器对正常因子应返回安全结果"""
         from backend.services.lookahead_bias_detector import LookaheadBiasDetector, BiasRiskLevel
+
         rng = np.random.RandomState(42)
         n = 500
         factor = pd.Series(rng.randn(n) * 0.05, index=pd.date_range("2023-01-01", periods=n, freq="B"))
         returns = pd.Series(rng.randn(n) * 0.02, index=factor.index)
         detector = LookaheadBiasDetector()
         result = detector.detect(factor, returns, factor_name="normal_factor")
-        assert result.risk_level in (BiasRiskLevel.SAFE, BiasRiskLevel.LOW), (
-            f"正常因子风险等级应为SAFE/LOW，实际为{result.risk_level}"
-        )
+        assert result.risk_level in (
+            BiasRiskLevel.SAFE,
+            BiasRiskLevel.LOW,
+        ), f"正常因子风险等级应为SAFE/LOW，实际为{result.risk_level}"
 
     def test_lookahead_bias_detector_biased_factor(self):
         """未来函数检测器对有泄漏的因子应返回高风险"""
         from backend.services.lookahead_bias_detector import LookaheadBiasDetector, BiasRiskLevel
+
         rng = np.random.RandomState(42)
         n = 500
         returns = pd.Series(rng.randn(n) * 0.02, index=pd.date_range("2023-01-01", periods=n, freq="B"))
@@ -515,25 +566,26 @@ class TestAnalysisService:
         factor = returns * 0.8 + rng.randn(n) * 0.001
         detector = LookaheadBiasDetector()
         result = detector.detect(factor, returns, factor_name="biased_factor")
-        assert result.risk_level in (BiasRiskLevel.HIGH, BiasRiskLevel.CRITICAL), (
-            f"有泄漏的因子风险等级应为HIGH/CRITICAL，实际为{result.risk_level}"
-        )
+        assert result.risk_level in (
+            BiasRiskLevel.HIGH,
+            BiasRiskLevel.CRITICAL,
+        ), f"有泄漏的因子风险等级应为HIGH/CRITICAL，实际为{result.risk_level}"
 
     def test_lookahead_bias_cross_sectional(self):
         """横截面未来函数检测应正确工作"""
         from backend.services.lookahead_bias_detector import LookaheadBiasDetector
+
         df = make_cross_sectional_df(n_stocks=30, n_dates=100)
         factor_df = df[["date", "stock_code", "factor_value"]].rename(columns={"factor_value": "factor_val"})
         return_df = df[["date", "stock_code", "return"]]
         detector = LookaheadBiasDetector()
-        result = detector.detect_cross_sectional(
-            factor_df=factor_df, return_df=return_df, factor_name="factor_val"
-        )
+        result = detector.detect_cross_sectional(factor_df=factor_df, return_df=return_df, factor_name="factor_val")
         assert result.risk_score >= 0
 
     def test_weighted_ic_equal_weight(self):
         """等权加权IC应等于各因子IC的简单平均"""
         from backend.services.weighted_ic_service import WeightedICService, WeightedICConfig, WeightingMethod
+
         rng = np.random.RandomState(42)
         n = 200
         dates = pd.date_range("2023-01-01", periods=n, freq="B")
@@ -547,14 +599,13 @@ class TestAnalysisService:
         # 等权加权IC均值应接近两因子IC均值的平均
         expected_mean = (ic_dict["f1"].mean() + ic_dict["f2"].mean()) / 2
         actual_mean = result["weighted_ic"]["mean"]
-        assert abs(actual_mean - expected_mean) < 0.01, (
-            f"等权IC均值={actual_mean:.4f}，期望≈{expected_mean:.4f}"
-        )
+        assert abs(actual_mean - expected_mean) < 0.01, f"等权IC均值={actual_mean:.4f}，期望≈{expected_mean:.4f}"
 
 
 # ============================================================================
 # 模块4: 回测引擎基准测试
 # ============================================================================
+
 
 class TestBacktestService:
     """回测引擎正确性基准"""
@@ -562,6 +613,7 @@ class TestBacktestService:
     def test_calculate_metrics_basic(self):
         """基础指标计算应正确"""
         from backend.services.backtest_service import BacktestService
+
         service = BacktestService()
         # 构造已知收益序列
         returns = pd.Series([0.01, -0.005, 0.02, 0.015, -0.01] * 50)
@@ -574,6 +626,7 @@ class TestBacktestService:
     def test_calculate_metrics_empty_returns(self):
         """空收益序列应返回None指标（不可计算）"""
         from backend.services.backtest_service import BacktestService
+
         service = BacktestService()
         returns = pd.Series(dtype=float)
         metrics = service.calculate_metrics(returns)
@@ -583,6 +636,7 @@ class TestBacktestService:
     def test_drawdown_calculation(self):
         """回撤计算应正确（返回负值，与empyrical约定一致）"""
         from backend.services.backtest_service import BacktestService
+
         service = BacktestService()
         equity = pd.Series([100, 110, 105, 115, 100, 120])
         dd = service.calculate_drawdown(equity)
@@ -592,6 +646,7 @@ class TestBacktestService:
     def test_benchmark_metrics(self):
         """基准对比指标应正确"""
         from backend.services.backtest_service import BacktestService
+
         service = BacktestService()
         rng = np.random.RandomState(42)
         strategy_returns = pd.Series(rng.randn(252) * 0.01)
@@ -604,6 +659,7 @@ class TestBacktestService:
     def test_monthly_returns(self):
         """月度收益计算应正确"""
         from backend.services.backtest_service import BacktestService
+
         service = BacktestService()
         dates = pd.date_range("2023-01-01", periods=252, freq="B")
         returns = pd.Series(np.random.randn(252) * 0.01, index=dates)
@@ -615,6 +671,7 @@ class TestBacktestService:
     def test_performance_metrics_calculation(self):
         """性能基准：指标计算应快速"""
         from backend.services.backtest_service import BacktestService
+
         service = BacktestService()
         returns = pd.Series(np.random.randn(10000) * 0.01)
         start = time.time()
@@ -628,12 +685,14 @@ class TestBacktestService:
 # 模块5: 智能滑点检测基准测试
 # ============================================================================
 
+
 class TestSmartSlippageDetector:
     """智能滑点检测正确性基准"""
 
     def test_board_detection_main(self):
         """主板股票应正确识别"""
         from backend.services.smart_slippage_detector import SmartSlippageDetector, MarketBoard
+
         detector = SmartSlippageDetector()
         chars = detector.analyze_market(["600000", "000001", "600036"])
         assert chars.market_board == MarketBoard.MAIN
@@ -641,6 +700,7 @@ class TestSmartSlippageDetector:
     def test_board_detection_chinext(self):
         """创业板股票应正确识别"""
         from backend.services.smart_slippage_detector import SmartSlippageDetector, MarketBoard
+
         detector = SmartSlippageDetector()
         chars = detector.analyze_market(["300001", "300002", "300003"])
         assert chars.market_board == MarketBoard.CHINEXT
@@ -648,6 +708,7 @@ class TestSmartSlippageDetector:
     def test_board_detection_star(self):
         """科创板股票应正确识别"""
         from backend.services.smart_slippage_detector import SmartSlippageDetector, MarketBoard
+
         detector = SmartSlippageDetector()
         chars = detector.analyze_market(["688001", "688002", "688003"])
         assert chars.market_board == MarketBoard.STAR
@@ -655,6 +716,7 @@ class TestSmartSlippageDetector:
     def test_board_detection_beijing(self):
         """北交所股票应正确识别"""
         from backend.services.smart_slippage_detector import SmartSlippageDetector, MarketBoard
+
         detector = SmartSlippageDetector()
         chars = detector.analyze_market(["830001", "830002", "430001"])
         assert chars.market_board == MarketBoard.BSE
@@ -662,6 +724,7 @@ class TestSmartSlippageDetector:
     def test_board_detection_mixed(self):
         """混合板块无主导时应返回UNKNOWN"""
         from backend.services.smart_slippage_detector import SmartSlippageDetector, MarketBoard
+
         detector = SmartSlippageDetector()
         chars = detector.analyze_market(["600000", "300001", "688001"])
         assert chars.market_board == MarketBoard.UNKNOWN
@@ -669,30 +732,32 @@ class TestSmartSlippageDetector:
     def test_slippage_recommendation_range(self):
         """滑点推荐值应在合理范围内"""
         from backend.services.smart_slippage_detector import SmartSlippageDetector
+
         detector = SmartSlippageDetector()
         rec = detector.recommend_slippage(["600000", "600036"], strategy_turnover=12.0)
-        assert 0.0005 <= rec.recommended_slippage <= 0.01, (
-            f"推荐滑点{rec.recommended_slippage:.4f}超出合理范围[0.05%, 1%]"
-        )
+        assert (
+            0.0005 <= rec.recommended_slippage <= 0.01
+        ), f"推荐滑点{rec.recommended_slippage:.4f}超出合理范围[0.05%, 1%]"
         assert rec.conservative_slippage >= rec.recommended_slippage
         assert rec.aggressive_slippage <= rec.recommended_slippage
 
     def test_slippage_higher_for_illiquid(self):
         """低流动性股票应有更高滑点"""
         from backend.services.smart_slippage_detector import SmartSlippageDetector
+
         detector = SmartSlippageDetector()
         # 高流动性（大盘股）
         rec_high = detector.recommend_slippage(["600000", "600036"], strategy_turnover=6.0)
         # 使用市场数据模拟低流动性
-        low_liq_data = pd.DataFrame({
-            "market_cap": [1e8, 2e8],
-            "volume": [1000, 2000],
-            "amount": [1e5, 2e5],
-            "turnover_rate": [0.001, 0.002],
-        })
-        rec_low = detector.recommend_slippage(
-            ["830001", "830002"], strategy_turnover=6.0, market_data=low_liq_data
+        low_liq_data = pd.DataFrame(
+            {
+                "market_cap": [1e8, 2e8],
+                "volume": [1000, 2000],
+                "amount": [1e5, 2e5],
+                "turnover_rate": [0.001, 0.002],
+            }
         )
+        rec_low = detector.recommend_slippage(["830001", "830002"], strategy_turnover=6.0, market_data=low_liq_data)
         # 北交所+低流动性应比主板+高流动性有更高滑点
         assert rec_low.recommended_slippage >= rec_high.recommended_slippage * 0.8, (
             f"低流动性滑点({rec_low.recommended_slippage:.4f})应不低于"
@@ -704,12 +769,14 @@ class TestSmartSlippageDetector:
 # 模块6: 智能预处理检测基准测试
 # ============================================================================
 
+
 class TestSmartPreprocessingDetector:
     """智能预处理参数检测正确性基准"""
 
     def test_board_detection_in_detector(self):
         """智能检测器应正确识别市场板块"""
         from backend.services.smart_preprocessing_detector import SmartPreprocessingDetector, MarketBoard
+
         detector = SmartPreprocessingDetector()
         # 主板
         board = detector._detect_market_board(["600000", "000001", "600036"])
@@ -721,22 +788,30 @@ class TestSmartPreprocessingDetector:
     def test_recommend_config_has_required_keys(self):
         """推荐配置应包含所有必要参数"""
         from backend.services.smart_preprocessing_detector import SmartPreprocessingDetector
+
         detector = SmartPreprocessingDetector()
         n = 100
         dates = pd.date_range("2023-01-01", periods=n, freq="B")
         factor_data = {
-            "600000": pd.DataFrame({
-                "date": dates,
-                "factor1": np.random.randn(n) * 0.05,
-                "market_cap": np.exp(np.random.randn(n) * 2 + 20),
-                "industry": [f"IND_{np.random.randint(0, 5)}" for _ in range(n)],
-            }),
+            "600000": pd.DataFrame(
+                {
+                    "date": dates,
+                    "factor1": np.random.randn(n) * 0.05,
+                    "market_cap": np.exp(np.random.randn(n) * 2 + 20),
+                    "industry": [f"IND_{np.random.randint(0, 5)}" for _ in range(n)],
+                }
+            ),
         }
         rec = detector.recommend_config(factor_data, ["factor1"])
         required_keys = [
-            "winsorize_method", "winsorize_n_sigma",
-            "enable_market_cap_neutralization", "enable_industry_neutralization",
-            "standardize_method", "handle_missing", "min_samples", "cross_sectional",
+            "winsorize_method",
+            "winsorize_n_sigma",
+            "enable_market_cap_neutralization",
+            "enable_industry_neutralization",
+            "standardize_method",
+            "handle_missing",
+            "min_samples",
+            "cross_sectional",
         ]
         for key in required_keys:
             assert key in rec.config_dict, f"推荐配置缺少必要参数: {key}"
@@ -745,18 +820,21 @@ class TestSmartPreprocessingDetector:
     def test_fat_tail_detection_recommends_mad(self):
         """肥尾分布应推荐MAD法"""
         from backend.services.smart_preprocessing_detector import SmartPreprocessingDetector
+
         detector = SmartPreprocessingDetector()
         n = 500
         dates = pd.date_range("2023-01-01", periods=n, freq="B")
         # 生成肥尾数据（t分布）
         rng = np.random.RandomState(42)
         factor_data = {
-            "600000": pd.DataFrame({
-                "date": dates,
-                "factor1": rng.standard_t(df=3, size=n) * 0.05,  # 肥尾
-                "market_cap": np.exp(rng.randn(n) * 2 + 20),
-                "industry": [f"IND_{rng.randint(0, 5)}" for _ in range(n)],
-            }),
+            "600000": pd.DataFrame(
+                {
+                    "date": dates,
+                    "factor1": rng.standard_t(df=3, size=n) * 0.05,  # 肥尾
+                    "market_cap": np.exp(rng.randn(n) * 2 + 20),
+                    "industry": [f"IND_{rng.randint(0, 5)}" for _ in range(n)],
+                }
+            ),
         }
         rec = detector.recommend_config(factor_data, ["factor1"])
         assert rec.config_dict["winsorize_method"] == "mad", "肥尾分布应推荐MAD法"
@@ -766,19 +844,22 @@ class TestSmartPreprocessingDetector:
 # 边界情况测试
 # ============================================================================
 
+
 class TestEdgeCases:
     """边界情况与鲁棒性测试"""
 
     def test_empty_data(self):
         """空数据应安全处理"""
         from backend.services.factor_preprocessing_pipeline import FactorPreprocessingPipeline
+
         pipeline = FactorPreprocessingPipeline()
         result, stats = pipeline.process_single_factor(pd.Series(dtype=float))
         assert stats.get("skipped", False) or len(result) == 0
 
     def test_constant_data(self):
         """常数数据应安全处理"""
-        from backend.services.factor_preprocessing_pipeline import FactorPreprocessingPipeline, PreprocessingConfig
+        from backend.services.factor_preprocessing_pipeline import FactorPreprocessingPipeline
+
         pipeline = FactorPreprocessingPipeline()
         data = pd.Series([5.0] * 100)
         result, stats = pipeline.process_single_factor(data)
@@ -787,6 +868,7 @@ class TestEdgeCases:
     def test_inf_values(self):
         """无穷大值应安全处理"""
         from backend.services.factor_preprocessing_pipeline import FactorPreprocessingPipeline
+
         pipeline = FactorPreprocessingPipeline()
         data = pd.Series([1.0, 2.0, np.inf, -np.inf, 3.0] * 20)
         result, stats = pipeline.process_single_factor(data)
@@ -795,6 +877,7 @@ class TestEdgeCases:
     def test_all_nan_data(self):
         """全NaN数据应安全处理"""
         from backend.services.factor_preprocessing_pipeline import FactorPreprocessingPipeline
+
         pipeline = FactorPreprocessingPipeline()
         data = pd.Series([np.nan] * 100)
         result, stats = pipeline.process_single_factor(data)
@@ -803,6 +886,7 @@ class TestEdgeCases:
     def test_single_value_data(self):
         """单值数据应安全处理"""
         from backend.services.factor_preprocessing_pipeline import FactorPreprocessingPipeline
+
         pipeline = FactorPreprocessingPipeline()
         data = pd.Series([42.0])
         result, stats = pipeline.process_single_factor(data)
@@ -811,11 +895,12 @@ class TestEdgeCases:
     def test_very_large_values(self):
         """极大值应被正确截断"""
         from backend.services.factor_preprocessing_pipeline import (
-            FactorPreprocessingPipeline, PreprocessingConfig, WinsorizeMethod,
+            FactorPreprocessingPipeline,
+            PreprocessingConfig,
+            WinsorizeMethod,
         )
-        pipeline = FactorPreprocessingPipeline(
-            config=PreprocessingConfig(winsorize_method=WinsorizeMethod.MAD)
-        )
+
+        pipeline = FactorPreprocessingPipeline(config=PreprocessingConfig(winsorize_method=WinsorizeMethod.MAD))
         data = pd.Series([0.01, 0.02, 0.015, 1e10, -1e10, 0.012] * 20)
         result, stats = pipeline._winsorize(data)
         assert stats["clipped_count"] > 0, "极大值应被截断"
@@ -823,6 +908,7 @@ class TestEdgeCases:
     def test_neutralization_with_missing_market_cap(self):
         """缺少市值数据时中性化应安全跳过"""
         from backend.services.factor_preprocessing_pipeline import FactorPreprocessingPipeline
+
         pipeline = FactorPreprocessingPipeline()
         factor = make_factor_series()
         market_cap = pd.Series([np.nan] * len(factor))
@@ -833,6 +919,7 @@ class TestEdgeCases:
     def test_neutralization_with_single_industry(self):
         """仅1个行业时应跳过行业中性化"""
         from backend.services.factor_preprocessing_pipeline import FactorPreprocessingPipeline
+
         pipeline = FactorPreprocessingPipeline()
         factor = make_factor_series()
         industry = pd.Series(["ONLY_ONE"] * len(factor))

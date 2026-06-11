@@ -9,6 +9,7 @@ AST 沙箱安全单元测试
 
 项目安全规范：因子代码执行需要沙箱保护
 """
+
 import pytest
 
 from backend.services.factor_service import FactorCalculator

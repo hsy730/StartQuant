@@ -6,20 +6,21 @@
 2. empyrical risk_free 参数量纲修复（年化利率 → 日频利率）
 3. Sharpe/Sortino 除零保护
 """
+
 import pytest
 import numpy as np
 import pandas as pd
 from unittest.mock import patch, MagicMock
-import sys
-
 
 # ============================================================
 # 1. 缓存序列化/反序列化测试（直接测试方法，避免重导入链）
 # ============================================================
 
+
 def _get_analysis_service():
     """延迟导入 AnalysisService，避免模块级依赖缺失"""
     from backend.services.analysis_service import AnalysisService
+
     return AnalysisService()
 
 
@@ -32,6 +33,7 @@ class TestCacheSerializeDeserialize:
         # 我们手动创建一个轻量实例
         try:
             from backend.services.analysis_service import AnalysisService
+
             self.svc = AnalysisService()
         except ImportError:
             # 依赖缺失时，手动构造等价对象
@@ -47,11 +49,14 @@ class TestCacheSerializeDeserialize:
         dates = pd.date_range("2024-01-01", periods=n_rows, freq="D")
         for i in range(n_stocks):
             code = f"00000{i+1}"
-            df = pd.DataFrame({
-                "close": np.random.randn(n_rows).cumsum() + 100,
-                "factor_1": np.random.randn(n_rows),
-                "factor_2": np.random.randn(n_rows),
-            }, index=dates)
+            df = pd.DataFrame(
+                {
+                    "close": np.random.randn(n_rows).cumsum() + 100,
+                    "factor_1": np.random.randn(n_rows),
+                    "factor_2": np.random.randn(n_rows),
+                },
+                index=dates,
+            )
             factor_data[code] = df
         return factor_data
 
@@ -127,8 +132,10 @@ class TestCacheSerializeDeserialize:
         mock_cached = MagicMock()
         mock_cached.result_data = serialized
 
-        with patch("backend.services.analysis_service.AnalysisCacheRepository") as MockRepo, \
-             patch("backend.services.analysis_service.get_db") as mock_db:
+        with (
+            patch("backend.services.analysis_service.AnalysisCacheRepository") as MockRepo,
+            patch("backend.services.analysis_service.get_db") as mock_db,
+        ):
             mock_repo_instance = MagicMock()
             mock_repo_instance.get_by_key.return_value = mock_cached
             MockRepo.return_value = mock_repo_instance
@@ -168,6 +175,7 @@ class TestCacheSerializeDeserialize:
 # 2. risk_free 量纲修复测试
 # ============================================================
 
+
 class TestRiskFreeRateConversion:
     """empyrical risk_free 参数必须是日频利率，而非年化利率"""
 
@@ -184,8 +192,9 @@ class TestRiskFreeRateConversion:
         excess = returns - daily_rf
         expected_sharpe = excess.mean() / returns.std() * np.sqrt(252)
 
-        assert abs(metrics["sharpe_ratio"] - expected_sharpe) < 0.01, \
-            f"Sharpe {metrics['sharpe_ratio']:.6f} vs 期望 {expected_sharpe:.6f}"
+        assert (
+            abs(metrics["sharpe_ratio"] - expected_sharpe) < 0.01
+        ), f"Sharpe {metrics['sharpe_ratio']:.6f} vs 期望 {expected_sharpe:.6f}"
 
     def test_sharpe_not_extremely_negative_with_rf(self):
         """修复前：传入 rf=0.03 给 empyrical 会导致 Sharpe ≈ -48，修复后应为正常值"""
@@ -196,8 +205,7 @@ class TestRiskFreeRateConversion:
 
         metrics = calculate_risk_metrics(returns, risk_free_rate=0.03)
 
-        assert -5 < metrics["sharpe_ratio"] < 5, \
-            f"Sharpe {metrics['sharpe_ratio']:.2f} 异常，疑似 risk_free 量纲错误"
+        assert -5 < metrics["sharpe_ratio"] < 5, f"Sharpe {metrics['sharpe_ratio']:.2f} 异常，疑似 risk_free 量纲错误"
 
     def test_sharpe_rf_zero_unchanged(self):
         """risk_free=0 时，结果应与 empyrical 默认行为一致"""
@@ -209,7 +217,8 @@ class TestRiskFreeRateConversion:
         metrics = calculate_risk_metrics(returns, risk_free_rate=0.0)
 
         import empyrical
-        expected = float(empyrical.sharpe_ratio(returns.values, risk_free=0, period='daily', annualization=252))
+
+        expected = float(empyrical.sharpe_ratio(returns.values, risk_free=0, period="daily", annualization=252))
         assert abs(metrics["sharpe_ratio"] - expected) < 1e-6
 
     def test_sortino_rf_conversion(self):
@@ -231,6 +240,7 @@ class TestRiskFreeRateConversion:
         class TestStrategy(BaseStrategy):
             def generate_signals(self, df):
                 return pd.Series(0, index=df.index)
+
             def calculate_weights(self, df, signals):
                 return pd.Series(0.0, index=df.index)
 
@@ -240,8 +250,7 @@ class TestRiskFreeRateConversion:
         strategy = TestStrategy()
         metrics = strategy.calculate_metrics(returns, risk_free_rate=0.03)
 
-        assert -5 < metrics["sharpe_ratio"] < 5, \
-            f"BaseStrategy Sharpe {metrics['sharpe_ratio']:.2f} 异常"
+        assert -5 < metrics["sharpe_ratio"] < 5, f"BaseStrategy Sharpe {metrics['sharpe_ratio']:.2f} 异常"
 
     def test_factor_return_sharpe_rf_conversion(self):
         """FactorReturnAnalysisService._calculate_sharpe_ratio 的 risk_free 转换"""
@@ -262,8 +271,8 @@ class TestRiskFreeRateConversion:
         np.random.seed(42)
         returns = pd.Series(np.random.randn(252) * 0.01 + 0.0005).values
 
-        correct = float(empyrical.sharpe_ratio(returns, risk_free=0.03/252, period='daily', annualization=252))
-        wrong = float(empyrical.sharpe_ratio(returns, risk_free=0.03, period='daily', annualization=252))
+        correct = float(empyrical.sharpe_ratio(returns, risk_free=0.03 / 252, period="daily", annualization=252))
+        wrong = float(empyrical.sharpe_ratio(returns, risk_free=0.03, period="daily", annualization=252))
 
         # 正确值应在正常范围
         assert -5 < correct < 5
@@ -274,6 +283,7 @@ class TestRiskFreeRateConversion:
 # ============================================================
 # 3. Sharpe/Sortino 除零保护测试
 # ============================================================
+
 
 class TestSharpeZeroProtection:
     """标准差为零时的 Sharpe/Sortino 保护"""
@@ -335,6 +345,7 @@ class TestSharpeZeroProtection:
 # 4. vectorbt_backtest_service rf 转换测试
 # ============================================================
 
+
 class TestVectorBtRfConversion:
     """vectorbt_backtest_service 的 risk_free 转换"""
 
@@ -342,15 +353,19 @@ class TestVectorBtRfConversion:
         """验证 vectorbt_backtest_service 通过 calculate_risk_metrics 使用日频 rf"""
         from backend.services.risk_metrics import calculate_risk_metrics
         import inspect
+
         # 验证 calculate_risk_metrics 中 rf 转换逻辑
         source = inspect.getsource(calculate_risk_metrics)
-        assert 'risk_free_rate / annual_trading_days' in source or 'risk_free_rate/annual_trading_days' in source, \
-            "calculate_risk_metrics 中 risk_free 未除以 annual_trading_days"
+        assert (
+            "risk_free_rate / annual_trading_days" in source or "risk_free_rate/annual_trading_days" in source
+        ), "calculate_risk_metrics 中 risk_free 未除以 annual_trading_days"
 
     def test_vectorbt_sortino_uses_daily_rf(self):
         """验证 calculate_risk_metrics 中 sortino 使用日频 required_return"""
         from backend.services.risk_metrics import calculate_risk_metrics
         import inspect
+
         source = inspect.getsource(calculate_risk_metrics)
-        assert 'risk_free_rate / annual_trading_days' in source or 'risk_free_rate/annual_trading_days' in source, \
-            "calculate_risk_metrics 中 required_return 未除以 annual_trading_days"
+        assert (
+            "risk_free_rate / annual_trading_days" in source or "risk_free_rate/annual_trading_days" in source
+        ), "calculate_risk_metrics 中 required_return 未除以 annual_trading_days"

@@ -11,17 +11,17 @@ AlphaMiner/StockRanker 替代功能 — 综合单元测试
 - 覆盖正常流程、边界情况、错误处理
 - 验证各服务间的接口兼容性
 """
+
 import pytest
 import numpy as np
 import pandas as pd
 import tempfile
 import shutil
-from pathlib import Path
-
 
 # =====================================================================
 #  1. ModelRegistry 测试（无外部依赖，最先运行）
 # =====================================================================
+
 
 class TestModelRegistryBasic:
     """ModelRegistry 基础 CRUD 操作"""
@@ -30,6 +30,7 @@ class TestModelRegistryBasic:
     def setup_registry(self, tmp_path):
         """每个测试用临时目录创建 registry"""
         from backend.services.model_registry import ModelRegistry
+
         self.registry = ModelRegistry(base_path=str(tmp_path / "models"))
         self.tmp_dir = tmp_path
 
@@ -60,9 +61,7 @@ class TestModelRegistryBasic:
         loaded = self.registry.load(model_id)
         assert loaded is not None
         # 验证预测一致性
-        np.testing.assert_array_almost_equal(
-            model.predict(X[:3]), loaded.predict(X[:3])
-        )
+        np.testing.assert_array_almost_equal(model.predict(X[:3]), loaded.predict(X[:3]))
 
     def test_list_models(self):
         """列出所有模型"""
@@ -129,7 +128,8 @@ class TestModelRegistryBasic:
         X, y = make_regression(n_samples=20, n_features=2, random_state=42)
         m = LinearRegression().fit(X, y)
         model_id = self.registry.save(
-            m, metadata={},
+            m,
+            metadata={},
             framework="sklearn",
             model_name="promotable",
             stage="development",
@@ -189,6 +189,7 @@ class TestModelRegistryEdgeCases:
     @pytest.fixture(autouse=True)
     def setup_registry(self, tmp_path):
         from backend.services.model_registry import ModelRegistry
+
         self.registry = ModelRegistry(base_path=str(tmp_path / "edge_models"))
 
     def test_empty_registry(self):
@@ -205,7 +206,8 @@ class TestModelRegistryEdgeCases:
         X, y = make_regression(n_samples=20, n_features=2, random_state=42)
         m = LinearRegression().fit(X, y)
         model_id = self.registry.save(
-            m, metadata={},
+            m,
+            metadata={},
             framework="sklearn",
             model_name="model-with_special.chars_v2.0",
         )
@@ -218,6 +220,7 @@ class TestModelRegistryEdgeCases:
 #  2. FactorOrchestrator 测试（使用 mock 数据）
 # =====================================================================
 
+
 class TestFactorOrchestrator:
     """FactorOrchestrator 一键验证流水线测试"""
 
@@ -227,20 +230,22 @@ class TestFactorOrchestrator:
             FactorOrchestrator,
             OrchestratorConfig,
         )
+
         # 关闭耗时模块，加速测试
         self.config = OrchestratorConfig(
             enable_lookahead_detection=True,
             enable_ic_analysis=True,
-            enable_alphalens=False,   # 需要 alphalens 库，跳过
+            enable_alphalens=False,  # 需要 alphalens 库，跳过
             enable_quantile_backtest=False,  # 需要完整因子数据，跳过
-            enable_tear_sheet=False,         # 需要完整因子数据，跳过
-            enable_shap_analysis=False,      # 耗时，跳过
+            enable_tear_sheet=False,  # 需要完整因子数据，跳过
+            enable_shap_analysis=False,  # 耗时，跳过
         )
         self.orchestrator = FactorOrchestrator(config=self.config)
 
     def test_derive_factor_name(self):
         """从表达式派生因子名称"""
         from backend.services.factor_orchestrator_service import FactorOrchestrator
+
         name = FactorOrchestrator._derive_factor_name("RSI(close, 14) * volume / MA(volume, 20)")
         assert len(name) > 0
         assert "(" not in name or name.count("(") == name.count(")")
@@ -248,21 +253,14 @@ class TestFactorOrchestrator:
     def test_determine_overall_status_all_passed(self):
         """全部通过时状态为 PASSED"""
         from backend.services.factor_orchestrator_service import (
-            FactorOrchestrator,
             PipelineStageResult,
             PipelineStatus,
         )
 
         stages = {
-            "compute_factor": PipelineStageResult(
-                stage_name="compute_factor", status=PipelineStatus.PASSED
-            ),
-            "lookahead_detection": PipelineStageResult(
-                stage_name="lookahead_detection", status=PipelineStatus.PASSED
-            ),
-            "ic_analysis": PipelineStageResult(
-                stage_name="ic_analysis", status=PipelineStatus.PASSED
-            ),
+            "compute_factor": PipelineStageResult(stage_name="compute_factor", status=PipelineStatus.PASSED),
+            "lookahead_detection": PipelineStageResult(stage_name="lookahead_detection", status=PipelineStatus.PASSED),
+            "ic_analysis": PipelineStageResult(stage_name="ic_analysis", status=PipelineStatus.PASSED),
         }
 
         verdict, summary = self.orchestrator._determine_overall_status(stages)
@@ -278,11 +276,13 @@ class TestFactorOrchestrator:
 
         stages = {
             "lookahead_detection": PipelineStageResult(
-                stage_name="lookahead_detection", status=PipelineStatus.REJECTED,
+                stage_name="lookahead_detection",
+                status=PipelineStatus.REJECTED,
                 result={"has_bias": True, "risk_level": "critical"},
             ),
             "ic_analysis": PipelineStageResult(
-                stage_name="ic_analysis", status=PipelineStatus.PASSED,
+                stage_name="ic_analysis",
+                status=PipelineStatus.PASSED,
             ),
         }
 
@@ -299,11 +299,13 @@ class TestFactorOrchestrator:
 
         stages = {
             "compute_factor": PipelineStageResult(
-                stage_name="compute_factor", status=PipelineStatus.FAILED,
+                stage_name="compute_factor",
+                status=PipelineStatus.FAILED,
                 error="数据不足",
             ),
             "lookahead_detection": PipelineStageResult(
-                stage_name="lookahead_detection", status=PipelineStatus.SKIPPED,
+                stage_name="lookahead_detection",
+                status=PipelineStatus.SKIPPED,
             ),
         }
 
@@ -318,21 +320,11 @@ class TestFactorOrchestrator:
         )
 
         stages = {
-            "lookahead_detection": PipelineStageResult(
-                stage_name="lookahead_detection", status=PipelineStatus.PASSED
-            ),
-            "ic_analysis": PipelineStageResult(
-                stage_name="ic_analysis", status=PipelineStatus.PASSED
-            ),
-            "alphalens_analysis": PipelineStageResult(
-                stage_name="alphalens_analysis", status=PipelineStatus.PASSED
-            ),
-            "quantile_backtest": PipelineStageResult(
-                stage_name="quantile_backtest", status=PipelineStatus.PASSED
-            ),
-            "tear_sheet": PipelineStageResult(
-                stage_name="tear_sheet", status=PipelineStatus.PASSED
-            ),
+            "lookahead_detection": PipelineStageResult(stage_name="lookahead_detection", status=PipelineStatus.PASSED),
+            "ic_analysis": PipelineStageResult(stage_name="ic_analysis", status=PipelineStatus.PASSED),
+            "alphalens_analysis": PipelineStageResult(stage_name="alphalens_analysis", status=PipelineStatus.PASSED),
+            "quantile_backtest": PipelineStageResult(stage_name="quantile_backtest", status=PipelineStatus.PASSED),
+            "tear_sheet": PipelineStageResult(stage_name="tear_sheet", status=PipelineStatus.PASSED),
         }
         score = self.orchestrator._calculate_overall_score(stages)
         assert score > 80  # 全通过应 > 80 分
@@ -348,9 +340,7 @@ class TestFactorOrchestrator:
             "lookahead_detection": PipelineStageResult(
                 stage_name="lookahead_detection", status=PipelineStatus.REJECTED
             ),
-            "ic_analysis": PipelineStageResult(
-                stage_name="ic_analysis", status=PipelineStatus.PASSED
-            ),
+            "ic_analysis": PipelineStageResult(stage_name="ic_analysis", status=PipelineStatus.PASSED),
         }
         score = self.orchestrator._calculate_overall_score(stages)
         assert score < 50  # REJECTED 应显著拉低分数
@@ -411,6 +401,7 @@ class TestFactorOrchestrator:
             PipelineStageResult,
             PipelineStatus,
         )
+
         # 映射大写状态名到枚举值（测试中使用 PASSED/FAILED 等大写）
         status_map = {
             "PASSED": PipelineStatus.PASSED,
@@ -420,9 +411,7 @@ class TestFactorOrchestrator:
             "SKIPPED": PipelineStatus.SKIPPED,
         }
         return PipelineStageResult(
-            stage_name=name,
-            status=status_map.get(status, PipelineStatus(status.lower())),
-            **kwargs
+            stage_name=name, status=status_map.get(status, PipelineStatus(status.lower())), **kwargs
         )
 
 
@@ -435,7 +424,7 @@ class TestFactorOrchestratorIntegration:
             FactorOrchestrator,
             OrchestratorConfig,
         )
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import patch
 
         config = OrchestratorConfig(
             enable_lookahead_detection=True,
@@ -452,19 +441,22 @@ class TestFactorOrchestratorIntegration:
         np.random.seed(42)
         dates = pd.date_range("2023-06-01", periods=120, freq="B")
         for stock in ["000001", "600036"]:
-            df = pd.DataFrame({
-                "close": 10 + np.cumsum(np.random.randn(120) * 0.5),
-                "volume": 1000000 + np.random.randint(500000, 5000000, 120).astype(float),
-                "open": 9.9 + np.cumsum(np.random.randn(120) * 0.5),
-            }, index=dates)
+            df = pd.DataFrame(
+                {
+                    "close": 10 + np.cumsum(np.random.randn(120) * 0.5),
+                    "volume": 1000000 + np.random.randint(500000, 5000000, 120).astype(float),
+                    "open": 9.9 + np.cumsum(np.random.randn(120) * 0.5),
+                },
+                index=dates,
+            )
             df["test_expr"] = np.random.randn(120) * 0.5
             mock_factor_data[stock] = df
 
-        with patch.object(orchestrator, '_stage_compute_factor') as mock_compute:
+        with patch.object(orchestrator, "_stage_compute_factor") as mock_compute:
             mock_compute.return_value = __class__.make_ok_stage(mock_factor_data)
-            with patch.object(orchestrator, '_stage_lookahead_detection') as mock_bias:
+            with patch.object(orchestrator, "_stage_lookahead_detection") as mock_bias:
                 mock_bias.return_value = __class__.make_bias_stage_safe()
-                with patch.object(orchestrator, '_stage_ic_analysis') as mock_ic:
+                with patch.object(orchestrator, "_stage_ic_analysis") as mock_ic:
                     mock_ic.return_value = __class__.make_ic_stage()
 
                     result = orchestrator.validate(
@@ -484,6 +476,7 @@ class TestFactorOrchestratorIntegration:
     @staticmethod
     def make_ok_stage(factor_data):
         from backend.services.factor_orchestrator_service import PipelineStageResult, PipelineStatus
+
         return PipelineStageResult(
             stage_name="compute_factor",
             status=PipelineStatus.PASSED,
@@ -498,6 +491,7 @@ class TestFactorOrchestratorIntegration:
     @staticmethod
     def make_bias_stage_safe():
         from backend.services.factor_orchestrator_service import PipelineStageResult, PipelineStatus
+
         return PipelineStageResult(
             stage_name="lookahead_detection",
             status=PipelineStatus.PASSED,
@@ -507,6 +501,7 @@ class TestFactorOrchestratorIntegration:
     @staticmethod
     def make_ic_stage():
         from backend.services.factor_orchestrator_service import PipelineStageResult, PipelineStatus
+
         return PipelineStageResult(
             stage_name="ic_analysis",
             status=PipelineStatus.PASSED,
@@ -518,6 +513,7 @@ class TestFactorOrchestratorIntegration:
 #  3. StockRankerService 测试（需要 XGBoost）
 # =====================================================================
 
+
 class TestStockRankerService:
     """StockRankerService 排序学习测试"""
 
@@ -526,12 +522,15 @@ class TestStockRankerService:
         pytest.importorskip("xgboost")
         from backend.services.stock_ranker_service import StockRankerService, RankTrainingConfig
         import tempfile
+
         self.tmp_dir = tempfile.mkdtemp()
-        self.ranker = StockRankerService(default_config=RankTrainingConfig(
-            n_estimators=10,       # 减少迭代加速测试
-            max_depth=3,
-            early_stopping_rounds=3,
-        ))
+        self.ranker = StockRankerService(
+            default_config=RankTrainingConfig(
+                n_estimators=10,  # 减少迭代加速测试
+                max_depth=3,
+                early_stopping_rounds=3,
+            )
+        )
         # 将 RankTrainingConfig 存为类属性供所有方法使用
         self.RankTrainingConfig = RankTrainingConfig
 
@@ -550,13 +549,15 @@ class TestStockRankerService:
             for j, stock in enumerate(stocks):
                 signal = np.random.randn() * 0.3 + (j % 5) * 0.05  # 微弱的股票效应
                 ret = 0.02 * signal + np.random.randn() * 0.03
-                rows.append({
-                    "date": date,
-                    "stock_code": stock,
-                    "feature_1": signal + np.random.randn() * 0.1,
-                    "feature_2": np.random.randn(),
-                    "forward_return_5d": ret,
-                })
+                rows.append(
+                    {
+                        "date": date,
+                        "stock_code": stock,
+                        "feature_1": signal + np.random.randn() * 0.1,
+                        "feature_2": np.random.randn(),
+                        "forward_return_5d": ret,
+                    }
+                )
 
         df = pd.DataFrame(rows)
 
@@ -597,13 +598,15 @@ class TestStockRankerService:
         """模型解释"""
         np.random.seed(42)
         n = 200
-        df = pd.DataFrame({
-            "date": pd.date_range("2023-01-01", periods=n, freq="B"),
-            "stock_code": [f"{i%10:06d}" for i in range(n)],
-            "feat_a": np.random.randn(n),
-            "feat_b": np.random.randn(n),
-            "return": np.random.randn(n) * 0.02,
-        })
+        df = pd.DataFrame(
+            {
+                "date": pd.date_range("2023-01-01", periods=n, freq="B"),
+                "stock_code": [f"{i % 10:06d}" for i in range(n)],
+                "feat_a": np.random.randn(n),
+                "feat_b": np.random.randn(n),
+                "return": np.random.randn(n) * 0.02,
+            }
+        )
 
         result = self.ranker.train(
             feature_df=df,
@@ -628,17 +631,23 @@ class TestStockRankerService:
         """列出和删除模型"""
         np.random.seed(42)
         n = 100
-        df = pd.DataFrame({
-            "date": pd.date_range("2023-01-01", periods=n, freq="B"),
-            "stock_code": [f"{i%5:06d}" for i in range(n)],
-            "f1": np.random.randn(n),
-            "ret": np.random.randn(n) * 0.01,
-        })
+        df = pd.DataFrame(
+            {
+                "date": pd.date_range("2023-01-01", periods=n, freq="B"),
+                "stock_code": [f"{i % 5:06d}" for i in range(n)],
+                "f1": np.random.randn(n),
+                "ret": np.random.randn(n) * 0.01,
+            }
+        )
 
         r1 = self.ranker.train(
-            feature_df=df, label_col="ret", date_col="date", group_col="date",
+            feature_df=df,
+            label_col="ret",
+            date_col="date",
+            group_col="date",
             config=self.RankTrainingConfig(objective="reg:squarederror", n_estimators=3, max_depth=2),
-            enable_bias_check=False, model_name="list_test",
+            enable_bias_check=False,
+            model_name="list_test",
         )
 
         models = self.ranker.list_models()
@@ -656,13 +665,15 @@ class TestStockRankerService:
         np.random.seed(42)
         n = 150
         signal = np.random.randn(n)
-        df = pd.DataFrame({
-            "date": pd.date_range("2023-01-01", periods=n, freq="B"),
-            "stock_code": [f"{i%8:06d}" for i in range(n)],
-            "normal_feature": np.random.randn(n),
-            "leaky_feature": signal * 0.8 + np.random.randn(n) * 0.1,  # 高度相关于噪声收益
-            "return": 0.7 * signal + np.random.randn(n) * 0.05,
-        })
+        df = pd.DataFrame(
+            {
+                "date": pd.date_range("2023-01-01", periods=n, freq="B"),
+                "stock_code": [f"{i % 8:06d}" for i in range(n)],
+                "normal_feature": np.random.randn(n),
+                "leaky_feature": signal * 0.8 + np.random.randn(n) * 0.1,  # 高度相关于噪声收益
+                "return": 0.7 * signal + np.random.randn(n) * 0.05,
+            }
+        )
 
         result = self.ranker.train(
             feature_df=df,
@@ -686,13 +697,14 @@ class TestStockRankerService:
 #  4. 端到端集成测试：Orchestrator → StockRanker → Registry
 # =====================================================================
 
+
 class TestEndToEndFlow:
     """跨服务的端到端流程验证"""
 
     def test_full_pipeline_conceptual(self):
         """概念性全流水线验证（验证接口兼容性）"""
         # 1. ModelRegistry 可存储任何框架的模型
-        from backend.services.model_registry import ModelRegistry, ModelFramework
+        from backend.services.model_registry import ModelRegistry
         from sklearn.linear_model import LinearRegression
         from sklearn.datasets import make_regression
 

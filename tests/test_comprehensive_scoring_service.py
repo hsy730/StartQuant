@@ -4,9 +4,9 @@ comprehensive_scoring_service.py 综合评分服务单元测试
 验证 ComprehensiveScoringService 的因子评分、策略评分、组合评分、
 排名比较、评级映射、滑点敏感性分析等功能正确性。
 """
+
 import sys
 import os
-import warnings
 import numpy as np
 import pytest
 from unittest.mock import patch, MagicMock
@@ -14,12 +14,12 @@ from unittest.mock import patch, MagicMock
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 # NumPy 2.0 兼容
-if not hasattr(np, 'NINF'):
+if not hasattr(np, "NINF"):
     np.NINF = -np.inf
-if not hasattr(np, 'PINF'):
+if not hasattr(np, "PINF"):
     np.PINF = np.inf
 
-from backend.services.comprehensive_scoring_service import ComprehensiveScoringService
+from backend.services.comprehensive_scoring_service import ComprehensiveScoringService  # noqa: E402
 
 
 class TestScoreFactor:
@@ -144,12 +144,11 @@ class TestScoreFactor:
         weights = {"ic": 0.35, "ir": 0.30, "stability": 0.20, "turnover": 0.15}
         result = self.service.score_factor(metrics, weights=weights)
 
-        ic_score = min(0.1 * 400, 100)  # 40
-        ir_score = min(1.0 * 40, 100)   # 40
-        stab_score = 0.8 * 100          # 80
-        turn_score = max(100 - 0.2 * 200, 0)  # 60
+        min(0.1 * 400, 100)  # 40
+        min(1.0 * 40, 100)  # 40
+        max(100 - 0.2 * 200, 0)  # 60
 
-        expected = (0.35 * 40 + 0.30 * 40 + 0.20 * 80 + 0.15 * 60)
+        expected = 0.35 * 40 + 0.30 * 40 + 0.20 * 80 + 0.15 * 60
         assert abs(result["total_score"] - round(expected, 2)) < 0.01
 
 
@@ -288,7 +287,13 @@ class TestScorePortfolio:
 
     def test_score_portfolio_without_benchmark(self):
         """无基准时组合评分应使用绝对收益"""
-        metrics = {"annual_return": 0.15, "volatility": 0.15, "max_drawdown": 0.1, "herfindahl_index": 0.1, "sharpe_ratio": 1.0}
+        metrics = {
+            "annual_return": 0.15,
+            "volatility": 0.15,
+            "max_drawdown": 0.1,
+            "herfindahl_index": 0.1,
+            "sharpe_ratio": 1.0,
+        }
         result = self.service.score_portfolio(metrics)
 
         assert "total_score" in result
@@ -299,7 +304,13 @@ class TestScorePortfolio:
 
     def test_score_portfolio_with_benchmark(self):
         """有基准时应使用超额收益"""
-        portfolio_metrics = {"annual_return": 0.12, "volatility": 0.15, "max_drawdown": 0.1, "herfindahl_index": 0.1, "sharpe_ratio": 1.0}
+        portfolio_metrics = {
+            "annual_return": 0.12,
+            "volatility": 0.15,
+            "max_drawdown": 0.1,
+            "herfindahl_index": 0.1,
+            "sharpe_ratio": 1.0,
+        }
         benchmark_metrics = {"annual_return": 0.08}
         result = self.service.score_portfolio(portfolio_metrics, benchmark_metrics=benchmark_metrics)
 
@@ -308,7 +319,13 @@ class TestScorePortfolio:
 
     def test_score_portfolio_with_benchmark_negative_excess(self):
         """超额收益为负时得分应为0"""
-        portfolio_metrics = {"annual_return": 0.05, "volatility": 0.15, "max_drawdown": 0.1, "herfindahl_index": 0.1, "sharpe_ratio": 1.0}
+        portfolio_metrics = {
+            "annual_return": 0.05,
+            "volatility": 0.15,
+            "max_drawdown": 0.1,
+            "herfindahl_index": 0.1,
+            "sharpe_ratio": 1.0,
+        }
         benchmark_metrics = {"annual_return": 0.10}
         result = self.service.score_portfolio(portfolio_metrics, benchmark_metrics=benchmark_metrics)
 
@@ -316,7 +333,13 @@ class TestScorePortfolio:
 
     def test_score_portfolio_risk_score_calculation(self):
         """风险得分 = max(100 - (volatility/0.2*50 + max_drawdown/0.15*50), 0)"""
-        metrics = {"annual_return": 0, "volatility": 0.1, "max_drawdown": 0.075, "herfindahl_index": 0, "sharpe_ratio": 0}
+        metrics = {
+            "annual_return": 0,
+            "volatility": 0.1,
+            "max_drawdown": 0.075,
+            "herfindahl_index": 0,
+            "sharpe_ratio": 0,
+        }
         result = self.service.score_portfolio(metrics)
 
         # volatility/0.2*50 = 0.1/0.2*50 = 25
@@ -370,9 +393,36 @@ class TestCompareAndRank:
     def test_compare_and_rank_strategy_type(self):
         """策略类型排名应按得分降序"""
         items = [
-            {"name": "策略A", "metrics": {"annual_return": 0.3, "max_drawdown": -0.05, "sharpe_ratio": 2.0, "win_rate": 0.6, "turnover": 0.3}},
-            {"name": "策略B", "metrics": {"annual_return": 0.1, "max_drawdown": -0.15, "sharpe_ratio": 0.5, "win_rate": 0.45, "turnover": 0.8}},
-            {"name": "策略C", "metrics": {"annual_return": 0.2, "max_drawdown": -0.08, "sharpe_ratio": 1.2, "win_rate": 0.55, "turnover": 0.5}},
+            {
+                "name": "策略A",
+                "metrics": {
+                    "annual_return": 0.3,
+                    "max_drawdown": -0.05,
+                    "sharpe_ratio": 2.0,
+                    "win_rate": 0.6,
+                    "turnover": 0.3,
+                },
+            },
+            {
+                "name": "策略B",
+                "metrics": {
+                    "annual_return": 0.1,
+                    "max_drawdown": -0.15,
+                    "sharpe_ratio": 0.5,
+                    "win_rate": 0.45,
+                    "turnover": 0.8,
+                },
+            },
+            {
+                "name": "策略C",
+                "metrics": {
+                    "annual_return": 0.2,
+                    "max_drawdown": -0.08,
+                    "sharpe_ratio": 1.2,
+                    "win_rate": 0.55,
+                    "turnover": 0.5,
+                },
+            },
         ]
         result = self.service.compare_and_rank(items, scoring_type="strategy")
 
@@ -398,8 +448,26 @@ class TestCompareAndRank:
     def test_compare_and_rank_portfolio_type(self):
         """组合类型排名应正确调用score_portfolio"""
         items = [
-            {"name": "组合A", "metrics": {"annual_return": 0.2, "volatility": 0.1, "max_drawdown": 0.05, "herfindahl_index": 0.05, "sharpe_ratio": 2.0}},
-            {"name": "组合B", "metrics": {"annual_return": 0.05, "volatility": 0.3, "max_drawdown": 0.2, "herfindahl_index": 0.3, "sharpe_ratio": 0.3}},
+            {
+                "name": "组合A",
+                "metrics": {
+                    "annual_return": 0.2,
+                    "volatility": 0.1,
+                    "max_drawdown": 0.05,
+                    "herfindahl_index": 0.05,
+                    "sharpe_ratio": 2.0,
+                },
+            },
+            {
+                "name": "组合B",
+                "metrics": {
+                    "annual_return": 0.05,
+                    "volatility": 0.3,
+                    "max_drawdown": 0.2,
+                    "herfindahl_index": 0.3,
+                    "sharpe_ratio": 0.3,
+                },
+            },
         ]
         result = self.service.compare_and_rank(items, scoring_type="portfolio")
 
@@ -509,13 +577,20 @@ class TestGetGrade:
     def test_grade_boundary_completeness(self):
         """所有评级边界应无遗漏"""
         boundaries = [
-            (95, "S+"), (90, "A+"), (85, "A"), (80, "A-"),
-            (75, "B+"), (70, "B"), (65, "B-"), (60, "C+"),
-            (55, "C"), (50, "C-"), (0, "D"),
+            (95, "S+"),
+            (90, "A+"),
+            (85, "A"),
+            (80, "A-"),
+            (75, "B+"),
+            (70, "B"),
+            (65, "B-"),
+            (60, "C+"),
+            (55, "C"),
+            (50, "C-"),
+            (0, "D"),
         ]
         for score, expected_grade in boundaries:
-            assert self.service._get_grade(score) == expected_grade, \
-                f"得分{score}应为{expected_grade}"
+            assert self.service._get_grade(score) == expected_grade, f"得分{score}应为{expected_grade}"
 
 
 class TestAnalyzeSlippageSensitivity:
@@ -585,12 +660,12 @@ class TestAnalyzeSlippageSensitivity:
     def test_analyze_slippage_sensitivity_high_sensitivity(self):
         """高敏感性：滑点成本占收益25-50%"""
         metrics = {"annual_return": 0.10, "turnover": 20.0}
-        result = self.service.analyze_slippage_sensitivity(metrics, base_slippage=0.002)
+        self.service.analyze_slippage_sensitivity(metrics, base_slippage=0.002)
 
         # base_cost = 0.002 * 20 * 2 = 0.08, ratio = 0.08/0.10 = 0.8 → very_high
         # 需要调整参数使得ratio在0.25-0.5之间
         metrics2 = {"annual_return": 0.15, "turnover": 20.0}
-        result2 = self.service.analyze_slippage_sensitivity(metrics2, base_slippage=0.002)
+        self.service.analyze_slippage_sensitivity(metrics2, base_slippage=0.002)
         # base_cost = 0.002 * 20 * 2 = 0.08, ratio = 0.08/0.15 ≈ 0.533 → very_high
         # 再调整
         metrics3 = {"annual_return": 0.20, "turnover": 15.0}
@@ -610,9 +685,7 @@ class TestAnalyzeSlippageSensitivity:
         """自定义滑点列表应被使用"""
         metrics = {"annual_return": 0.15, "turnover": 12.0}
         test_slippages = [0.001, 0.005, 0.01]
-        result = self.service.analyze_slippage_sensitivity(
-            metrics, base_slippage=0.002, test_slippages=test_slippages
-        )
+        result = self.service.analyze_slippage_sensitivity(metrics, base_slippage=0.002, test_slippages=test_slippages)
 
         # 应包含自定义的滑点值 + base_slippage
         slippage_rates = [s["slippage_rate"] for s in result["scenarios"]]
@@ -623,9 +696,7 @@ class TestAnalyzeSlippageSensitivity:
         """场景应按滑点率升序排列"""
         metrics = {"annual_return": 0.15, "turnover": 12.0}
         test_slippages = [0.01, 0.001, 0.005]
-        result = self.service.analyze_slippage_sensitivity(
-            metrics, test_slippages=test_slippages
-        )
+        result = self.service.analyze_slippage_sensitivity(metrics, test_slippages=test_slippages)
 
         slippage_rates = [s["slippage_rate"] for s in result["scenarios"]]
         assert slippage_rates == sorted(slippage_rates)
@@ -670,9 +741,7 @@ class TestAnalyzeSlippageSensitivity:
 
         with patch("backend.services.comprehensive_scoring_service.smart_slippage_detector") as mock_detector:
             mock_detector.recommend_slippage.side_effect = Exception("检测失败")
-            result = self.service.analyze_slippage_sensitivity(
-                metrics, stock_codes=stock_codes, base_slippage=0.002
-            )
+            result = self.service.analyze_slippage_sensitivity(metrics, stock_codes=stock_codes, base_slippage=0.002)
 
         # 应回退到默认base_slippage
         assert result["base_slippage"] == 0.002
@@ -693,9 +762,7 @@ class TestAnalyzeSlippageSensitivity:
         metrics = {"annual_return": 0.15, "turnover": 12.0}
 
         with patch("backend.services.comprehensive_scoring_service.smart_slippage_detector") as mock_detector:
-            result = self.service.analyze_slippage_sensitivity(
-                metrics, stock_codes=[], base_slippage=0.002
-            )
+            self.service.analyze_slippage_sensitivity(metrics, stock_codes=[], base_slippage=0.002)
 
         mock_detector.recommend_slippage.assert_not_called()
 
@@ -730,7 +797,6 @@ class TestAnalyzeSlippageSensitivity:
         metrics = {"annual_return": 0.15, "turnover": 12.0}
         result = self.service.analyze_slippage_sensitivity(metrics, base_slippage=0.002)
 
-        default_slippages = [0.0, 0.001, 0.002, 0.003, 0.005, 0.01, 0.002]
         slippage_rates = [s["slippage_rate"] for s in result["scenarios"]]
         for ds in [0.0, 0.001, 0.003, 0.005, 0.01]:
             assert ds in slippage_rates
@@ -843,10 +909,7 @@ class TestEdgeCases:
 
     def test_compare_and_rank_preserves_all_items(self):
         """排名比较应保留所有输入项"""
-        items = [
-            {"name": f"策略{i}", "metrics": {"annual_return": 0.1 * i}}
-            for i in range(10)
-        ]
+        items = [{"name": f"策略{i}", "metrics": {"annual_return": 0.1 * i}} for i in range(10)]
         result = self.service.compare_and_rank(items, scoring_type="strategy")
         assert len(result) == 10
 

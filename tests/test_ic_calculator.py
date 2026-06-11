@@ -4,21 +4,21 @@ ic_calculator.py IC计算工具测试
 覆盖 calculate_ic / calculate_rank_ic / calculate_rolling_ic 的
 正常场景、边界条件和异常输入。
 """
+
 import sys
 import os
 import numpy as np
 import pandas as pd
-import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 # NumPy 2.0 兼容
-if not hasattr(np, 'NINF'):
+if not hasattr(np, "NINF"):
     np.NINF = -np.inf
-if not hasattr(np, 'PINF'):
+if not hasattr(np, "PINF"):
     np.PINF = np.inf
 
-from backend.utils.ic_calculator import calculate_ic, calculate_rank_ic, calculate_rolling_ic
+from backend.utils.ic_calculator import calculate_ic, calculate_rank_ic, calculate_rolling_ic  # noqa: E402
 
 
 class TestCalculateICPearson:
@@ -121,7 +121,7 @@ class TestCalculateICSpearman:
         """Spearman方法对单调但非线性关系应返回接近1.0"""
         factor = pd.Series(range(20), dtype=float)
         # 指数变换 — 单调但非线性，Pearson会偏低，Spearman仍接近1
-        returns = pd.Series([float(x ** 2) for x in range(20)])
+        returns = pd.Series([float(x**2) for x in range(20)])
         result_spearman = calculate_ic(factor, returns, method="spearman")
         result_pearson = calculate_ic(factor, returns, method="pearson")
         assert result_spearman is not None
@@ -184,7 +184,7 @@ class TestCalculateRankIC:
     def test_calculate_rank_ic_nonlinear_should_be_near_one(self):
         """calculate_rank_ic对单调非线性关系应接近1.0"""
         factor = pd.Series(range(20), dtype=float)
-        returns = pd.Series([float(x ** 3) for x in range(20)])
+        returns = pd.Series([float(x**3) for x in range(20)])
         result = calculate_rank_ic(factor, returns)
         assert result is not None
         assert abs(result - 1.0) < 1e-6

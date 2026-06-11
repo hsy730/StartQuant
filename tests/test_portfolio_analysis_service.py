@@ -11,9 +11,9 @@ portfolio_analysis_service.py 组合分析服务测试
 - calculate_combined_factor_score: 综合因子得分
 - compare_weight_methods: 多方法比较
 """
+
 import sys
 import os
-import warnings
 import numpy as np
 import pandas as pd
 import pytest
@@ -21,17 +21,17 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 # NumPy 2.0 兼容
-if not hasattr(np, 'NINF'):
+if not hasattr(np, "NINF"):
     np.NINF = -np.inf
-if not hasattr(np, 'PINF'):
+if not hasattr(np, "PINF"):
     np.PINF = np.inf
 
-from backend.services.portfolio_analysis_service import PortfolioAnalysisService
-
+from backend.services.portfolio_analysis_service import PortfolioAnalysisService  # noqa: E402
 
 # ============================================================
 # 测试辅助：构造真实数据
 # ============================================================
+
 
 def _make_positions(n=20, with_industry=True, with_stock_code=True):
     """构造持仓 DataFrame"""
@@ -65,6 +65,7 @@ def _make_returns(n=252):
 # ============================================================
 # calculate_industry_exposure 测试
 # ============================================================
+
 
 class TestCalculateIndustryExposure:
     """行业暴露度计算测试"""
@@ -120,21 +121,25 @@ class TestCalculateIndustryExposure:
 
     def test_missing_weight_column_should_return_error(self):
         """缺少权重列应返回错误字典"""
-        positions = pd.DataFrame({
-            "stock_code": ["600000", "600001"],
-            "industry": ["银行", "科技"],
-        })
+        positions = pd.DataFrame(
+            {
+                "stock_code": ["600000", "600001"],
+                "industry": ["银行", "科技"],
+            }
+        )
         result = self.service.calculate_industry_exposure(positions, weight_column="missing_weight")
         assert "error" in result
         assert "missing_weight" in result["error"]
 
     def test_single_industry_should_have_exposure_one(self):
         """单一行业应暴露度为1"""
-        positions = pd.DataFrame({
-            "stock_code": ["600000", "600001", "600002"],
-            "industry": ["银行", "银行", "银行"],
-            "weight": [0.4, 0.35, 0.25],
-        })
+        positions = pd.DataFrame(
+            {
+                "stock_code": ["600000", "600001", "600002"],
+                "industry": ["银行", "银行", "银行"],
+                "weight": [0.4, 0.35, 0.25],
+            }
+        )
         result = self.service.calculate_industry_exposure(positions)
         assert result["industry_exposure"]["银行"] == pytest.approx(1.0)
         assert result["max_exposure"] == pytest.approx(1.0)
@@ -142,35 +147,39 @@ class TestCalculateIndustryExposure:
 
     def test_zero_weights_should_not_crash(self):
         """全零权重不应崩溃"""
-        positions = pd.DataFrame({
-            "stock_code": ["600000", "600001"],
-            "industry": ["银行", "科技"],
-            "weight": [0.0, 0.0],
-        })
+        positions = pd.DataFrame(
+            {
+                "stock_code": ["600000", "600001"],
+                "industry": ["银行", "科技"],
+                "weight": [0.0, 0.0],
+            }
+        )
         result = self.service.calculate_industry_exposure(positions)
         # 全零权重时 total_weight=0，走 else 分支
         assert isinstance(result, dict)
 
     def test_custom_column_names_should_work(self):
         """自定义列名应正常工作"""
-        positions = pd.DataFrame({
-            "code": ["600000", "600001"],
-            "sector": ["银行", "科技"],
-            "pct": [0.6, 0.4],
-        })
-        result = self.service.calculate_industry_exposure(
-            positions, industry_column="sector", weight_column="pct"
+        positions = pd.DataFrame(
+            {
+                "code": ["600000", "600001"],
+                "sector": ["银行", "科技"],
+                "pct": [0.6, 0.4],
+            }
         )
+        result = self.service.calculate_industry_exposure(positions, industry_column="sector", weight_column="pct")
         assert "industry_exposure" in result
         assert result["industry_exposure"]["银行"] == pytest.approx(0.6)
 
     def test_same_industry_multiple_stocks_should_aggregate(self):
         """同一行业多只股票应汇总权重"""
-        positions = pd.DataFrame({
-            "stock_code": ["600000", "600001", "600002"],
-            "industry": ["银行", "银行", "科技"],
-            "weight": [0.3, 0.2, 0.5],
-        })
+        positions = pd.DataFrame(
+            {
+                "stock_code": ["600000", "600001", "600002"],
+                "industry": ["银行", "银行", "科技"],
+                "weight": [0.3, 0.2, 0.5],
+            }
+        )
         result = self.service.calculate_industry_exposure(positions)
         assert result["industry_exposure"]["银行"] == pytest.approx(0.5)
         assert result["industry_exposure"]["科技"] == pytest.approx(0.5)
@@ -180,6 +189,7 @@ class TestCalculateIndustryExposure:
 # calculate_factor_exposure 测试
 # ============================================================
 
+
 class TestCalculateFactorExposure:
     """因子暴露度计算测试"""
 
@@ -188,10 +198,12 @@ class TestCalculateFactorExposure:
 
     def test_normal_factor_data_should_return_exposures(self):
         """正常因子数据应返回因子暴露度"""
-        positions = pd.DataFrame({
-            "stock_code": ["600000", "600001", "600002"],
-            "weight": [0.4, 0.35, 0.25],
-        })
+        positions = pd.DataFrame(
+            {
+                "stock_code": ["600000", "600001", "600002"],
+                "weight": [0.4, 0.35, 0.25],
+            }
+        )
         factor_data = {
             "momentum": pd.Series([0.5, 0.3, 0.2], index=["600000", "600001", "600002"]),
             "value": pd.Series([0.1, 0.4, 0.3], index=["600000", "600001", "600002"]),
@@ -205,10 +217,12 @@ class TestCalculateFactorExposure:
 
     def test_weighted_average_should_be_correct(self):
         """加权平均因子暴露度应正确计算"""
-        positions = pd.DataFrame({
-            "stock_code": ["A", "B"],
-            "weight": [0.5, 0.5],
-        })
+        positions = pd.DataFrame(
+            {
+                "stock_code": ["A", "B"],
+                "weight": [0.5, 0.5],
+            }
+        )
         factor_data = {
             "factor_1": pd.Series([1.0, 3.0], index=["A", "B"]),
         }
@@ -218,19 +232,23 @@ class TestCalculateFactorExposure:
 
     def test_missing_weight_column_should_return_error(self):
         """缺少权重列应返回错误"""
-        positions = pd.DataFrame({
-            "stock_code": ["600000", "600001"],
-        })
+        positions = pd.DataFrame(
+            {
+                "stock_code": ["600000", "600001"],
+            }
+        )
         factor_data = {"factor_1": pd.Series([0.5, 0.3], index=["600000", "600001"])}
         result = self.service.calculate_factor_exposure(positions, factor_data)
         assert "error" in result
 
     def test_partial_stock_overlap_should_use_valid_only(self):
         """部分股票不匹配时，应仅使用有效数据"""
-        positions = pd.DataFrame({
-            "stock_code": ["A", "B", "C"],
-            "weight": [0.4, 0.3, 0.3],
-        })
+        positions = pd.DataFrame(
+            {
+                "stock_code": ["A", "B", "C"],
+                "weight": [0.4, 0.3, 0.3],
+            }
+        )
         # 因子数据只有 A 和 B，缺少 C
         factor_data = {
             "factor_1": pd.Series([1.0, 2.0], index=["A", "B"]),
@@ -242,10 +260,12 @@ class TestCalculateFactorExposure:
 
     def test_no_valid_data_should_return_zero(self):
         """无有效数据时因子暴露度应为0"""
-        positions = pd.DataFrame({
-            "stock_code": ["A", "B"],
-            "weight": [0.5, 0.5],
-        })
+        positions = pd.DataFrame(
+            {
+                "stock_code": ["A", "B"],
+                "weight": [0.5, 0.5],
+            }
+        )
         # 因子数据索引完全不匹配
         factor_data = {
             "factor_1": pd.Series([1.0, 2.0], index=["X", "Y"]),
@@ -255,10 +275,12 @@ class TestCalculateFactorExposure:
 
     def test_scalar_factor_value_should_return_scalar(self):
         """标量因子值应直接返回标量"""
-        positions = pd.DataFrame({
-            "stock_code": ["A", "B"],
-            "weight": [0.5, 0.5],
-        })
+        positions = pd.DataFrame(
+            {
+                "stock_code": ["A", "B"],
+                "weight": [0.5, 0.5],
+            }
+        )
         factor_data = {
             "factor_1": 0.75,  # 标量
         }
@@ -267,10 +289,12 @@ class TestCalculateFactorExposure:
 
     def test_max_exposure_should_be_max_absolute_value(self):
         """max_exposure 应为最大绝对因子暴露度"""
-        positions = pd.DataFrame({
-            "stock_code": ["A", "B"],
-            "weight": [0.5, 0.5],
-        })
+        positions = pd.DataFrame(
+            {
+                "stock_code": ["A", "B"],
+                "weight": [0.5, 0.5],
+            }
+        )
         factor_data = {
             "f1": pd.Series([1.0, 1.0], index=["A", "B"]),
             "f2": pd.Series([-3.0, -3.0], index=["A", "B"]),
@@ -280,10 +304,12 @@ class TestCalculateFactorExposure:
 
     def test_empty_factor_data_should_return_zero_max(self):
         """空因子数据应返回 max_exposure=0"""
-        positions = pd.DataFrame({
-            "stock_code": ["A", "B"],
-            "weight": [0.5, 0.5],
-        })
+        positions = pd.DataFrame(
+            {
+                "stock_code": ["A", "B"],
+                "weight": [0.5, 0.5],
+            }
+        )
         result = self.service.calculate_factor_exposure(positions, {})
         assert result["max_exposure"] == 0.0
 
@@ -291,6 +317,7 @@ class TestCalculateFactorExposure:
 # ============================================================
 # calculate_concentration 测试
 # ============================================================
+
 
 class TestCalculateConcentration:
     """组合集中度计算测试"""
@@ -310,10 +337,12 @@ class TestCalculateConcentration:
     def test_equal_weights_should_have_low_concentration(self):
         """等权持仓应有较低的集中度"""
         n = 20
-        positions = pd.DataFrame({
-            "stock_code": [f"S{i}" for i in range(n)],
-            "weight": [1.0 / n] * n,
-        })
+        positions = pd.DataFrame(
+            {
+                "stock_code": [f"S{i}" for i in range(n)],
+                "weight": [1.0 / n] * n,
+            }
+        )
         result = self.service.calculate_concentration(positions)
 
         # 等权时 HHI = n * (1/n)^2 = 1/n
@@ -323,10 +352,12 @@ class TestCalculateConcentration:
 
     def test_single_stock_should_have_max_concentration(self):
         """单只股票持仓应有最大集中度"""
-        positions = pd.DataFrame({
-            "stock_code": ["A"],
-            "weight": [1.0],
-        })
+        positions = pd.DataFrame(
+            {
+                "stock_code": ["A"],
+                "weight": [1.0],
+            }
+        )
         result = self.service.calculate_concentration(positions)
 
         assert result["top10_concentration"] == pytest.approx(1.0)
@@ -335,18 +366,22 @@ class TestCalculateConcentration:
 
     def test_missing_weight_column_should_return_error(self):
         """缺少权重列应返回错误"""
-        positions = pd.DataFrame({
-            "stock_code": ["A", "B"],
-        })
+        positions = pd.DataFrame(
+            {
+                "stock_code": ["A", "B"],
+            }
+        )
         result = self.service.calculate_concentration(positions)
         assert "error" in result
 
     def test_empty_weights_should_return_zeros(self):
         """空权重应返回全零"""
-        positions = pd.DataFrame({
-            "stock_code": ["A", "B"],
-            "weight": [np.nan, np.nan],
-        })
+        positions = pd.DataFrame(
+            {
+                "stock_code": ["A", "B"],
+                "weight": [np.nan, np.nan],
+            }
+        )
         result = self.service.calculate_concentration(positions)
         assert result["top10_concentration"] == 0.0
         assert result["herfindahl_index"] == 0.0
@@ -354,10 +389,12 @@ class TestCalculateConcentration:
 
     def test_zero_weights_should_return_zeros(self):
         """全零权重应返回全零"""
-        positions = pd.DataFrame({
-            "stock_code": ["A", "B"],
-            "weight": [0.0, 0.0],
-        })
+        positions = pd.DataFrame(
+            {
+                "stock_code": ["A", "B"],
+                "weight": [0.0, 0.0],
+            }
+        )
         result = self.service.calculate_concentration(positions)
         assert result["top10_concentration"] == 0.0
         assert result["herfindahl_index"] == 0.0
@@ -368,10 +405,12 @@ class TestCalculateConcentration:
         n = 15
         weights = np.array([1.0 / (i + 1) for i in range(n)])
         weights = weights / weights.sum()
-        positions = pd.DataFrame({
-            "stock_code": [f"S{i}" for i in range(n)],
-            "weight": weights,
-        })
+        positions = pd.DataFrame(
+            {
+                "stock_code": [f"S{i}" for i in range(n)],
+                "weight": weights,
+            }
+        )
         result = self.service.calculate_concentration(positions)
 
         # 手动计算 top10
@@ -382,10 +421,12 @@ class TestCalculateConcentration:
     def test_herfindahl_index_range(self):
         """HHI 应在 [1/n, 1] 范围内"""
         n = 10
-        positions = pd.DataFrame({
-            "stock_code": [f"S{i}" for i in range(n)],
-            "weight": [1.0 / n] * n,
-        })
+        positions = pd.DataFrame(
+            {
+                "stock_code": [f"S{i}" for i in range(n)],
+                "weight": [1.0 / n] * n,
+            }
+        )
         result = self.service.calculate_concentration(positions)
         assert result["herfindahl_index"] >= 1.0 / n - 1e-6
         assert result["herfindahl_index"] <= 1.0 + 1e-6
@@ -394,25 +435,31 @@ class TestCalculateConcentration:
         """集中持仓应有更高的HHI"""
         n = 10
         # 集中持仓
-        concentrated = pd.DataFrame({
-            "stock_code": [f"S{i}" for i in range(n)],
-            "weight": [0.5] + [0.5 / (n - 1)] * (n - 1),
-        })
+        concentrated = pd.DataFrame(
+            {
+                "stock_code": [f"S{i}" for i in range(n)],
+                "weight": [0.5] + [0.5 / (n - 1)] * (n - 1),
+            }
+        )
         # 分散持仓
-        dispersed = pd.DataFrame({
-            "stock_code": [f"S{i}" for i in range(n)],
-            "weight": [1.0 / n] * n,
-        })
+        dispersed = pd.DataFrame(
+            {
+                "stock_code": [f"S{i}" for i in range(n)],
+                "weight": [1.0 / n] * n,
+            }
+        )
         result_c = self.service.calculate_concentration(concentrated)
         result_d = self.service.calculate_concentration(dispersed)
         assert result_c["herfindahl_index"] > result_d["herfindahl_index"]
 
     def test_negative_weights_should_use_absolute_values(self):
         """负权重应取绝对值计算"""
-        positions = pd.DataFrame({
-            "stock_code": ["A", "B"],
-            "weight": [-0.6, -0.4],
-        })
+        positions = pd.DataFrame(
+            {
+                "stock_code": ["A", "B"],
+                "weight": [-0.6, -0.4],
+            }
+        )
         result = self.service.calculate_concentration(positions)
         assert result["top10_concentration"] == pytest.approx(1.0)
 
@@ -420,6 +467,7 @@ class TestCalculateConcentration:
 # ============================================================
 # _calculate_gini 测试
 # ============================================================
+
 
 class TestCalculateGini:
     """基尼系数计算测试"""
@@ -484,6 +532,7 @@ class TestCalculateGini:
 # calculate_risk_metrics 测试
 # ============================================================
 
+
 class TestCalculateRiskMetrics:
     """风险指标计算测试（委托 risk_metrics 统一入口）"""
 
@@ -496,9 +545,16 @@ class TestCalculateRiskMetrics:
         result = self.service.calculate_risk_metrics(returns)
 
         expected_keys = [
-            "total_return", "annual_return", "volatility", "sharpe_ratio",
-            "sortino_ratio", "max_drawdown", "calmar_ratio", "win_rate",
-            "var_95", "cvar_95"
+            "total_return",
+            "annual_return",
+            "volatility",
+            "sharpe_ratio",
+            "sortino_ratio",
+            "max_drawdown",
+            "calmar_ratio",
+            "win_rate",
+            "var_95",
+            "cvar_95",
         ]
         for key in expected_keys:
             assert key in result
@@ -546,6 +602,7 @@ class TestCalculateRiskMetrics:
 # optimize_weights 测试
 # ============================================================
 
+
 class TestOptimizeWeights:
     """权重优化测试"""
 
@@ -585,18 +642,26 @@ class TestOptimizeWeights:
         good_factor_vals = returns_data * 5 + np.random.randn(120) * 0.01  # 高相关
         bad_factor_vals = np.random.randn(120) * 0.01  # 无相关
 
-        factor_returns = pd.DataFrame({
-            "good_factor": returns_data,
-            "bad_factor": returns_data,
-        }, index=dates)
-        factor_values = pd.DataFrame({
-            "good_factor": good_factor_vals,
-            "bad_factor": bad_factor_vals,
-        }, index=dates)
+        factor_returns = pd.DataFrame(
+            {
+                "good_factor": returns_data,
+                "bad_factor": returns_data,
+            },
+            index=dates,
+        )
+        factor_values = pd.DataFrame(
+            {
+                "good_factor": good_factor_vals,
+                "bad_factor": bad_factor_vals,
+            },
+            index=dates,
+        )
 
         result = self.service.optimize_weights(
-            factor_returns, method="ic_weight", factor_values=factor_values,
-            stock_returns=pd.Series(returns_data, index=dates)
+            factor_returns,
+            method="ic_weight",
+            factor_values=factor_values,
+            stock_returns=pd.Series(returns_data, index=dates),
         )
         weights = result["weights"]
         # good_factor 的 IC 应更高，权重应更大
@@ -606,10 +671,13 @@ class TestOptimizeWeights:
         """IC加权所有IR为负时应回退到等权重"""
         np.random.seed(42)
         dates = pd.date_range("2024-01-01", periods=120, freq="B")
-        factor_returns = pd.DataFrame({
-            "f1": np.random.randn(120) * 0.01 - 0.01,
-            "f2": np.random.randn(120) * 0.01 - 0.02,
-        }, index=dates)
+        factor_returns = pd.DataFrame(
+            {
+                "f1": np.random.randn(120) * 0.01 - 0.01,
+                "f2": np.random.randn(120) * 0.01 - 0.02,
+            },
+            index=dates,
+        )
 
         result = self.service.optimize_weights(factor_returns, method="ic_weight")
         n = len(factor_returns.columns)
@@ -620,10 +688,13 @@ class TestOptimizeWeights:
         """风险平价应给低波动因子更高权重"""
         np.random.seed(42)
         dates = pd.date_range("2024-01-01", periods=120, freq="B")
-        factor_returns = pd.DataFrame({
-            "low_vol": np.random.randn(120) * 0.005,   # 低波动
-            "high_vol": np.random.randn(120) * 0.03,    # 高波动
-        }, index=dates)
+        factor_returns = pd.DataFrame(
+            {
+                "low_vol": np.random.randn(120) * 0.005,  # 低波动
+                "high_vol": np.random.randn(120) * 0.03,  # 高波动
+            },
+            index=dates,
+        )
 
         result = self.service.optimize_weights(factor_returns, method="risk_parity")
         weights = result["weights"]
@@ -633,10 +704,12 @@ class TestOptimizeWeights:
     def test_risk_parity_zero_vol_should_fallback_to_equal(self):
         """风险平价零波动率应回退到等权重"""
         # 构造 std 精确为 0 的数据（单行数据，std=0）
-        factor_returns = pd.DataFrame({
-            "f1": [0.01],
-            "f2": [0.02],
-        })
+        factor_returns = pd.DataFrame(
+            {
+                "f1": [0.01],
+                "f2": [0.02],
+            }
+        )
 
         result = self.service.optimize_weights(factor_returns, method="risk_parity")
         n = len(factor_returns.columns)
@@ -683,10 +756,13 @@ class TestOptimizeWeights:
         """最大夏普小数据集失败时应回退到等权重"""
         # 极少数据可能导致 pypfopt 失败
         dates = pd.date_range("2024-01-01", periods=3, freq="B")
-        tiny_returns = pd.DataFrame({
-            "f1": [0.01, -0.01, 0.005],
-            "f2": [0.02, -0.005, 0.01],
-        }, index=dates)
+        tiny_returns = pd.DataFrame(
+            {
+                "f1": [0.01, -0.01, 0.005],
+                "f2": [0.02, -0.005, 0.01],
+            },
+            index=dates,
+        )
 
         result = self.service.optimize_weights(tiny_returns, method="max_sharpe")
         # 不应崩溃，可能回退到等权重
@@ -739,6 +815,7 @@ class TestOptimizeWeights:
 # ============================================================
 # calculate_combined_factor_score 测试
 # ============================================================
+
 
 class TestCalculateCombinedFactorScore:
     """综合因子得分计算测试"""
@@ -843,6 +920,7 @@ class TestCalculateCombinedFactorScore:
 # compare_weight_methods 测试
 # ============================================================
 
+
 class TestCompareWeightMethods:
     """多方法比较测试"""
 
@@ -861,9 +939,7 @@ class TestCompareWeightMethods:
 
     def test_custom_methods_should_compare_specified_only(self):
         """自定义方法列表应只比较指定方法"""
-        result = self.service.compare_weight_methods(
-            self.factor_returns, methods=["equal_weight", "ic_weight"]
-        )
+        result = self.service.compare_weight_methods(self.factor_returns, methods=["equal_weight", "ic_weight"])
 
         assert "equal_weight" in result
         assert "ic_weight" in result
@@ -871,9 +947,7 @@ class TestCompareWeightMethods:
 
     def test_each_method_result_should_have_required_keys(self):
         """每种方法结果应包含必要键"""
-        result = self.service.compare_weight_methods(
-            self.factor_returns, methods=["equal_weight"]
-        )
+        result = self.service.compare_weight_methods(self.factor_returns, methods=["equal_weight"])
 
         method_result = result["equal_weight"]
         assert "annual_return" in method_result
@@ -882,16 +956,12 @@ class TestCompareWeightMethods:
 
     def test_error_method_should_be_skipped(self):
         """出错的方法应被跳过不出现在结果中"""
-        result = self.service.compare_weight_methods(
-            self.factor_returns, methods=["invalid_method"]
-        )
+        result = self.service.compare_weight_methods(self.factor_returns, methods=["invalid_method"])
         assert "invalid_method" not in result
 
     def test_min_variance_method_should_work(self):
         """min_variance 方法应正常工作"""
-        result = self.service.compare_weight_methods(
-            self.factor_returns, methods=["min_variance"]
-        )
+        result = self.service.compare_weight_methods(self.factor_returns, methods=["min_variance"])
         assert "min_variance" in result
 
     def test_empty_returns_should_return_empty_dict(self):
@@ -905,6 +975,7 @@ class TestCompareWeightMethods:
 # 边界条件综合测试
 # ============================================================
 
+
 class TestEdgeCases:
     """边界条件综合测试"""
 
@@ -913,20 +984,24 @@ class TestEdgeCases:
 
     def test_single_stock_industry_exposure(self):
         """单只股票的行业暴露度"""
-        positions = pd.DataFrame({
-            "stock_code": ["600000"],
-            "industry": ["银行"],
-            "weight": [1.0],
-        })
+        positions = pd.DataFrame(
+            {
+                "stock_code": ["600000"],
+                "industry": ["银行"],
+                "weight": [1.0],
+            }
+        )
         result = self.service.calculate_industry_exposure(positions)
         assert result["industry_exposure"]["银行"] == pytest.approx(1.0)
 
     def test_single_stock_concentration(self):
         """单只股票的集中度"""
-        positions = pd.DataFrame({
-            "stock_code": ["600000"],
-            "weight": [1.0],
-        })
+        positions = pd.DataFrame(
+            {
+                "stock_code": ["600000"],
+                "weight": [1.0],
+            }
+        )
         result = self.service.calculate_concentration(positions)
         assert result["top10_concentration"] == pytest.approx(1.0)
         assert result["herfindahl_index"] == pytest.approx(1.0)
@@ -935,10 +1010,12 @@ class TestEdgeCases:
         """大量股票的集中度计算不应崩溃"""
         n = 500
         weights = np.random.dirichlet(np.ones(n))
-        positions = pd.DataFrame({
-            "stock_code": [f"S{i}" for i in range(n)],
-            "weight": weights,
-        })
+        positions = pd.DataFrame(
+            {
+                "stock_code": [f"S{i}" for i in range(n)],
+                "weight": weights,
+            }
+        )
         result = self.service.calculate_concentration(positions)
         assert 0.0 <= result["gini_coefficient"] <= 1.0
         assert 0.0 <= result["herfindahl_index"] <= 1.0
@@ -954,10 +1031,7 @@ class TestEdgeCases:
         """多因子综合得分不应崩溃"""
         n = 10
         index = [f"S{i}" for i in range(50)]
-        factor_data = {
-            f"f{i}": pd.Series(np.random.randn(50), index=index)
-            for i in range(n)
-        }
+        factor_data = {f"f{i}": pd.Series(np.random.randn(50), index=index) for i in range(n)}
         weights = {f"f{i}": 1.0 / n for i in range(n)}
 
         result = self.service.calculate_combined_factor_score(factor_data, weights)
@@ -966,11 +1040,13 @@ class TestEdgeCases:
 
     def test_industry_exposure_with_nan_weights(self):
         """行业暴露度含 NaN 权重"""
-        positions = pd.DataFrame({
-            "stock_code": ["A", "B", "C"],
-            "industry": ["银行", "科技", "银行"],
-            "weight": [0.3, np.nan, 0.4],
-        })
+        positions = pd.DataFrame(
+            {
+                "stock_code": ["A", "B", "C"],
+                "industry": ["银行", "科技", "银行"],
+                "weight": [0.3, np.nan, 0.4],
+            }
+        )
         result = self.service.calculate_industry_exposure(positions)
         # NaN 权重在 groupby sum 时被跳过
         assert isinstance(result, dict)
@@ -978,10 +1054,12 @@ class TestEdgeCases:
 
     def test_factor_exposure_with_nan_factor_values(self):
         """因子暴露度含 NaN 因子值"""
-        positions = pd.DataFrame({
-            "stock_code": ["A", "B", "C"],
-            "weight": [0.4, 0.3, 0.3],
-        })
+        positions = pd.DataFrame(
+            {
+                "stock_code": ["A", "B", "C"],
+                "weight": [0.4, 0.3, 0.3],
+            }
+        )
         factor_data = {
             "f1": pd.Series([1.0, np.nan, 3.0], index=["A", "B", "C"]),
         }

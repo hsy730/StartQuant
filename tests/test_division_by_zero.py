@@ -11,16 +11,13 @@
 
 项目规则3：所有除法/标准差必须处理零值
 """
-import pytest
+
 import numpy as np
 import pandas as pd
 
 from backend.services.risk_metrics import calculate_risk_metrics, _empty_metrics
 from backend.services.backtest_service import BacktestService
 from backend.services.portfolio_analysis_service import PortfolioAnalysisService
-from backend.services.factor_effectiveness_service import FactorEffectivenessService
-from backend.services.factor_exposure_service import FactorExposureService
-from backend.services.analysis_service import AnalysisService
 
 
 class TestIRDivisionByZero:
@@ -73,7 +70,7 @@ class TestIRDivisionByZero:
     def test_ic_std_is_nan_ir_not_nan(self):
         """IC标准差为NaN时IR应为0.0而非NaN"""
         ic_mean = 0.05
-        ic_std = float('nan')
+        ic_std = float("nan")
 
         if abs(ic_std) > 1e-10 and not np.isnan(ic_std):
             ir = ic_mean / ic_std
@@ -89,11 +86,13 @@ class TestWeightNormalizationDivisionByZero:
     def test_zero_weights_no_crash(self):
         """权重全为0时不应崩溃"""
         service = PortfolioAnalysisService()
-        positions = pd.DataFrame({
-            "stock_code": ["000001", "000002", "000003"],
-            "weight": [0.0, 0.0, 0.0],
-            "industry": ["Tech", "Finance", "Health"],
-        })
+        positions = pd.DataFrame(
+            {
+                "stock_code": ["000001", "000002", "000003"],
+                "weight": [0.0, 0.0, 0.0],
+                "industry": ["Tech", "Finance", "Health"],
+            }
+        )
         result = service.calculate_concentration(positions, weight_column="weight")
         assert isinstance(result, dict), "应返回字典"
 
@@ -153,10 +152,12 @@ class TestMarketCapWeightedDivisionByZero:
     def test_all_nan_market_cap_no_crash(self):
         """市值全NaN时不应崩溃，应回退到等权"""
         # 模拟修复后的逻辑
-        group_data = pd.DataFrame({
-            "market_cap": [float('nan')] * 10,
-            "future_return": np.random.randn(10) * 0.01,
-        })
+        group_data = pd.DataFrame(
+            {
+                "market_cap": [float("nan")] * 10,
+                "future_return": np.random.randn(10) * 0.01,
+            }
+        )
 
         weights = group_data["market_cap"].fillna(group_data["market_cap"].median())
         weight_sum = weights.sum()

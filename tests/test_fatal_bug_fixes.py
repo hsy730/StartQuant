@@ -4,6 +4,7 @@
 F1: factor_preprocessing_pipeline.py - 联合中性化else分支 y 未定义 NameError
 F2: formula_compiler_service.py - 统计函数双重包装 Bug
 """
+
 import pytest
 import numpy as np
 import pandas as pd
@@ -11,15 +12,13 @@ import pandas as pd
 from backend.services.factor_preprocessing_pipeline import (
     FactorPreprocessingPipeline,
     PreprocessingConfig,
-    WinsorizeMethod,
-    StandardizeMethod,
 )
 from backend.services.formula_compiler_service import FormulaCompilerService
-
 
 # ============================================================
 # F1: 联合中性化 else 分支 y 未定义 NameError
 # ============================================================
+
 
 class TestJointNeutralizationElseBranchFix:
     """
@@ -48,13 +47,15 @@ class TestJointNeutralizationElseBranchFix:
         rows = []
         for date in dates:
             for stock in stock_codes:
-                rows.append({
-                    "date": date,
-                    "stock_code": stock,
-                    "factor_1": np.random.randn() * 10 + 5,
-                    "market_cap": np.random.lognormal(mean=10, sigma=1),
-                    "industry": "OnlyOne",  # 只有一个行业值
-                })
+                rows.append(
+                    {
+                        "date": date,
+                        "stock_code": stock,
+                        "factor_1": np.random.randn() * 10 + 5,
+                        "market_cap": np.random.lognormal(mean=10, sigma=1),
+                        "industry": "OnlyOne",  # 只有一个行业值
+                    }
+                )
 
         return pd.DataFrame(rows)
 
@@ -110,10 +111,20 @@ class TestJointNeutralizationElseBranchFix:
         pipeline_mc = FactorPreprocessingPipeline(config_mc_only)
 
         result_joint, _ = pipeline_joint.process_factor_dataframe(
-            df.copy(), ["factor_1"], "market_cap", "industry", "date", parallel=False,
+            df.copy(),
+            ["factor_1"],
+            "market_cap",
+            "industry",
+            "date",
+            parallel=False,
         )
         result_mc, _ = pipeline_mc.process_factor_dataframe(
-            df.copy(), ["factor_1"], "market_cap", "industry", "date", parallel=False,
+            df.copy(),
+            ["factor_1"],
+            "market_cap",
+            "industry",
+            "date",
+            parallel=False,
         )
 
         # 两种方式的结果应该近似（都是市值中性化）
@@ -137,7 +148,12 @@ class TestJointNeutralizationElseBranchFix:
         pipeline = FactorPreprocessingPipeline(config)
 
         result_df, _ = pipeline.process_factor_dataframe(
-            df, ["factor_1"], "market_cap", "industry", "date", parallel=False,
+            df,
+            ["factor_1"],
+            "market_cap",
+            "industry",
+            "date",
+            parallel=False,
         )
 
         # 结果不应全为 NaN
@@ -156,7 +172,12 @@ class TestJointNeutralizationElseBranchFix:
         pipeline = FactorPreprocessingPipeline(config)
 
         result_df, _ = pipeline.process_factor_dataframe(
-            df, ["factor_1"], "market_cap", "industry", "date", parallel=False,
+            df,
+            ["factor_1"],
+            "market_cap",
+            "industry",
+            "date",
+            parallel=False,
         )
 
         # 残差与log(市值)的相关系数应接近0
@@ -169,6 +190,7 @@ class TestJointNeutralizationElseBranchFix:
 # ============================================================
 # F2: 统计函数双重包装 Bug
 # ============================================================
+
 
 class TestStatisticalFunctionDoubleWrappingFix:
     """
@@ -184,9 +206,11 @@ class TestStatisticalFunctionDoubleWrappingFix:
 
     def setup_method(self):
         self.compiler = FormulaCompilerService()
-        self.df = pd.DataFrame({
-            "close": [10.0, 11.0, 12.0, 13.0, 14.0, 15.0, 16.0, 17.0, 18.0, 19.0],
-        })
+        self.df = pd.DataFrame(
+            {
+                "close": [10.0, 11.0, 12.0, 13.0, 14.0, 15.0, 16.0, 17.0, 18.0, 19.0],
+            }
+        )
 
     def _compile_and_eval(self, formula_tree):
         """编译公式树并执行，返回结果"""
@@ -270,6 +294,7 @@ class TestStatisticalFunctionDoubleWrappingFix:
 
         # 应该能成功执行
         from backend.utils.safe_math import safe_series_divide
+
         local_vars = {"df": self.df, "np": np, "safe_series_divide": safe_series_divide}
         result = eval(code, {"__builtins__": {}}, local_vars)
 
@@ -286,6 +311,4 @@ class TestStatisticalFunctionDoubleWrappingFix:
                 "args": [{"type": "column", "value": "close"}],
             }
             code = self.compiler.compile_formula(tree)
-            assert 'df["df["' not in code, (
-                f"{func_name} 编译结果包含双重包装: {code}"
-            )
+            assert 'df["df["' not in code, f"{func_name} 编译结果包含双重包装: {code}"

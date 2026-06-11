@@ -7,23 +7,25 @@ IC加权权重回退逻辑测试
 核心逻辑：当 ic_weight_sum 为0或NaN时，每个因子应回退到等权 equal_w = 1/len(factors)，
 而非保留原始 ic_wf 值作为权重。
 """
+
 import numpy as np
 import pandas as pd
 import pytest
 import sys
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 # Mock 重依赖
-sys.modules.setdefault('akshare', MagicMock())
-sys.modules.setdefault('sqlalchemy', MagicMock())
-sys.modules.setdefault('sqlalchemy.orm', MagicMock())
-sys.modules.setdefault('backend.services.cache_service', MagicMock())
-sys.modules.setdefault('backend.services.data_service', MagicMock())
+sys.modules.setdefault("akshare", MagicMock())
+sys.modules.setdefault("sqlalchemy", MagicMock())
+sys.modules.setdefault("sqlalchemy.orm", MagicMock())
+sys.modules.setdefault("backend.services.cache_service", MagicMock())
+sys.modules.setdefault("backend.services.data_service", MagicMock())
 
 
 # ============================================================
 # 辅助函数：构造模拟数据
 # ============================================================
+
 
 def make_multi_factor_df(n_days=200, n_factors=3, seed=42):
     """构造包含价格和因子数据的DataFrame，模拟多因子回测输入"""
@@ -93,6 +95,7 @@ def make_ic_weight_frames_mixed_zero_and_nan(n_days=200, n_factors=3):
 # 核心权重计算逻辑提取（与源码一致，便于单元测试）
 # ============================================================
 
+
 def compute_ic_weighted_composite(df, normalized_factors, ic_weight_frames):
     """
     从 vectorbt_backtest_service.py 提取的IC加权核心逻辑，
@@ -125,6 +128,7 @@ def compute_ic_weighted_composite(df, normalized_factors, ic_weight_frames):
 # 测试类
 # ============================================================
 
+
 class TestICWeightFallbackAllZero:
     """场景1：所有IC权重全为0（因子与收益完全不相关）"""
 
@@ -139,9 +143,7 @@ class TestICWeightFallbackAllZero:
 
         ic_weight_frames = make_ic_weight_frames_all_zero(n_days, n_factors)
 
-        _, weights, invalid_mask = compute_ic_weighted_composite(
-            df, normalized_factors, ic_weight_frames
-        )
+        _, weights, invalid_mask = compute_ic_weighted_composite(df, normalized_factors, ic_weight_frames)
 
         # 所有权重和为0 → 所有行都应标记为无效
         assert invalid_mask.all(), "全0权重应全部标记为无效"
@@ -149,10 +151,7 @@ class TestICWeightFallbackAllZero:
         # 每个因子的权重应为等权 1/3
         equal_w = 1.0 / n_factors
         for w in weights:
-            np.testing.assert_allclose(
-                w.values, equal_w,
-                err_msg="全0权重回退后每个因子权重应为等权"
-            )
+            np.testing.assert_allclose(w.values, equal_w, err_msg="全0权重回退后每个因子权重应为等权")
 
     def test_all_zero_composite_should_be_equal_weighted_sum(self):
         """全0权重时复合得分应等于等权加权和"""
@@ -164,18 +163,13 @@ class TestICWeightFallbackAllZero:
 
         ic_weight_frames = make_ic_weight_frames_all_zero(n_days, n_factors)
 
-        result_df, _, _ = compute_ic_weighted_composite(
-            df, normalized_factors, ic_weight_frames
-        )
+        result_df, _, _ = compute_ic_weighted_composite(df, normalized_factors, ic_weight_frames)
 
         # 手动计算等权复合得分
         equal_w = 1.0 / n_factors
         expected = sum(df[nf] * equal_w for nf in normalized_factors)
 
-        pd.testing.assert_series_equal(
-            result_df["composite_score"], expected,
-            check_names=False
-        )
+        pd.testing.assert_series_equal(result_df["composite_score"], expected, check_names=False)
 
 
 class TestICWeightFallbackAllNaN:
@@ -191,9 +185,7 @@ class TestICWeightFallbackAllNaN:
 
         ic_weight_frames = make_ic_weight_frames_all_nan(n_days, n_factors)
 
-        _, weights, invalid_mask = compute_ic_weighted_composite(
-            df, normalized_factors, ic_weight_frames
-        )
+        _, weights, invalid_mask = compute_ic_weighted_composite(df, normalized_factors, ic_weight_frames)
 
         # 所有权重和为NaN → 所有行都应标记为无效
         assert invalid_mask.all(), "全NaN权重应全部标记为无效"
@@ -201,10 +193,7 @@ class TestICWeightFallbackAllNaN:
         # 每个因子的权重应为等权
         equal_w = 1.0 / n_factors
         for w in weights:
-            np.testing.assert_allclose(
-                w.values, equal_w,
-                err_msg="全NaN权重回退后每个因子权重应为等权"
-            )
+            np.testing.assert_allclose(w.values, equal_w, err_msg="全NaN权重回退后每个因子权重应为等权")
 
 
 class TestICWeightFallbackPartialZero:
@@ -220,9 +209,7 @@ class TestICWeightFallbackPartialZero:
 
         ic_weight_frames = make_ic_weight_frames_partial_zero(n_days, n_factors)
 
-        _, weights, invalid_mask = compute_ic_weighted_composite(
-            df, normalized_factors, ic_weight_frames
-        )
+        _, weights, invalid_mask = compute_ic_weighted_composite(df, normalized_factors, ic_weight_frames)
 
         # 前20行应标记为无效（权重和为0）
         assert invalid_mask.iloc[:20].all(), "前20行权重和为0，应标记为无效"
@@ -232,18 +219,11 @@ class TestICWeightFallbackPartialZero:
         # 无效行的权重应为等权
         equal_w = 1.0 / n_factors
         for w in weights:
-            np.testing.assert_allclose(
-                w.iloc[:20].values, equal_w,
-                err_msg="权重和为0的行应回退到等权"
-            )
+            np.testing.assert_allclose(w.iloc[:20].values, equal_w, err_msg="权重和为0的行应回退到等权")
 
         # 有效行的权重之和应为1（归一化验证）
         valid_weights_sum = sum(w.iloc[20:] for w in weights)
-        np.testing.assert_allclose(
-            valid_weights_sum.values, 1.0,
-            rtol=1e-10,
-            err_msg="有效行各因子权重之和应为1"
-        )
+        np.testing.assert_allclose(valid_weights_sum.values, 1.0, rtol=1e-10, err_msg="有效行各因子权重之和应为1")
 
 
 class TestICWeightFallbackPartialNaN:
@@ -259,9 +239,7 @@ class TestICWeightFallbackPartialNaN:
 
         ic_weight_frames = make_ic_weight_frames_partial_nan(n_days, n_factors)
 
-        _, weights, invalid_mask = compute_ic_weighted_composite(
-            df, normalized_factors, ic_weight_frames
-        )
+        _, weights, invalid_mask = compute_ic_weighted_composite(df, normalized_factors, ic_weight_frames)
 
         # 前30行应标记为无效
         assert invalid_mask.iloc[:30].all(), "前30行权重和为NaN，应标记为无效"
@@ -271,18 +249,11 @@ class TestICWeightFallbackPartialNaN:
         # 无效行的权重应为等权
         equal_w = 1.0 / n_factors
         for w in weights:
-            np.testing.assert_allclose(
-                w.iloc[:30].values, equal_w,
-                err_msg="权重和为NaN的行应回退到等权"
-            )
+            np.testing.assert_allclose(w.iloc[:30].values, equal_w, err_msg="权重和为NaN的行应回退到等权")
 
         # 有效行的权重之和应为1
         valid_weights_sum = sum(w.iloc[30:] for w in weights)
-        np.testing.assert_allclose(
-            valid_weights_sum.values, 1.0,
-            rtol=1e-10,
-            err_msg="有效行各因子权重之和应为1"
-        )
+        np.testing.assert_allclose(valid_weights_sum.values, 1.0, rtol=1e-10, err_msg="有效行各因子权重之和应为1")
 
 
 class TestICWeightFallbackMixedZeroAndNaN:
@@ -298,9 +269,7 @@ class TestICWeightFallbackMixedZeroAndNaN:
 
         ic_weight_frames = make_ic_weight_frames_mixed_zero_and_nan(n_days, n_factors)
 
-        _, weights, invalid_mask = compute_ic_weighted_composite(
-            df, normalized_factors, ic_weight_frames
-        )
+        _, weights, invalid_mask = compute_ic_weighted_composite(df, normalized_factors, ic_weight_frames)
 
         # 前30行（0-9为0，10-29为NaN）都应标记为无效
         assert invalid_mask.iloc[:30].all(), "前30行权重和为0或NaN，应标记为无效"
@@ -310,18 +279,11 @@ class TestICWeightFallbackMixedZeroAndNaN:
         # 所有无效行的权重应为等权
         equal_w = 1.0 / n_factors
         for w in weights:
-            np.testing.assert_allclose(
-                w.iloc[:30].values, equal_w,
-                err_msg="0和NaN行都应回退到等权"
-            )
+            np.testing.assert_allclose(w.iloc[:30].values, equal_w, err_msg="0和NaN行都应回退到等权")
 
         # 有效行的权重之和应为1
         valid_weights_sum = sum(w.iloc[30:] for w in weights)
-        np.testing.assert_allclose(
-            valid_weights_sum.values, 1.0,
-            rtol=1e-10,
-            err_msg="有效行各因子权重之和应为1"
-        )
+        np.testing.assert_allclose(valid_weights_sum.values, 1.0, rtol=1e-10, err_msg="有效行各因子权重之和应为1")
 
 
 class TestICWeightFallbackNoInvalidRows:
@@ -339,31 +301,23 @@ class TestICWeightFallbackNoInvalidRows:
         np.random.seed(42)
         dates = pd.bdate_range("2023-01-01", periods=n_days)
         ic_weight_frames = [
-            pd.Series(np.abs(np.random.randn(n_days)) * 0.05 + 0.01, index=dates)
-            for _ in range(n_factors)
+            pd.Series(np.abs(np.random.randn(n_days)) * 0.05 + 0.01, index=dates) for _ in range(n_factors)
         ]
 
-        _, weights, invalid_mask = compute_ic_weighted_composite(
-            df, normalized_factors, ic_weight_frames
-        )
+        _, weights, invalid_mask = compute_ic_weighted_composite(df, normalized_factors, ic_weight_frames)
 
         # 不应有无效行
         assert not invalid_mask.any(), "所有行权重和均有效，不应有无效行"
 
         # 权重之和应为1
         weights_sum = sum(weights)
-        np.testing.assert_allclose(
-            weights_sum.values, 1.0,
-            rtol=1e-10,
-            err_msg="有效行各因子权重之和应为1"
-        )
+        np.testing.assert_allclose(weights_sum.values, 1.0, rtol=1e-10, err_msg="有效行各因子权重之和应为1")
 
         # 权重不应全部等于等权（IC加权应与等权不同）
         equal_w = 1.0 / n_factors
         for w in weights:
             # 至少有一些行的权重不等于等权
-            assert not np.allclose(w.values, equal_w), \
-                "IC有效时权重不应全部退化为等权"
+            assert not np.allclose(w.values, equal_w), "IC有效时权重不应全部退化为等权"
 
 
 class TestICWeightFallbackSingleFactor:
@@ -379,15 +333,10 @@ class TestICWeightFallbackSingleFactor:
         dates = pd.bdate_range("2023-01-01", periods=n_days)
         ic_weight_frames = [pd.Series(0.0, index=dates)]
 
-        _, weights, invalid_mask = compute_ic_weighted_composite(
-            df, normalized_factors, ic_weight_frames
-        )
+        _, weights, invalid_mask = compute_ic_weighted_composite(df, normalized_factors, ic_weight_frames)
 
         # 单因子等权 = 1.0
-        np.testing.assert_allclose(
-            weights[0].values, 1.0,
-            err_msg="单因子权重为0时应回退到1.0"
-        )
+        np.testing.assert_allclose(weights[0].values, 1.0, err_msg="单因子权重为0时应回退到1.0")
 
 
 class TestICWeightFallbackEdgeCases:
@@ -408,20 +357,14 @@ class TestICWeightFallbackEdgeCases:
             pd.Series(1e-15, index=dates),
         ]
 
-        _, weights, invalid_mask = compute_ic_weighted_composite(
-            df, normalized_factors, ic_weight_frames
-        )
+        _, weights, invalid_mask = compute_ic_weighted_composite(df, normalized_factors, ic_weight_frames)
 
         # 不应触发回退（权重和 = 2e-15 != 0）
         assert not invalid_mask.any(), "极小但非零的权重不应触发回退"
 
         # 权重之和应为1
         weights_sum = sum(weights)
-        np.testing.assert_allclose(
-            weights_sum.values, 1.0,
-            rtol=1e-10,
-            err_msg="极小非零权重归一化后权重之和应为1"
-        )
+        np.testing.assert_allclose(weights_sum.values, 1.0, rtol=1e-10, err_msg="极小非零权重归一化后权重之和应为1")
 
     def test_one_factor_zero_others_nonzero_should_not_fallback(self):
         """一个因子IC为0但其他因子IC非零时，不应触发回退"""
@@ -434,31 +377,22 @@ class TestICWeightFallbackEdgeCases:
         # 因子0的IC为0，但因子1和2的IC非零 → 权重和不为0
         dates = pd.bdate_range("2023-01-01", periods=n_days)
         ic_weight_frames = [
-            pd.Series(0.0, index=dates),           # 因子0: IC=0
-            pd.Series(0.05, index=dates),           # 因子1: IC=0.05
-            pd.Series(0.03, index=dates),           # 因子2: IC=0.03
+            pd.Series(0.0, index=dates),  # 因子0: IC=0
+            pd.Series(0.05, index=dates),  # 因子1: IC=0.05
+            pd.Series(0.03, index=dates),  # 因子2: IC=0.03
         ]
 
-        _, weights, invalid_mask = compute_ic_weighted_composite(
-            df, normalized_factors, ic_weight_frames
-        )
+        _, weights, invalid_mask = compute_ic_weighted_composite(df, normalized_factors, ic_weight_frames)
 
         # 权重和 = 0 + 0.05 + 0.03 = 0.08 != 0，不应触发回退
         assert not invalid_mask.any(), "权重和非零时不应触发回退"
 
         # 因子0的权重应为0（IC=0 → 0/0.08 = 0）
-        np.testing.assert_allclose(
-            weights[0].values, 0.0,
-            err_msg="IC为0的因子权重应为0（非回退场景）"
-        )
+        np.testing.assert_allclose(weights[0].values, 0.0, err_msg="IC为0的因子权重应为0（非回退场景）")
 
         # 因子1和2的权重之和应为1
         weights_sum_nonzero = weights[1] + weights[2]
-        np.testing.assert_allclose(
-            weights_sum_nonzero.values, 1.0,
-            rtol=1e-10,
-            err_msg="非零IC因子权重之和应为1"
-        )
+        np.testing.assert_allclose(weights_sum_nonzero.values, 1.0, rtol=1e-10, err_msg="非零IC因子权重之和应为1")
 
 
 if __name__ == "__main__":

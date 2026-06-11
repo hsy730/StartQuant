@@ -3,12 +3,11 @@
 
 测试命名格式: test_[功能]_[场景]_[预期结果]
 """
+
 import numpy as np
 import pandas as pd
-import pytest
 from unittest.mock import patch, MagicMock
 from scipy import stats as scipy_stats
-
 
 # ==================== Critical 级别 ====================
 
@@ -23,14 +22,20 @@ class TestEnhancedAnalysisServiceFactorDataStructure:
         service = EnhancedAnalysisService()
         dates = pd.date_range("2023-01-01", periods=100)
         factor_data = {
-            "600036": pd.DataFrame({
-                "close": np.random.randn(100).cumsum() + 100,
-                "factor_a": np.random.randn(100),
-            }, index=dates),
-            "000001": pd.DataFrame({
-                "close": np.random.randn(100).cumsum() + 50,
-                "factor_a": np.random.randn(100),
-            }, index=dates),
+            "600036": pd.DataFrame(
+                {
+                    "close": np.random.randn(100).cumsum() + 100,
+                    "factor_a": np.random.randn(100),
+                },
+                index=dates,
+            ),
+            "000001": pd.DataFrame(
+                {
+                    "close": np.random.randn(100).cumsum() + 50,
+                    "factor_a": np.random.randn(100),
+                },
+                index=dates,
+            ),
         }
 
         result = service.analyze_enhanced(factor_data, ["factor_a"])
@@ -46,10 +51,13 @@ class TestEnhancedAnalysisServiceFactorDataStructure:
         service = EnhancedAnalysisService()
         dates = pd.date_range("2023-01-01", periods=100)
         factor_data = {
-            "600036": pd.DataFrame({
-                "close": np.random.randn(100).cumsum() + 100,
-                "factor_a": np.random.randn(100),
-            }, index=dates),
+            "600036": pd.DataFrame(
+                {
+                    "close": np.random.randn(100).cumsum() + 100,
+                    "factor_a": np.random.randn(100),
+                },
+                index=dates,
+            ),
         }
 
         result = service.analyze_enhanced(factor_data, ["factor_a"])
@@ -110,10 +118,13 @@ class TestPortfolioAnalysisSharpeNone:
         service = PortfolioAnalysisService()
         # 构造全零收益（波动率为0），Sharpe应返回None
         dates = pd.date_range("2023-01-01", periods=30)
-        factor_returns = pd.DataFrame({
-            "factor_a": np.zeros(30),
-            "factor_b": np.zeros(30),
-        }, index=dates)
+        factor_returns = pd.DataFrame(
+            {
+                "factor_a": np.zeros(30),
+                "factor_b": np.zeros(30),
+            },
+            index=dates,
+        )
 
         result = service.optimize_weights(factor_returns, method="equal_weight")
         # Sharpe不可计算时应为None，不应崩溃
@@ -126,10 +137,13 @@ class TestPortfolioAnalysisSharpeNone:
         service = PortfolioAnalysisService()
         np.random.seed(42)
         dates = pd.date_range("2023-01-01", periods=252)
-        factor_returns = pd.DataFrame({
-            "factor_a": np.random.randn(252) * 0.01 + 0.0005,
-            "factor_b": np.random.randn(252) * 0.01 + 0.0003,
-        }, index=dates)
+        factor_returns = pd.DataFrame(
+            {
+                "factor_a": np.random.randn(252) * 0.01 + 0.0005,
+                "factor_b": np.random.randn(252) * 0.01 + 0.0003,
+            },
+            index=dates,
+        )
 
         result = service.optimize_weights(factor_returns, method="equal_weight")
         assert isinstance(result["sharpe_ratio"], float)
@@ -140,10 +154,13 @@ class TestSingleStockWeightOne:
 
     def _make_single_stock_df(self, n=100):
         dates = pd.date_range("2023-01-01", periods=n)
-        return pd.DataFrame({
-            "close": np.random.randn(n).cumsum() + 100,
-            "market_cap": np.random.uniform(1e9, 1e10, n),
-        }, index=dates)
+        return pd.DataFrame(
+            {
+                "close": np.random.randn(n).cumsum() + 100,
+                "market_cap": np.random.uniform(1e9, 1e10, n),
+            },
+            index=dates,
+        )
 
     def test_momentum_strategy_single_stock_weight_should_be_one(self):
         """动量策略单股票买入时权重应为1.0"""
@@ -198,7 +215,7 @@ class TestFactorOrchestratorICKey:
         """IC分析结果应从ic_stats子字典中正确提取因子key"""
         from backend.services.factor_orchestrator_service import FactorOrchestrator, PipelineStageResult, PipelineStatus
 
-        orchestrator = FactorOrchestrator()
+        FactorOrchestrator()
         # 模拟ic_analysis阶段返回的结果
         ic_result = {
             "ic_stats": {
@@ -212,7 +229,7 @@ class TestFactorOrchestratorICKey:
             "rolling_ir": {},
         }
 
-        stage_result = PipelineStageResult(
+        PipelineStageResult(
             stage_name="ic_analysis",
             status=PipelineStatus.PASSED,
             result=ic_result,
@@ -240,9 +257,12 @@ class TestMeanReversionShortWeight:
 
         strategy = MeanReversionStrategy(lookback_window=10, entry_threshold=1.5)
         dates = pd.date_range("2023-01-01", periods=100)
-        df = pd.DataFrame({
-            "close": np.random.randn(100).cumsum() + 100,
-        }, index=dates)
+        df = pd.DataFrame(
+            {
+                "close": np.random.randn(100).cumsum() + 100,
+            },
+            index=dates,
+        )
 
         signals = strategy.generate_signals(df)
         weights = strategy.calculate_weights(df, signals)
@@ -282,7 +302,7 @@ class TestFactorOrchestratorCrossSectionalDetection:
             mock_result.checks = []
             mock_detector.detect_cross_sectional.return_value = mock_result
 
-            result = orchestrator._stage_lookahead_detection(shared_data)
+            orchestrator._stage_lookahead_detection(shared_data)
 
             # 多股票场景应调用detect_cross_sectional
             mock_detector.detect_cross_sectional.assert_called_once()
@@ -298,14 +318,17 @@ class TestAnalysisServiceMaskWhere:
         service = AnalysisService()
         dates = pd.date_range("2023-01-01", periods=200)
         np.random.seed(42)
-        df = pd.DataFrame({
-            "factor_a": np.random.randn(200),
-            "close": np.random.randn(200).cumsum() + 100,
-            "future_return_1": np.random.randn(200) * 0.01,
-            "tradable_mask": np.random.choice([True, False], 200, p=[0.8, 0.2]),
-            "is_limit_up": np.zeros(200, dtype=bool),
-            "is_limit_down": np.zeros(200, dtype=bool),
-        }, index=dates)
+        df = pd.DataFrame(
+            {
+                "factor_a": np.random.randn(200),
+                "close": np.random.randn(200).cumsum() + 100,
+                "future_return_1": np.random.randn(200) * 0.01,
+                "tradable_mask": np.random.choice([True, False], 200, p=[0.8, 0.2]),
+                "is_limit_up": np.zeros(200, dtype=bool),
+                "is_limit_down": np.zeros(200, dtype=bool),
+            },
+            index=dates,
+        )
 
         factor_data = {"600036": df}
         result = service._calculate_single_stock_ic(factor_data, ["factor_a"])
@@ -333,10 +356,13 @@ class TestSmartPreprocessingFatTail:
 
         # 构造肥尾分布数据（t分布自由度=3，超额峰度=6，总峰度=9）
         fat_tail_data = {
-            "600036": pd.DataFrame({
-                "factor_a": np.random.standard_t(df=3, size=n),
-                "date": dates,
-            }, index=dates),
+            "600036": pd.DataFrame(
+                {
+                    "factor_a": np.random.standard_t(df=3, size=n),
+                    "date": dates,
+                },
+                index=dates,
+            ),
         }
 
         chars = detector.analyze_data(fat_tail_data, ["factor_a"])
@@ -352,10 +378,13 @@ class TestSmartPreprocessingFatTail:
 
         np.random.seed(42)
         normal_data = {
-            "600036": pd.DataFrame({
-                "factor_a": np.random.randn(1000),
-                "date": dates,
-            }, index=dates),
+            "600036": pd.DataFrame(
+                {
+                    "factor_a": np.random.randn(1000),
+                    "date": dates,
+                },
+                index=dates,
+            ),
         }
 
         chars = detector.analyze_data(normal_data, ["factor_a"])
@@ -485,10 +514,10 @@ class TestFactorCorrelationFisherZ:
         # 如果使用了错误的1/sqrt(n-1)，p值会不同
         z_val = np.arctanh(0.3)
         correct_se = 1 / np.sqrt(n_days - 3)
-        correct_p = 2 * (1 - scipy_stats.norm.cdf(abs(z_val) / correct_se))
+        2 * (1 - scipy_stats.norm.cdf(abs(z_val) / correct_se))
 
         wrong_se = 1 / np.sqrt(n_days - 1)
-        wrong_p = 2 * (1 - scipy_stats.norm.cdf(abs(z_val) / wrong_se))
+        2 * (1 - scipy_stats.norm.cdf(abs(z_val) / wrong_se))
 
         # 正确标准误应更大（n-3 < n-1），因此p值应更大
         assert correct_se > wrong_se
@@ -507,12 +536,18 @@ class TestSmartSlippagePerStockVolatility:
         dates = pd.date_range("2023-01-01", periods=100)
 
         price_data = {
-            "600036": pd.DataFrame({
-                "close": np.random.randn(100).cumsum() + 100,
-            }, index=dates),
-            "000001": pd.DataFrame({
-                "close": np.random.randn(100).cumsum() + 50,
-            }, index=dates),
+            "600036": pd.DataFrame(
+                {
+                    "close": np.random.randn(100).cumsum() + 100,
+                },
+                index=dates,
+            ),
+            "000001": pd.DataFrame(
+                {
+                    "close": np.random.randn(100).cumsum() + 50,
+                },
+                index=dates,
+            ),
         }
 
         chars = detector.analyze_market(
@@ -556,11 +591,14 @@ class TestSingleStockICSpearman:
         service = AnalysisService()
         dates = pd.date_range("2023-01-01", periods=200)
         np.random.seed(42)
-        df = pd.DataFrame({
-            "factor_a": np.random.randn(200),
-            "close": np.random.randn(200).cumsum() + 100,
-            "future_return_1": np.random.randn(200) * 0.01,
-        }, index=dates)
+        df = pd.DataFrame(
+            {
+                "factor_a": np.random.randn(200),
+                "close": np.random.randn(200).cumsum() + 100,
+                "future_return_1": np.random.randn(200) * 0.01,
+            },
+            index=dates,
+        )
 
         factor_data = {"600036": df}
         result = service._calculate_single_stock_ic(factor_data, ["factor_a"])
@@ -577,7 +615,6 @@ class TestFactorEffectivenessCrossSectionalSpearman:
     # Bug #16已修复：_calculate_cross_sectional_ic已使用spearmanr
     def test_cross_sectional_ic_should_use_spearmanr(self):
         """横截面IC计算应使用scipy.stats.spearmanr"""
-        from backend.services.factor_effectiveness_service import FactorEffectivenessService
 
         # 验证_calculate_cross_sectional_ic方法使用spearmanr
         # 通过检查import确认
@@ -594,13 +631,19 @@ class TestCrossSectionalMADMinValue:
 
     def test_cross_sectional_mad_near_zero_should_not_clip(self):
         """横截面MAD极小时（数据过于集中），不应执行clip"""
-        from backend.services.factor_preprocessing_pipeline import FactorPreprocessingPipeline, PreprocessingConfig, WinsorizeMethod
+        from backend.services.factor_preprocessing_pipeline import (
+            FactorPreprocessingPipeline,
+            PreprocessingConfig,
+            WinsorizeMethod,
+        )
 
-        pipeline = FactorPreprocessingPipeline(config=PreprocessingConfig(
-            winsorize_method=WinsorizeMethod.MAD,
-            winsorize_n_sigma=3.0,
-            cross_sectional=True,
-        ))
+        pipeline = FactorPreprocessingPipeline(
+            config=PreprocessingConfig(
+                winsorize_method=WinsorizeMethod.MAD,
+                winsorize_n_sigma=3.0,
+                cross_sectional=True,
+            )
+        )
 
         # 构造几乎恒定的因子值
         series = pd.Series([1.0] * 50 + [1.0001] * 50)
@@ -611,12 +654,18 @@ class TestCrossSectionalMADMinValue:
 
     def test_cross_sectional_mad_zero_should_fallback_to_std(self):
         """MAD=0时应回退到std作为σ_hat估计"""
-        from backend.services.factor_preprocessing_pipeline import FactorPreprocessingPipeline, PreprocessingConfig, WinsorizeMethod
+        from backend.services.factor_preprocessing_pipeline import (
+            FactorPreprocessingPipeline,
+            PreprocessingConfig,
+            WinsorizeMethod,
+        )
 
-        pipeline = FactorPreprocessingPipeline(config=PreprocessingConfig(
-            winsorize_method=WinsorizeMethod.MAD,
-            winsorize_n_sigma=3.0,
-        ))
+        pipeline = FactorPreprocessingPipeline(
+            config=PreprocessingConfig(
+                winsorize_method=WinsorizeMethod.MAD,
+                winsorize_n_sigma=3.0,
+            )
+        )
 
         # 所有值完全相同
         series = pd.Series([5.0] * 100)
@@ -634,30 +683,32 @@ class TestCrossSectionalJointNeutralizationSmallIndustry:
         """样本量<5的小行业应合并为"Other"类别"""
         from backend.services.factor_preprocessing_pipeline import FactorPreprocessingPipeline, PreprocessingConfig
 
-        pipeline = FactorPreprocessingPipeline(config=PreprocessingConfig(
-            enable_market_cap_neutralization=True,
-            enable_industry_neutralization=True,
-            use_joint_neutralization=True,
-            cross_sectional=True,
-            min_samples=5,
-        ))
+        pipeline = FactorPreprocessingPipeline(
+            config=PreprocessingConfig(
+                enable_market_cap_neutralization=True,
+                enable_industry_neutralization=True,
+                use_joint_neutralization=True,
+                cross_sectional=True,
+                min_samples=5,
+            )
+        )
 
         # 构造含小行业的数据（多日期确保groupby.apply正确展开）
         np.random.seed(42)
         dates = [pd.Timestamp("2023-01-01")] * 25 + [pd.Timestamp("2023-01-02")] * 25
         n = 50
-        df = pd.DataFrame({
-            "date": dates,
-            "factor_a": np.random.randn(n),
-            "market_cap": np.random.uniform(1e9, 1e10, n),
-            "industry": (["银行"] * 10 + ["地产"] * 10 + ["微小行业A"] * 2 + ["微小行业B"] * 2 + ["科技"] * 1) * 2,
-            "stock_code": [f"stock_{i}" for i in range(n)],
-        })
+        df = pd.DataFrame(
+            {
+                "date": dates,
+                "factor_a": np.random.randn(n),
+                "market_cap": np.random.uniform(1e9, 1e10, n),
+                "industry": (["银行"] * 10 + ["地产"] * 10 + ["微小行业A"] * 2 + ["微小行业B"] * 2 + ["科技"] * 1) * 2,
+                "stock_code": [f"stock_{i}" for i in range(n)],
+            }
+        )
 
         # 执行横截面处理，不应崩溃
-        result, stats = pipeline._process_cross_sectional(
-            df, "factor_a", "market_cap", "industry", "date"
-        )
+        result, stats = pipeline._process_cross_sectional(df, "factor_a", "market_cap", "industry", "date")
 
         # 应正常返回结果（Series或DataFrame）
         assert result is not None
@@ -731,10 +782,13 @@ class TestMarketCapStrategyDatetimeIndex:
         dates = pd.date_range("2023-01-01", periods=50)
 
         # 单股票DatetimeIndex场景
-        df = pd.DataFrame({
-            "close": np.random.randn(50).cumsum() + 100,
-            "market_cap": np.random.uniform(1e9, 1e10, 50),
-        }, index=dates)
+        df = pd.DataFrame(
+            {
+                "close": np.random.randn(50).cumsum() + 100,
+                "market_cap": np.random.uniform(1e9, 1e10, 50),
+            },
+            index=dates,
+        )
 
         signals = strategy.generate_signals(df)
         weights = strategy.calculate_weights(df, signals)
@@ -753,10 +807,13 @@ class TestMarketCapStrategyDatetimeIndex:
         n = 50
         idx = pd.Index(range(n), name="date")
 
-        df = pd.DataFrame({
-            "close": np.random.randn(n).cumsum() + 100,
-            "market_cap": np.random.uniform(1e9, 1e10, n),
-        }, index=idx)
+        df = pd.DataFrame(
+            {
+                "close": np.random.randn(n).cumsum() + 100,
+                "market_cap": np.random.uniform(1e9, 1e10, n),
+            },
+            index=idx,
+        )
 
         signals = strategy.generate_signals(df)
         weights = strategy.calculate_weights(df, signals)
@@ -778,10 +835,13 @@ class TestBusinessLogicBugsIntegration:
         service = EnhancedAnalysisService()
         dates = pd.date_range("2023-01-01", periods=200)
         factor_data = {
-            "600036": pd.DataFrame({
-                "close": np.random.randn(200).cumsum() + 100,
-                "factor_a": np.random.randn(200),
-            }, index=dates),
+            "600036": pd.DataFrame(
+                {
+                    "close": np.random.randn(200).cumsum() + 100,
+                    "factor_a": np.random.randn(200),
+                },
+                index=dates,
+            ),
         }
 
         # 应正常完成分析
@@ -795,14 +855,20 @@ class TestBusinessLogicBugsIntegration:
         service = EnhancedAnalysisService()
         dates = pd.date_range("2023-01-01", periods=200)
         factor_data = {
-            "600036": pd.DataFrame({
-                "close": np.random.randn(200).cumsum() + 100,
-                "factor_a": np.random.randn(200),
-            }, index=dates),
-            "000001": pd.DataFrame({
-                "close": np.random.randn(200).cumsum() + 50,
-                "factor_a": np.random.randn(200),
-            }, index=dates),
+            "600036": pd.DataFrame(
+                {
+                    "close": np.random.randn(200).cumsum() + 100,
+                    "factor_a": np.random.randn(200),
+                },
+                index=dates,
+            ),
+            "000001": pd.DataFrame(
+                {
+                    "close": np.random.randn(200).cumsum() + 50,
+                    "factor_a": np.random.randn(200),
+                },
+                index=dates,
+            ),
         }
 
         result = service.analyze_enhanced(factor_data, ["factor_a"])
@@ -816,10 +882,13 @@ class TestBusinessLogicBugsIntegration:
         dates = pd.date_range("2023-01-01", periods=30)
 
         # 一个因子零波动，一个正常
-        factor_returns = pd.DataFrame({
-            "factor_a": np.zeros(30),
-            "factor_b": np.random.randn(30) * 0.01,
-        }, index=dates)
+        factor_returns = pd.DataFrame(
+            {
+                "factor_a": np.zeros(30),
+                "factor_b": np.random.randn(30) * 0.01,
+            },
+            index=dates,
+        )
 
         result = service.optimize_weights(factor_returns, method="equal_weight")
         assert "weights" in result
@@ -833,10 +902,13 @@ class TestBusinessLogicBugsIntegration:
 
         dates = pd.date_range("2023-01-01", periods=50)
         # 构造几乎不变的价格，不太可能触发信号
-        df = pd.DataFrame({
-            "close": np.ones(50) * 100,
-            "market_cap": np.ones(50) * 1e9,
-        }, index=dates)
+        df = pd.DataFrame(
+            {
+                "close": np.ones(50) * 100,
+                "market_cap": np.ones(50) * 1e9,
+            },
+            index=dates,
+        )
 
         for StrategyClass in [MomentumStrategy, MeanReversionStrategy, MarketCapStrategy]:
             strategy = StrategyClass()

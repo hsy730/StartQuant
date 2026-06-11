@@ -1,6 +1,7 @@
 """
 工具模块测试 - 覆盖序列化、板块识别、收益率计算工具
 """
+
 import sys
 import os
 import numpy as np
@@ -9,13 +10,17 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from backend.utils.serialization import safe_numeric_value, sanitize_dict
-from backend.core.market_board import (
-    MarketBoard, detect_market_board, get_board_n_sigma,
+from backend.utils.serialization import safe_numeric_value, sanitize_dict  # noqa: E402
+from backend.core.market_board import (  # noqa: E402
+    MarketBoard,
+    detect_market_board,
+    get_board_n_sigma,
     get_board_slippage_multiplier,
 )
-from backend.utils.returns import (
-    calculate_future_returns, calculate_ic_stats, calculate_rolling_ir,
+from backend.utils.returns import (  # noqa: E402
+    calculate_future_returns,
+    calculate_ic_stats,
+    calculate_rolling_ir,
 )
 
 
@@ -32,13 +37,13 @@ class TestSafeNumericValue:
         assert safe_numeric_value(np.float64(1.5)) == 1.5
 
     def test_nan_returns_none(self):
-        assert safe_numeric_value(float('nan')) is None
+        assert safe_numeric_value(float("nan")) is None
 
     def test_inf_returns_none(self):
-        assert safe_numeric_value(float('inf')) is None
+        assert safe_numeric_value(float("inf")) is None
 
     def test_neg_inf_returns_none(self):
-        assert safe_numeric_value(float('-inf')) is None
+        assert safe_numeric_value(float("-inf")) is None
 
     def test_numpy_nan_returns_none(self):
         assert safe_numeric_value(np.nan) is None
@@ -67,11 +72,11 @@ class TestSanitizeDict:
         assert result == {"a": 1, "b": 2.5}
 
     def test_nan_in_dict(self):
-        result = sanitize_dict({"a": float('nan')})
+        result = sanitize_dict({"a": float("nan")})
         assert result["a"] is None
 
     def test_inf_in_dict(self):
-        result = sanitize_dict({"a": float('inf')})
+        result = sanitize_dict({"a": float("inf")})
         assert result["a"] is None
 
     def test_numpy_int(self):
@@ -88,7 +93,7 @@ class TestSanitizeDict:
         assert result == {"outer": {"inner": 1.5}}
 
     def test_list_in_dict(self):
-        result = sanitize_dict({"a": [1, np.float64(2), float('nan')]})
+        result = sanitize_dict({"a": [1, np.float64(2), float("nan")]})
         assert result["a"] == [1, 2.0, None]
 
     def test_none_value(self):

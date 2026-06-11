@@ -8,6 +8,7 @@ StockRankerService 计算逻辑稳定性 — 单元测试
 4. 训练期重叠检测
 5. 边界情况与容错
 """
+
 import pytest
 import numpy as np
 import pandas as pd
@@ -20,6 +21,7 @@ class TestSplitGroups:
     def _split_groups(groups, total_rows, split_idx):
         """直接调用静态方法"""
         from backend.services.stock_ranker_service import StockRankerService
+
         return StockRankerService._split_groups(groups, total_rows, split_idx)
 
     def test_exact_boundary_split(self):
@@ -125,8 +127,7 @@ class TestSplitGroups:
                 f"for groups={groups}, split_idx={split_idx}"
             )
             assert sum(valid_g) == total - adj_idx, (
-                f"valid_groups sum {sum(valid_g)} != {total - adj_idx} "
-                f"for groups={groups}, split_idx={split_idx}"
+                f"valid_groups sum {sum(valid_g)} != {total - adj_idx} " f"for groups={groups}, split_idx={split_idx}"
             )
 
 
@@ -138,19 +139,25 @@ class TestFeatureMissingValueFilling:
         pytest.importorskip("xgboost")
         from backend.services.stock_ranker_service import StockRankerService, RankTrainingConfig
 
-        ranker = StockRankerService(default_config=RankTrainingConfig(
-            n_estimators=3, max_depth=2, early_stopping_rounds=2,
-        ))
+        ranker = StockRankerService(
+            default_config=RankTrainingConfig(
+                n_estimators=3,
+                max_depth=2,
+                early_stopping_rounds=2,
+            )
+        )
 
         np.random.seed(42)
         n = 300
-        df = pd.DataFrame({
-            "date": pd.date_range("2023-01-01", periods=n, freq="B"),
-            "stock_code": [f"{i%10:06d}" for i in range(n)],
-            "feature_1": np.random.randn(n),
-            "feature_2": np.random.randn(n),
-            "forward_return_5d": np.random.randn(n) * 0.02,
-        })
+        df = pd.DataFrame(
+            {
+                "date": pd.date_range("2023-01-01", periods=n, freq="B"),
+                "stock_code": [f"{i % 10:06d}" for i in range(n)],
+                "feature_1": np.random.randn(n),
+                "feature_2": np.random.randn(n),
+                "forward_return_5d": np.random.randn(n) * 0.02,
+            }
+        )
 
         # 在 feature_1 中引入 20% NaN
         nan_mask = np.random.rand(n) < 0.2
@@ -163,7 +170,9 @@ class TestFeatureMissingValueFilling:
             date_col="date",
             group_col="date",
             config=RankTrainingConfig(
-                objective="reg:squarederror", n_estimators=3, max_depth=2,
+                objective="reg:squarederror",
+                n_estimators=3,
+                max_depth=2,
             ),
             enable_bias_check=False,
         )
@@ -177,18 +186,24 @@ class TestFeatureMissingValueFilling:
         pytest.importorskip("xgboost")
         from backend.services.stock_ranker_service import StockRankerService, RankTrainingConfig
 
-        ranker = StockRankerService(default_config=RankTrainingConfig(
-            n_estimators=3, max_depth=2, early_stopping_rounds=2,
-        ))
+        ranker = StockRankerService(
+            default_config=RankTrainingConfig(
+                n_estimators=3,
+                max_depth=2,
+                early_stopping_rounds=2,
+            )
+        )
 
         np.random.seed(42)
         n = 300
-        df = pd.DataFrame({
-            "date": pd.date_range("2023-01-01", periods=n, freq="B"),
-            "stock_code": [f"{i%10:06d}" for i in range(n)],
-            "feature_1": np.random.randn(n),
-            "forward_return_5d": np.random.randn(n) * 0.02,
-        })
+        df = pd.DataFrame(
+            {
+                "date": pd.date_range("2023-01-01", periods=n, freq="B"),
+                "stock_code": [f"{i % 10:06d}" for i in range(n)],
+                "feature_1": np.random.randn(n),
+                "forward_return_5d": np.random.randn(n) * 0.02,
+            }
+        )
 
         # 在 label 中引入 10% NaN
         nan_mask = np.random.rand(n) < 0.1
@@ -200,7 +215,9 @@ class TestFeatureMissingValueFilling:
             date_col="date",
             group_col="date",
             config=RankTrainingConfig(
-                objective="reg:squarederror", n_estimators=3, max_depth=2,
+                objective="reg:squarederror",
+                n_estimators=3,
+                max_depth=2,
             ),
             enable_bias_check=False,
         )
@@ -218,18 +235,24 @@ class TestRankMethod:
         pytest.importorskip("xgboost")
         from backend.services.stock_ranker_service import StockRankerService, RankTrainingConfig
 
-        ranker = StockRankerService(default_config=RankTrainingConfig(
-            n_estimators=3, max_depth=2, early_stopping_rounds=2,
-        ))
+        ranker = StockRankerService(
+            default_config=RankTrainingConfig(
+                n_estimators=3,
+                max_depth=2,
+                early_stopping_rounds=2,
+            )
+        )
 
         np.random.seed(42)
         n = 300
-        df = pd.DataFrame({
-            "date": pd.date_range("2023-01-01", periods=n, freq="B"),
-            "stock_code": [f"{i%10:06d}" for i in range(n)],
-            "feature_1": np.random.randn(n),
-            "forward_return_5d": np.random.randn(n) * 0.02,
-        })
+        df = pd.DataFrame(
+            {
+                "date": pd.date_range("2023-01-01", periods=n, freq="B"),
+                "stock_code": [f"{i % 10:06d}" for i in range(n)],
+                "feature_1": np.random.randn(n),
+                "forward_return_5d": np.random.randn(n) * 0.02,
+            }
+        )
 
         result = ranker.train(
             feature_df=df,
@@ -237,7 +260,9 @@ class TestRankMethod:
             date_col="date",
             group_col="date",
             config=RankTrainingConfig(
-                objective="reg:squarederror", n_estimators=3, max_depth=2,
+                objective="reg:squarederror",
+                n_estimators=3,
+                max_depth=2,
             ),
             enable_bias_check=False,
         )
@@ -247,9 +272,9 @@ class TestRankMethod:
 
         # rank_position 应全部为整数（无小数）
         positions = prediction.predictions["rank_position"].values
-        assert all(p == int(p) for p in positions), (
-            f"rank_position 包含非整数值: {positions[positions != positions.astype(int)]}"
-        )
+        assert all(
+            p == int(p) for p in positions
+        ), f"rank_position 包含非整数值: {positions[positions != positions.astype(int)]}"
 
 
 class TestTrainPeriodOverlapDetection:
@@ -261,20 +286,26 @@ class TestTrainPeriodOverlapDetection:
         from backend.services.stock_ranker_service import StockRankerService, RankTrainingConfig
         from unittest.mock import patch
 
-        ranker = StockRankerService(default_config=RankTrainingConfig(
-            n_estimators=3, max_depth=2, early_stopping_rounds=2,
-        ))
+        ranker = StockRankerService(
+            default_config=RankTrainingConfig(
+                n_estimators=3,
+                max_depth=2,
+                early_stopping_rounds=2,
+            )
+        )
 
         np.random.seed(42)
         n = 300
         dates = pd.date_range("2023-01-01", periods=n, freq="B")
-        df = pd.DataFrame({
-            "date": dates,
-            "stock_code": [f"{i%10:06d}" for i in range(n)],
-            "feature_1": np.random.randn(n),
-            "close": 10 + np.cumsum(np.random.randn(n) * 0.5),
-            "forward_return_5d": np.random.randn(n) * 0.02,
-        })
+        df = pd.DataFrame(
+            {
+                "date": dates,
+                "stock_code": [f"{i % 10:06d}" for i in range(n)],
+                "feature_1": np.random.randn(n),
+                "close": 10 + np.cumsum(np.random.randn(n) * 0.5),
+                "forward_return_5d": np.random.randn(n) * 0.02,
+            }
+        )
 
         result = ranker.train(
             feature_df=df,
@@ -282,7 +313,9 @@ class TestTrainPeriodOverlapDetection:
             date_col="date",
             group_col="date",
             config=RankTrainingConfig(
-                objective="reg:squarederror", n_estimators=3, max_depth=2,
+                objective="reg:squarederror",
+                n_estimators=3,
+                max_depth=2,
             ),
             enable_bias_check=False,
         )
@@ -294,6 +327,7 @@ class TestTrainPeriodOverlapDetection:
 
         # 使用训练期数据做回测，验证重叠警告被触发
         import backend.services.stock_ranker_service as srv_module
+
         with patch.object(srv_module.logger, "warning") as mock_warn:
             try:
                 ranker.predict_and_backtest(
@@ -318,18 +352,18 @@ class TestEdgeCases:
     def test_split_groups_all_same_size(self):
         """所有组大小相同"""
         from backend.services.stock_ranker_service import StockRankerService
+
         groups = [50] * 10
         for split_ratio in [0.1, 0.2, 0.5, 0.8, 0.9]:
             split_idx = int(sum(groups) * split_ratio)
-            train_g, valid_g, adj_idx = StockRankerService._split_groups(
-                groups, sum(groups), split_idx
-            )
+            train_g, valid_g, adj_idx = StockRankerService._split_groups(groups, sum(groups), split_idx)
             assert sum(train_g) == adj_idx
             assert sum(valid_g) == sum(groups) - adj_idx
 
     def test_split_groups_large_first_group(self):
         """第一个组特别大"""
         from backend.services.stock_ranker_service import StockRankerService
+
         groups = [500, 50, 50]
         train_g, valid_g, adj_idx = StockRankerService._split_groups(groups, 600, 100)
         # 第1组跨越 → 归训练集
@@ -340,6 +374,7 @@ class TestEdgeCases:
     def test_split_groups_large_last_group(self):
         """最后一个组特别大"""
         from backend.services.stock_ranker_service import StockRankerService
+
         groups = [50, 50, 500]
         train_g, valid_g, adj_idx = StockRankerService._split_groups(groups, 600, 100)
         # 第3组在验证集
@@ -352,18 +387,24 @@ class TestEdgeCases:
         pytest.importorskip("xgboost")
         from backend.services.stock_ranker_service import StockRankerService, RankTrainingConfig
 
-        ranker = StockRankerService(default_config=RankTrainingConfig(
-            n_estimators=3, max_depth=2, early_stopping_rounds=2,
-        ))
+        ranker = StockRankerService(
+            default_config=RankTrainingConfig(
+                n_estimators=3,
+                max_depth=2,
+                early_stopping_rounds=2,
+            )
+        )
 
         np.random.seed(42)
         n = 200
-        df = pd.DataFrame({
-            "date": pd.date_range("2023-01-01", periods=n, freq="B"),
-            "stock_code": [f"{i%10:06d}" for i in range(n)],
-            "feature_1": np.random.randn(n),
-            "forward_return_5d": np.random.randn(n) * 0.02,
-        })
+        df = pd.DataFrame(
+            {
+                "date": pd.date_range("2023-01-01", periods=n, freq="B"),
+                "stock_code": [f"{i % 10:06d}" for i in range(n)],
+                "feature_1": np.random.randn(n),
+                "forward_return_5d": np.random.randn(n) * 0.02,
+            }
+        )
 
         result = ranker.train(
             feature_df=df,
@@ -371,7 +412,9 @@ class TestEdgeCases:
             date_col="date",
             group_col="date",
             config=RankTrainingConfig(
-                objective="reg:squarederror", n_estimators=3, max_depth=2,
+                objective="reg:squarederror",
+                n_estimators=3,
+                max_depth=2,
             ),
             enable_bias_check=False,
         )

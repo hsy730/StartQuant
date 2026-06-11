@@ -1,6 +1,7 @@
 """
 BaseStrategy 单元测试 - 覆盖手续费计算、指标计算、边界条件
 """
+
 import sys
 import os
 import warnings
@@ -9,12 +10,12 @@ import pandas as pd
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from backend.strategies.base_strategy import BaseStrategy
+from backend.strategies.base_strategy import BaseStrategy  # noqa: E402
 
 # empyrical内部使用了np.NINF（NumPy 2.0已移除），需要兼容补丁
-if not hasattr(np, 'NINF'):
+if not hasattr(np, "NINF"):
     np.NINF = -np.inf
-if not hasattr(np, 'PINF'):
+if not hasattr(np, "PINF"):
     np.PINF = np.inf
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 
@@ -34,6 +35,7 @@ def run(name, fn):
 
 
 # ---- 测试用具体策略实现 ----
+
 
 class SimpleBuyHoldStrategy(BaseStrategy):
     """简单买入持有策略（用于测试）"""
@@ -78,6 +80,7 @@ def make_price_data(n=100, seed=42):
 # 1. 手续费计算测试
 # ============================================================
 
+
 def test_commission_is_proportional_not_absolute():
     """手续费应为比例而非绝对金额"""
     df = make_price_data(50)
@@ -116,8 +119,7 @@ def test_commission_increases_with_rebalance():
     result_switch = strategy_switch.backtest(df)
 
     # 切换策略的交易次数应多于持有策略
-    assert result_switch["trades_count"] > result_hold["trades_count"], \
-        "切换策略的交易次数应多于持有策略"
+    assert result_switch["trades_count"] > result_hold["trades_count"], "切换策略的交易次数应多于持有策略"
 
 
 def test_higher_commission_rate_reduces_return():
@@ -132,13 +134,13 @@ def test_higher_commission_rate_reduces_return():
 
     equity_low = result_low["equity_curve"].iloc[-1]
     equity_high = result_high["equity_curve"].iloc[-1]
-    assert equity_low >= equity_high, \
-        f"低手续费净值{equity_low:.2f}应 >= 高手续费净值{equity_high:.2f}"
+    assert equity_low >= equity_high, f"低手续费净值{equity_low:.2f}应 >= 高手续费净值{equity_high:.2f}"
 
 
 # ============================================================
 # 2. 指标计算测试
 # ============================================================
+
 
 def test_calculate_metrics_normal_returns():
     """正常收益率序列应返回有效指标"""
@@ -236,6 +238,7 @@ def test_calculate_metrics_zero_returns():
 # 3. 回测边界条件测试
 # ============================================================
 
+
 def test_backtest_minimum_data():
     """最小数据量（2行）应能完成回测"""
     dates = pd.date_range("2023-01-01", periods=2, freq="B")
@@ -310,6 +313,7 @@ def test_backtest_high_commission():
 # ============================================================
 # 4. 策略接口测试
 # ============================================================
+
 
 def test_get_name():
     """策略名称应为类名"""

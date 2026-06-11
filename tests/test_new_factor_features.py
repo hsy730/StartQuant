@@ -10,10 +10,10 @@
 运行方式：
     pytest tests/test_new_factor_features.py -v
 """
+
 import pytest
 import numpy as np
 import pandas as pd
-from datetime import datetime, timedelta
 import sys
 from pathlib import Path
 
@@ -30,40 +30,39 @@ class TestFactorReturnAnalysisService:
             FactorReturnAnalysisService,
             FactorReturnAnalysisConfig,
         )
-        
+
         self.config = FactorReturnAnalysisConfig(
             n_quantiles=5,
             enable_bootstrap=False,  # 加速测试
         )
         self.service = FactorReturnAnalysisService(config=self.config)
-        
+
         self.sample_data = self._generate_sample_data()
 
     def _generate_sample_data(self):
         """生成模拟的因子数据"""
         np.random.seed(42)
         n_days = 100
-        
+
         data = {}
-        
+
         for stock_id in range(10):
-            dates = pd.date_range(
-                start="2024-01-01", 
-                periods=n_days, 
-                freq="D"
-            )
-            
+            dates = pd.date_range(start="2024-01-01", periods=n_days, freq="D")
+
             factor_values = np.random.normal(0, 1, n_days).cumsum()
             prices = 100 + np.cumsum(np.random.normal(0.001, 0.02, n_days))
-            
-            df = pd.DataFrame({
-                "test_factor": factor_values,
-                "close": prices,
-                "market_cap": np.random.uniform(1e9, 1e12, n_days),
-            }, index=dates)
-            
+
+            df = pd.DataFrame(
+                {
+                    "test_factor": factor_values,
+                    "close": prices,
+                    "market_cap": np.random.uniform(1e9, 1e12, n_days),
+                },
+                index=dates,
+            )
+
             data[f"stock_{stock_id}"] = df
-        
+
         return data
 
     def test_quantile_returns_basic(self):
@@ -72,11 +71,11 @@ class TestFactorReturnAnalysisService:
             factor_data=self.sample_data,
             factor_name="test_factor",
         )
-        
-        assert result["success"] == True
+
+        assert result["success"]
         assert "quantile_returns" in result
         assert len(result["quantile_returns"]) == 5
-        
+
         for q in result["quantile_returns"]:
             assert "avg_return" in q
             assert "group" in q
@@ -88,10 +87,10 @@ class TestFactorReturnAnalysisService:
             factor_data=self.sample_data,
             factor_name="test_factor",
         )
-        
+
         assert "spread" in result
         spread = result["spread"]
-        
+
         assert "long_short_spread" in spread
         assert "is_significant" in spread
         assert isinstance(spread["long_short_spread"], float)
@@ -102,10 +101,10 @@ class TestFactorReturnAnalysisService:
             factor_data=self.sample_data,
             factor_name="test_factor",
         )
-        
+
         assert "monotonicity_test" in result
         mono = result["monotonicity_test"]
-        
+
         assert "is_monotonic" in mono
         assert "monotonicity_ratio" in mono
         assert 0 <= mono["monotonicity_ratio"] <= 1
@@ -116,7 +115,7 @@ class TestFactorReturnAnalysisService:
             factor_data=self.sample_data,
             factor_name="test_factor",
         )
-        
+
         assert "error" not in result
         assert "dates" in result
         assert "long_short_cumulative" in result
@@ -128,14 +127,14 @@ class TestFactorReturnAnalysisService:
             factor_data=self.sample_data,
             factor_name="test_factor",
         )
-        
+
         if "summary_statistics" in result:
             stats = result["summary_statistics"]
-            
+
             assert "final_cumulative_return" in stats
             assert "max_drawdown" in stats
             assert "sharpe_ratio" in stats
-            
+
             assert isinstance(stats["max_drawdown"], float)
 
     def test_turnover_analysis_basic(self):
@@ -144,8 +143,8 @@ class TestFactorReturnAnalysisService:
             factor_data=self.sample_data,
             factor_name="test_factor",
         )
-        
-        assert result["success"] == True
+
+        assert result["success"]
         assert "turnover_stats" in result
         assert "autocorrelation" in result
         assert "stability_analysis" in result
@@ -156,9 +155,9 @@ class TestFactorReturnAnalysisService:
             factor_data=self.sample_data,
             factor_name="test_factor",
         )
-        
+
         turnover_stats = result["turnover_stats"]
-        
+
         assert "interpretation" in turnover_stats
         assert isinstance(turnover_stats["interpretation"], str)
         assert len(turnover_stats["interpretation"]) > 0
@@ -174,29 +173,28 @@ class TestJointNeutralization:
             FactorPreprocessingPipeline,
             PreprocessingConfig,
         )
-        
+
         self.config = PreprocessingConfig(
             enable_market_cap_neutralization=True,
             enable_industry_neutralization=True,
         )
-        
+
         self.pipeline = FactorPreprocessingPipeline(config=self.config)
-        
+
         self.test_data = self._generate_test_data()
 
     def _generate_test_data(self):
         """生成测试数据"""
         np.random.seed(123)
         n = 100
-        
-        return pd.DataFrame({
-            "factor": np.random.normal(0, 1, n),
-            "market_cap": np.random.uniform(1e9, 1e11, n),
-            "industry": np.random.choice(
-                ["tech", "finance", "healthcare", "energy"], 
-                n
-            ),
-        })
+
+        return pd.DataFrame(
+            {
+                "factor": np.random.normal(0, 1, n),
+                "market_cap": np.random.uniform(1e9, 1e11, n),
+                "industry": np.random.choice(["tech", "finance", "healthcare", "energy"], n),
+            }
+        )
 
     def test_joint_neutralization_exists(self):
         """测试联合回归方法存在"""
@@ -210,7 +208,7 @@ class TestJointNeutralization:
             market_cap=self.test_data["market_cap"],
             industry=self.test_data["industry"],
         )
-        
+
         assert len(result) == len(self.test_data)
         assert isinstance(result, pd.Series)
 
@@ -218,7 +216,7 @@ class TestJointNeutralization:
         """测试横截面处理使用联合回归"""
         df = self.test_data.copy()
         df["date"] = pd.date_range(start="2024-01-01", periods=len(df))
-        
+
         processed_df, stats = self.pipeline.process_factor_dataframe(
             df=df,
             factor_columns=["factor"],
@@ -226,7 +224,7 @@ class TestJointNeutralization:
             industry_column="industry",
             date_column="date",
         )
-        
+
         assert "factor" in processed_df.columns
         assert len(processed_df) == len(df)
 
@@ -241,10 +239,10 @@ class TestWeightedICService:
             WeightedICService,
             WeightedICConfig,
         )
-        
+
         self.config = WeightedICConfig()
         self.service = WeightedICService(config=self.config)
-        
+
         self.factor_ic_dict = {
             "factor_a": pd.Series(np.random.normal(0.05, 0.1, 100)),
             "factor_b": pd.Series(np.random.normal(0.03, 0.08, 100)),
@@ -253,41 +251,35 @@ class TestWeightedICService:
 
     def test_weighted_ic_equal_weight(self):
         """测试等权加权"""
-        from backend.services.weighted_ic_service import (
-            WeightedICService, 
-            WeightingMethod
-        )
-        
+        from backend.services.weighted_ic_service import WeightedICService, WeightingMethod
+
         self.config.weighting_method = WeightingMethod.EQUAL_WEIGHT
         service = WeightedICService(config=self.config)
-        
+
         result = service.calculate_weighted_ic(
             factor_ic_dict=self.factor_ic_dict,
         )
-        
-        assert result["success"] == True
+
+        assert result["success"]
         assert "weighted_ic" in result
         assert "factor_weights" in result
-        
+
         weights = result["factor_weights"]
         total_weight = sum(w["weight"] for w in weights.values())
         assert abs(total_weight - 1.0) < 0.01
 
     def test_weighted_ic_ir_weight(self):
         """测试IR加权"""
-        from backend.services.weighted_ic_service import (
-            WeightedICService,
-            WeightingMethod
-        )
-        
+        from backend.services.weighted_ic_service import WeightedICService, WeightingMethod
+
         self.config.weighting_method = WeightingMethod.IR_WEIGHT
         service = WeightedICService(config=self.config)
-        
+
         result = service.calculate_weighted_ic(
             factor_ic_dict=self.factor_ic_dict,
         )
-        
-        assert result["success"] == True
+
+        assert result["success"]
         assert result["weighting_method"] == "ir_weight"
 
     def test_factor_importance_ranking(self):
@@ -295,14 +287,14 @@ class TestWeightedICService:
         result = self.service.calculate_factor_importance(
             factor_ic_dict=self.factor_ic_dict,
         )
-        
-        assert result["success"] == True
+
+        assert result["success"]
         assert "ranking" in result
         assert len(result["ranking"]) == 3
-        
+
         ranking = result["ranking"]
         scores = [r["total_score"] for r in ranking]
-        
+
         assert sorted(scores, reverse=True) == scores
 
     def test_contribution_analysis(self):
@@ -310,9 +302,9 @@ class TestWeightedICService:
         result = self.service.calculate_weighted_ic(
             factor_ic_dict=self.factor_ic_dict,
         )
-        
+
         assert "contribution_analysis" in result
-        
+
         contributions = result["contribution_analysis"]
         for name, contrib in contributions.items():
             assert "weight" in contrib
@@ -329,35 +321,34 @@ class TestTearSheetService:
             TearSheetService,
             TearSheetConfig,
         )
-        
+
         self.config = TearSheetConfig(include_bootstrap=False)
         self.service = TearSheetService(config=self.config)
-        
+
         self.sample_data = self._generate_sample_data()
 
     def _generate_sample_data(self):
         """生成模拟数据"""
         np.random.seed(456)
         n_days = 80
-        
+
         data = {}
         for stock_id in range(8):
-            dates = pd.date_range(
-                start="2024-01-01", 
-                periods=n_days, 
-                freq="D"
-            )
-            
+            dates = pd.date_range(start="2024-01-01", periods=n_days, freq="D")
+
             factor_values = np.random.normal(0, 1, n_days).cumsum()
             prices = 100 + np.cumsum(np.random.normal(0.001, 0.02, n_days))
-            
-            df = pd.DataFrame({
-                "test_factor": factor_values,
-                "close": prices,
-            }, index=dates)
-            
+
+            df = pd.DataFrame(
+                {
+                    "test_factor": factor_values,
+                    "close": prices,
+                },
+                index=dates,
+            )
+
             data[f"stock_{stock_id}"] = df
-        
+
         return data
 
     def test_tear_sheet_generation(self):
@@ -366,10 +357,10 @@ class TestTearSheetService:
             factor_data=self.sample_data,
             factor_name="test_factor",
         )
-        
-        assert result["success"] == True
+
+        assert result["success"]
         assert "tear_sheet" in result
-        
+
         tear_sheet = result["tear_sheet"]
         assert "metadata" in tear_sheet
         assert "summary" in tear_sheet
@@ -381,13 +372,13 @@ class TestTearSheetService:
             factor_data=self.sample_data,
             factor_name="test_factor",
         )
-        
+
         summary = result["tear_sheet"]["summary"]
-        
+
         assert "overall_score" in summary
         assert "grade" in summary
         assert "score_breakdown" in summary
-        
+
         score = summary["overall_score"]
         assert 0 <= score <= 100
         assert isinstance(summary["grade"], str)
@@ -398,18 +389,11 @@ class TestTearSheetService:
             factor_data=self.sample_data,
             factor_name="test_factor",
         )
-        
-        sections = result["tear_sheet"]["sections"]
-        
-        expected_sections = [
-            "quantile_returns",
-            "cumulative_returns",
-            "turnover_analysis",
-            "ic_ir_analysis",
-        ]
-        
+
+        result["tear_sheet"]["sections"]
+
         completed = result["tear_sheet"]["summary"]["sections_completed"]
-        
+
         assert len(completed) > 0
 
     def test_tear_sheet_recommendations(self):
@@ -418,12 +402,12 @@ class TestTearSheetService:
             factor_data=self.sample_data,
             factor_name="test_factor",
         )
-        
+
         assert "recommendations" in result["tear_sheet"]
-        
+
         recommendations = result["tear_sheet"]["recommendations"]
         assert len(recommendations) > 0
-        
+
         for rec in recommendations:
             assert "priority" in rec
             assert "category" in rec
@@ -435,15 +419,13 @@ class TestEdgeCases:
 
     def test_empty_data_handling(self):
         """测试空数据处理"""
-        from backend.services.factor_return_analysis_service import (
-            factor_return_analysis_service
-        )
-        
+        from backend.services.factor_return_analysis_service import factor_return_analysis_service
+
         result = factor_return_analysis_service.calculate_quantile_returns(
             factor_data={},
             factor_name="nonexistent",
         )
-        
+
         assert "error" in result
 
     def test_insufficient_data(self):
@@ -452,20 +434,24 @@ class TestEdgeCases:
             factor_return_analysis_service,
             FactorReturnAnalysisConfig,
         )
-        
+
         config = FactorReturnAnalysisConfig(n_quantiles=10)
         service = factor_return_analysis_service.__class__(config)
-        
-        small_data = {"stock_1": pd.DataFrame({
-            "factor": [1, 2, 3],
-            "close": [10, 11, 12],
-        })}
-        
+
+        small_data = {
+            "stock_1": pd.DataFrame(
+                {
+                    "factor": [1, 2, 3],
+                    "close": [10, 11, 12],
+                }
+            )
+        }
+
         result = service.calculate_quantile_returns(
             factor_data=small_data,
             factor_name="factor",
         )
-        
+
         assert "error" in result or result.get("total_observations", 0) < 50
 
 

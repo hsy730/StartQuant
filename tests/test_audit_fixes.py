@@ -8,6 +8,7 @@
 4. 回测日收益不再截断
 5. 分块回测 rf 参数化
 """
+
 import pytest
 import numpy as np
 import pandas as pd
@@ -17,8 +18,8 @@ from backend.strategies.equal_weight_strategy import EqualWeightStrategy
 from backend.strategies.market_cap_strategy import MarketCapStrategy
 from backend.strategies.base_strategy import BaseStrategy
 
-
 # ============ 1. Sharpe Ratio 无风险利率扣减测试 ============
+
 
 class TestSharpeRatioWithRiskFreeRate:
     """验证 Sharpe Ratio 正确扣减无风险利率"""
@@ -28,13 +29,11 @@ class TestSharpeRatioWithRiskFreeRate:
         # 生成正收益场景：日均0.1%，标准差1%
         n_days = 252
         self.positive_returns = pd.Series(
-            np.random.randn(n_days) * 0.01 + 0.001,
-            index=pd.date_range("2023-01-01", periods=n_days, freq="B")
+            np.random.randn(n_days) * 0.01 + 0.001, index=pd.date_range("2023-01-01", periods=n_days, freq="B")
         )
         # 生成零收益场景：日均0%，标准差1%
         self.zero_returns = pd.Series(
-            np.random.randn(n_days) * 0.01,
-            index=pd.date_range("2023-01-01", periods=n_days, freq="B")
+            np.random.randn(n_days) * 0.01, index=pd.date_range("2023-01-01", periods=n_days, freq="B")
         )
 
     # --- 1a. StatisticsService.analyze_quantile_returns ---
@@ -44,15 +43,12 @@ class TestSharpeRatioWithRiskFreeRate:
         svc = StatisticsService()
         quantile_returns = {"Q1": self.positive_returns}
 
-        r_low_rf = svc.analyze_quantile_returns(
-            quantile_returns, risk_free_rate=0.01
-        )
-        r_high_rf = svc.analyze_quantile_returns(
-            quantile_returns, risk_free_rate=0.05
-        )
+        r_low_rf = svc.analyze_quantile_returns(quantile_returns, risk_free_rate=0.01)
+        r_high_rf = svc.analyze_quantile_returns(quantile_returns, risk_free_rate=0.05)
 
-        assert r_low_rf["Q1"]["sharpe"] > r_high_rf["Q1"]["sharpe"], \
-            f"rf=0.01 sharpe={r_low_rf['Q1']['sharpe']:.4f} 应 > rf=0.05 sharpe={r_high_rf['Q1']['sharpe']:.4f}"
+        assert (
+            r_low_rf["Q1"]["sharpe"] > r_high_rf["Q1"]["sharpe"]
+        ), f"rf=0.01 sharpe={r_low_rf['Q1']['sharpe']:.4f} 应 > rf=0.05 sharpe={r_high_rf['Q1']['sharpe']:.4f}"
 
     def test_quantile_sharpe_negative_when_below_rf(self):
         """收益低于无风险利率时，Sharpe应为负"""
@@ -63,32 +59,28 @@ class TestSharpeRatioWithRiskFreeRate:
         low_returns = pd.Series(np.random.randn(252) * 0.001 + 0.0001)
         quantile_returns = {"Q1": low_returns}
 
-        r = svc.analyze_quantile_returns(
-            quantile_returns, risk_free_rate=0.05
-        )
-        assert r["Q1"]["sharpe"] is not None and r["Q1"]["sharpe"] < 0, \
-            f"日收益0.0001 vs rf=0.05，Sharpe应为负，实际={r['Q1']['sharpe']}"
+        r = svc.analyze_quantile_returns(quantile_returns, risk_free_rate=0.05)
+        assert (
+            r["Q1"]["sharpe"] is not None and r["Q1"]["sharpe"] < 0
+        ), f"日收益0.0001 vs rf=0.05，Sharpe应为负，实际={r['Q1']['sharpe']}"
 
     def test_quantile_sharpe_zero_rf_equals_old_behavior(self):
         """rf=0时，Sharpe = mean/std * sqrt(252)，与旧行为一致"""
         svc = StatisticsService()
         quantile_returns = {"Q1": self.positive_returns}
 
-        r = svc.analyze_quantile_returns(
-            quantile_returns, risk_free_rate=0.0
-        )
+        r = svc.analyze_quantile_returns(quantile_returns, risk_free_rate=0.0)
         mean = self.positive_returns.mean()
         std = self.positive_returns.std()
         expected = (mean / std) * np.sqrt(252)
-        assert abs(r["Q1"]["sharpe"] - expected) < 1e-10, \
-            f"rf=0时Sharpe应与mean/std*sqrt(252)一致：{r['Q1']['sharpe']:.6f} vs {expected:.6f}"
+        assert (
+            abs(r["Q1"]["sharpe"] - expected) < 1e-10
+        ), f"rf=0时Sharpe应与mean/std*sqrt(252)一致：{r['Q1']['sharpe']:.6f} vs {expected:.6f}"
 
     def test_quantile_empty_returns_returns_none(self):
         """空收益率序列应返回None（不可计算）"""
         svc = StatisticsService()
-        r = svc.analyze_quantile_returns(
-            {"Q1": pd.Series([], dtype=float)}, risk_free_rate=0.03
-        )
+        r = svc.analyze_quantile_returns({"Q1": pd.Series([], dtype=float)}, risk_free_rate=0.03)
         assert r["Q1"]["sharpe"] is None
 
     # --- 1b. FactorReturnAnalysisService._calculate_sharpe_ratio ---
@@ -104,15 +96,10 @@ class TestSharpeRatioWithRiskFreeRate:
 
         svc = FactorReturnAnalysisService()
 
-        sharpe_no_rf = svc._calculate_sharpe_ratio(
-            self.positive_returns, risk_free_rate=0.0
-        )
-        sharpe_with_rf = svc._calculate_sharpe_ratio(
-            self.positive_returns, risk_free_rate=0.03
-        )
+        sharpe_no_rf = svc._calculate_sharpe_ratio(self.positive_returns, risk_free_rate=0.0)
+        sharpe_with_rf = svc._calculate_sharpe_ratio(self.positive_returns, risk_free_rate=0.03)
 
-        assert sharpe_with_rf < sharpe_no_rf, \
-            f"扣减rf后Sharpe应更低：{sharpe_with_rf:.4f} < {sharpe_no_rf:.4f}"
+        assert sharpe_with_rf < sharpe_no_rf, f"扣减rf后Sharpe应更低：{sharpe_with_rf:.4f} < {sharpe_no_rf:.4f}"
 
     def test_factor_return_sharpe_short_series(self):
         """短序列应返回0"""
@@ -138,9 +125,7 @@ class TestSharpeRatioWithRiskFreeRate:
 
         svc = FactorReturnAnalysisService()
         # 使用全零序列确保标准差精确为0
-        r = svc._calculate_sharpe_ratio(
-            pd.Series([0.0] * 100), risk_free_rate=0.03
-        )
+        r = svc._calculate_sharpe_ratio(pd.Series([0.0] * 100), risk_free_rate=0.03)
         assert r is None  # 规则6：不可计算返回None
 
     # --- 1c. PortfolioAnalysisService.optimize_weights (max_sharpe) ---
@@ -152,27 +137,25 @@ class TestSharpeRatioWithRiskFreeRate:
 
         # 两个因子：一个高收益，一个低收益
         n = 252
-        factor_returns = pd.DataFrame({
-            "high_return": np.random.randn(n) * 0.02 + 0.002,  # 年化约50%
-            "low_return": np.random.randn(n) * 0.02 + 0.0001,  # 年化约2.5%
-        })
+        factor_returns = pd.DataFrame(
+            {
+                "high_return": np.random.randn(n) * 0.02 + 0.002,  # 年化约50%
+                "low_return": np.random.randn(n) * 0.02 + 0.0001,  # 年化约2.5%
+            }
+        )
 
-        r_low_rf = svc.optimize_weights(
-            factor_returns, method="max_sharpe", risk_free_rate=0.01
-        )
-        r_high_rf = svc.optimize_weights(
-            factor_returns, method="max_sharpe", risk_free_rate=0.05
-        )
+        r_low_rf = svc.optimize_weights(factor_returns, method="max_sharpe", risk_free_rate=0.01)
+        r_high_rf = svc.optimize_weights(factor_returns, method="max_sharpe", risk_free_rate=0.05)
 
         # rf=5%时，低收益因子Sharpe可能为负，权重应为0
         w_low = r_low_rf["weights"].get("low_return", 0)
         w_high = r_high_rf["weights"].get("low_return", 0)
         # 高rf下低收益因子权重应更低或为0
-        assert w_high <= w_low, \
-            f"高rf下低收益因子权重应≤低rf下权重：{w_high:.4f} vs {w_low:.4f}"
+        assert w_high <= w_low, f"高rf下低收益因子权重应≤低rf下权重：{w_high:.4f} vs {w_low:.4f}"
 
 
 # ============ 2. 等权重策略 1/N 测试 ============
+
 
 class TestEqualWeightStrategy:
     """验证等权重策略正确使用 1/N"""
@@ -186,11 +169,13 @@ class TestEqualWeightStrategy:
         records = []
         for d in dates:
             for i in range(n_stocks):
-                records.append({
-                    "date": d,
-                    "stock_code": f"{i:06d}",
-                    "close": 100 + np.random.randn() * 5,
-                })
+                records.append(
+                    {
+                        "date": d,
+                        "stock_code": f"{i:06d}",
+                        "close": 100 + np.random.randn() * 5,
+                    }
+                )
         df = pd.DataFrame(records)
         df.set_index(["date", "stock_code"], inplace=True)
         return df
@@ -214,13 +199,11 @@ class TestEqualWeightStrategy:
         # 每个日期内权重和应为1.0
         for date in df.index.get_level_values(0).unique():
             date_weights = weights.xs(date, level=0)
-            assert abs(date_weights.sum() - 1.0) < 1e-10, \
-                f"日期{date}权重和应为1.0，实际: {date_weights.sum():.6f}"
+            assert abs(date_weights.sum() - 1.0) < 1e-10, f"日期{date}权重和应为1.0，实际: {date_weights.sum():.6f}"
 
         # 每只股票权重应为 1/n_stocks
         expected_weight = 1.0 / n_stocks
-        assert (abs(weights - expected_weight) < 1e-10).all(), \
-            f"每只权重应为1/{n_stocks}={expected_weight:.4f}"
+        assert (abs(weights - expected_weight) < 1e-10).all(), f"每只权重应为1/{n_stocks}={expected_weight:.4f}"
 
     def test_multi_stock_equal_weights(self):
         """多股票时每只权重相等 = 1/N_stocks"""
@@ -231,8 +214,9 @@ class TestEqualWeightStrategy:
         weights = self.strategy.calculate_weights(df, signals)
 
         expected_weight = 1.0 / n_stocks
-        assert (abs(weights - expected_weight) < 1e-10).all(), \
-            f"每只权重应为1/{n_stocks}={expected_weight:.4f}，实际: {weights.unique()}"
+        assert (
+            abs(weights - expected_weight) < 1e-10
+        ).all(), f"每只权重应为1/{n_stocks}={expected_weight:.4f}，实际: {weights.unique()}"
 
     def test_no_signal_zero_weights(self):
         """无信号时所有权重为0"""
@@ -258,6 +242,7 @@ class TestEqualWeightStrategy:
 
 # ============ 3. 市值加权策略向量化测试 ============
 
+
 class TestMarketCapStrategy:
     """验证市值加权策略向量化正确性"""
 
@@ -272,12 +257,14 @@ class TestMarketCapStrategy:
         for d in dates:
             mcaps = np.random.lognormal(mean=10, sigma=1, size=n_stocks)
             for i in range(n_stocks):
-                records.append({
-                    "date": d,
-                    "stock_code": f"{i:06d}",
-                    "close": 100 + np.random.randn() * 5,
-                    "market_cap": mcaps[i],
-                })
+                records.append(
+                    {
+                        "date": d,
+                        "stock_code": f"{i:06d}",
+                        "close": 100 + np.random.randn() * 5,
+                        "market_cap": mcaps[i],
+                    }
+                )
         df = pd.DataFrame(records)
         df.set_index("date", inplace=True)
         return df
@@ -290,12 +277,14 @@ class TestMarketCapStrategy:
         for d in dates:
             mcaps = np.random.lognormal(mean=10, sigma=1, size=n_stocks)
             for i in range(n_stocks):
-                records.append({
-                    "date": d,
-                    "stock_code": f"{i:06d}",
-                    "close": 100 + np.random.randn() * 5,
-                    "market_cap": mcaps[i],
-                })
+                records.append(
+                    {
+                        "date": d,
+                        "stock_code": f"{i:06d}",
+                        "close": 100 + np.random.randn() * 5,
+                        "market_cap": mcaps[i],
+                    }
+                )
         df = pd.DataFrame(records)
         df.set_index(["date", "stock_code"], inplace=True)
         return df
@@ -308,8 +297,7 @@ class TestMarketCapStrategy:
 
         for date in df.index.unique():
             date_weights = weights.loc[date]
-            assert abs(date_weights.sum() - 1.0) < 1e-10, \
-                f"日期{date}权重和应为1.0，实际: {date_weights.sum():.6f}"
+            assert abs(date_weights.sum() - 1.0) < 1e-10, f"日期{date}权重和应为1.0，实际: {date_weights.sum():.6f}"
 
     def test_weights_sum_to_one_per_date_multi_index(self):
         """多级索引：每个日期权重和应为1.0"""
@@ -319,8 +307,7 @@ class TestMarketCapStrategy:
 
         for date in df.index.get_level_values("date").unique():
             date_weights = weights.xs(date, level="date")
-            assert abs(date_weights.sum() - 1.0) < 1e-10, \
-                f"日期{date}权重和应为1.0，实际: {date_weights.sum():.6f}"
+            assert abs(date_weights.sum() - 1.0) < 1e-10, f"日期{date}权重和应为1.0，实际: {date_weights.sum():.6f}"
 
     def test_larger_mcap_gets_larger_weight(self):
         """市值大的股票权重应更大"""
@@ -333,8 +320,7 @@ class TestMarketCapStrategy:
         # 排序：市值最大的股票权重也应最大
         mcap_order = np.argsort(mcaps.values)
         weight_order = np.argsort(w)
-        assert mcap_order[-1] == weight_order[-1], \
-            "市值最大的股票应有最大权重"
+        assert mcap_order[-1] == weight_order[-1], "市值最大的股票应有最大权重"
 
     def test_no_market_cap_fallback_to_equal_weight(self):
         """无市值列时退化为等权重"""
@@ -360,23 +346,29 @@ class TestMarketCapStrategy:
 
 # ============ 4. 回测不再截断收益测试 ============
 
+
 class TestBaseStrategyNoClipping:
     """验证回测不再对日收益进行 ±50% 截断"""
 
     def test_extreme_returns_not_clipped(self):
         """极端收益不应被截断"""
+
         class TestStrategy(BaseStrategy):
             def generate_signals(self, df):
                 return pd.Series(1, index=df.index)
+
             def calculate_weights(self, df, signals):
                 return pd.Series(1.0, index=df.index)
 
         strategy = TestStrategy()
 
         dates = pd.date_range("2023-01-01", periods=5, freq="B")
-        df = pd.DataFrame({
-            "close": [100, 200, 50, 500, 10],
-        }, index=dates)
+        df = pd.DataFrame(
+            {
+                "close": [100, 200, 50, 500, 10],
+            },
+            index=dates,
+        )
         df.index.name = "date"
 
         result = strategy.backtest(df)
@@ -384,18 +376,17 @@ class TestBaseStrategyNoClipping:
 
         # forward_return = pct_change(1).shift(-1) = [1.0, -0.75, 9.0, -0.98]
         # 扣除首日佣金后: [~1.0, -0.75, 9.0, -0.98]
-        assert abs(returns.iloc[1] - (-0.75)) < 0.01, \
-            f"-75%日收益不应被截断，实际: {returns.iloc[1]:.4f}"
-        assert abs(returns.iloc[2] - 9.0) < 0.01, \
-            f"+900%日收益不应被截断，实际: {returns.iloc[2]:.4f}"
-        assert not ((returns == 0.5) | (returns == -0.5)).any(), \
-            "不应有任何收益被截断到±0.5"
+        assert abs(returns.iloc[1] - (-0.75)) < 0.01, f"-75%日收益不应被截断，实际: {returns.iloc[1]:.4f}"
+        assert abs(returns.iloc[2] - 9.0) < 0.01, f"+900%日收益不应被截断，实际: {returns.iloc[2]:.4f}"
+        assert not ((returns == 0.5) | (returns == -0.5)).any(), "不应有任何收益被截断到±0.5"
 
     def test_normal_returns_unchanged(self):
         """正常收益（±10%以内）不受影响"""
+
         class TestStrategy(BaseStrategy):
             def generate_signals(self, df):
                 return pd.Series(1, index=df.index)
+
             def calculate_weights(self, df, signals):
                 return pd.Series(1.0, index=df.index)
 
@@ -410,20 +401,25 @@ class TestBaseStrategyNoClipping:
         returns = result["portfolio_returns"].dropna()
 
         # forward_return = pct_change(1).shift(-1) = [0.05, -0.0667, 0.0510, 0.0680, -0.0182]
-        expected_returns = pd.Series([
-            (prices[1] - prices[0]) / prices[0],
-            (prices[2] - prices[1]) / prices[1],
-            (prices[3] - prices[2]) / prices[2],
-            (prices[4] - prices[3]) / prices[3],
-            (prices[5] - prices[4]) / prices[4],
-        ], index=returns.index)
+        expected_returns = pd.Series(
+            [
+                (prices[1] - prices[0]) / prices[0],
+                (prices[2] - prices[1]) / prices[1],
+                (prices[3] - prices[2]) / prices[2],
+                (prices[4] - prices[3]) / prices[3],
+                (prices[5] - prices[4]) / prices[4],
+            ],
+            index=returns.index,
+        )
 
         for i in range(len(returns)):
-            assert abs(returns.iloc[i] - expected_returns.iloc[i]) < 0.001, \
-                f"正常收益不应被修改：期望{expected_returns.iloc[i]:.4f}，实际{returns.iloc[i]:.4f}"
+            assert (
+                abs(returns.iloc[i] - expected_returns.iloc[i]) < 0.001
+            ), f"正常收益不应被修改：期望{expected_returns.iloc[i]:.4f}，实际{returns.iloc[i]:.4f}"
 
 
 # ============ 5. 分块回测 rf 参数化测试 ============
+
 
 class TestVectorBTChunkedRfParam:
     """验证分块回测接受并使用 risk_free_rate 参数"""
@@ -443,31 +439,34 @@ class TestVectorBTChunkedRfParam:
         close = np.maximum(close, 1)
         factor = np.random.randn(n) * 3
 
-        df = pd.DataFrame({
-            "close": close,
-            "factor_test": factor,
-            "tradable_mask": True,
-            "is_limit_up": False,
-            "is_limit_down": False,
-        }, index=dates)
+        df = pd.DataFrame(
+            {
+                "close": close,
+                "factor_test": factor,
+                "tradable_mask": True,
+                "is_limit_up": False,
+                "is_limit_down": False,
+            },
+            index=dates,
+        )
 
         r1 = svc.chunked_single_factor_backtest(
-            df=df, factor_name="factor_test", risk_free_rate=0.03,
-            chunk_size=500, overlap_size=50
+            df=df, factor_name="factor_test", risk_free_rate=0.03, chunk_size=500, overlap_size=50
         )
         r2 = svc.chunked_single_factor_backtest(
-            df=df, factor_name="factor_test", risk_free_rate=0.05,
-            chunk_size=500, overlap_size=50
+            df=df, factor_name="factor_test", risk_free_rate=0.05, chunk_size=500, overlap_size=50
         )
 
         assert "sharpe_ratio" in r1
         assert "sharpe_ratio" in r2
         if r1["sharpe_ratio"] is not None and r2["sharpe_ratio"] is not None:
-            assert r1["sharpe_ratio"] != r2["sharpe_ratio"], \
-                f"不同rf应产生不同Sharpe：{r1['sharpe_ratio']:.4f} vs {r2['sharpe_ratio']:.4f}"
+            assert (
+                r1["sharpe_ratio"] != r2["sharpe_ratio"]
+            ), f"不同rf应产生不同Sharpe：{r1['sharpe_ratio']:.4f} vs {r2['sharpe_ratio']:.4f}"
 
 
 # ============ 6. BaseStrategy 指标计算完整性测试 ============
+
 
 class TestBaseStrategyMetrics:
     """验证 BaseStrategy.calculate_metrics 各项指标计算正确"""
@@ -493,8 +492,9 @@ class TestBaseStrategyMetrics:
         excess = returns - daily_rf
         expected_sharpe = excess.mean() * 252 / (returns.std() * np.sqrt(252))
 
-        assert abs(metrics["sharpe_ratio"] - expected_sharpe) < 0.01, \
-            f"Sharpe {metrics['sharpe_ratio']:.6f} vs 期望 {expected_sharpe:.6f}"
+        assert (
+            abs(metrics["sharpe_ratio"] - expected_sharpe) < 0.01
+        ), f"Sharpe {metrics['sharpe_ratio']:.6f} vs 期望 {expected_sharpe:.6f}"
 
     def test_sortino_uses_downside_deviation(self):
         """Sortino比率使用下行偏差"""
@@ -505,8 +505,7 @@ class TestBaseStrategyMetrics:
         metrics = self.strategy.calculate_metrics(returns, risk_free_rate=0.03)
 
         # Sortino应该大于Sharpe（因为Sortino只考虑下行风险）
-        assert metrics["sortino_ratio"] > metrics["sharpe_ratio"], \
-            "正收益为主的序列，Sortino应 > Sharpe"
+        assert metrics["sortino_ratio"] > metrics["sharpe_ratio"], "正收益为主的序列，Sortino应 > Sharpe"
 
     def test_calmar_ratio_positive(self):
         """卡玛比率公式正确"""
@@ -522,8 +521,9 @@ class TestBaseStrategyMetrics:
         max_dd = ((equity.cummax() - equity) / equity.cummax()).max()
 
         expected_calmar = annual_return / max_dd if max_dd > 0 else 0.0
-        assert abs(metrics["calmar_ratio"] - expected_calmar) < 1e-10, \
-            f"Calmar {metrics['calmar_ratio']:.6f} vs 期望 {expected_calmar:.6f}"
+        assert (
+            abs(metrics["calmar_ratio"] - expected_calmar) < 1e-10
+        ), f"Calmar {metrics['calmar_ratio']:.6f} vs 期望 {expected_calmar:.6f}"
 
     def test_empty_returns_returns_zero_metrics(self):
         """空收益率序列返回None指标（不可计算）"""

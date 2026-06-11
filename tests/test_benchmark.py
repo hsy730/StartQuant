@@ -8,6 +8,7 @@ FactorHub 核心计算模块功能基准测试
 4. 回测策略（等权重、Sortino、交易次数）
 5. 评分系统（IR/Sharpe负值处理、max_drawdown abs处理）
 """
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -15,21 +16,21 @@ import sys
 import time
 import re
 from unittest.mock import MagicMock
-from scipy import stats as scipy_stats
 
 import empyrical
 
 # Mock akshare and heavy dependencies before importing modules that depend on them
-sys.modules.setdefault('akshare', MagicMock())
-sys.modules.setdefault('sqlalchemy', MagicMock())
-sys.modules.setdefault('sqlalchemy.orm', MagicMock())
-sys.modules.setdefault('backend.services.cache_service', MagicMock())
-sys.modules.setdefault('backend.services.data_service', MagicMock())
+sys.modules.setdefault("akshare", MagicMock())
+sys.modules.setdefault("sqlalchemy", MagicMock())
+sys.modules.setdefault("sqlalchemy.orm", MagicMock())
+sys.modules.setdefault("backend.services.cache_service", MagicMock())
+sys.modules.setdefault("backend.services.data_service", MagicMock())
 
 
 # ============================================================
 # 辅助函数：生成测试数据（使用独立RNG避免并行测试耦合）
 # ============================================================
+
 
 def generate_normal_factor(n=1000, seed=42):
     """生成正态分布因子数据"""
@@ -42,10 +43,12 @@ def generate_factor_with_outliers(n=1000, n_outliers=20, seed=42):
     rng = np.random.default_rng(seed)
     data = rng.standard_normal(n)
     # 在首尾添加极端异常值
-    outlier_indices = np.concatenate([
-        rng.choice(range(50), n_outliers // 2, replace=False),
-        rng.choice(range(n - 50, n), n_outliers // 2, replace=False)
-    ])
+    outlier_indices = np.concatenate(
+        [
+            rng.choice(range(50), n_outliers // 2, replace=False),
+            rng.choice(range(n - 50, n), n_outliers // 2, replace=False),
+        ]
+    )
     signs = rng.choice([-1, 1], n_outliers)
     magnitudes = rng.uniform(10, 20, n_outliers)
     data[outlier_indices] = signs * magnitudes
@@ -68,12 +71,15 @@ def generate_stock_data(n_stocks=50, n_days=252, seed=42):
         close = 10.0 * (1 + rng.normal(0.0005, 0.02, n_days)).cumprod()
         factor = rng.standard_normal(n_days)
         market_cap = rng.uniform(1e8, 1e10, n_days)
-        df = pd.DataFrame({
-            "close": close,
-            "factor": factor,
-            "market_cap": market_cap,
-            "industry": rng.choice(["银行", "地产", "科技", "医药", "能源"], n_days),
-        }, index=dates)
+        df = pd.DataFrame(
+            {
+                "close": close,
+                "factor": factor,
+                "market_cap": market_cap,
+                "industry": rng.choice(["银行", "地产", "科技", "医药", "能源"], n_days),
+            },
+            index=dates,
+        )
         data[stock] = df
     return data
 
@@ -81,6 +87,7 @@ def generate_stock_data(n_stocks=50, n_days=252, seed=42):
 # ============================================================
 # 1. 预处理管道基准测试
 # ============================================================
+
 
 class TestWinsorization:
     """去极值基准测试"""
@@ -119,8 +126,9 @@ class TestWinsorization:
         result, stats = pipeline.process_single_factor(factor)
 
         # 正态数据3σ截断应截断极少数据点（winsorized_count应很小）
-        assert stats["winsorized_count"] / len(factor) < 0.05, \
-            f"截断比例 {stats['winsorized_count'] / len(factor) * 100:.1f}% 超过5%"
+        assert (
+            stats["winsorized_count"] / len(factor) < 0.05
+        ), f"截断比例 {stats['winsorized_count'] / len(factor) * 100:.1f}% 超过5%"
 
     def test_percentile_winsorization_should_clip_at_quantiles(self):
         """百分位去极值应在指定分位数截断"""
@@ -147,13 +155,15 @@ class TestWinsorization:
         # 使用pipeline处理，验证1.4826修正因子的效果：
         # 修正后的MAD*1.4826 ≈ σ，因此MAD法3σ截断与3σ标准差法截断结果应接近
         config_mad = PreprocessingConfig(
-            winsorize_method="mad", winsorize_n_sigma=3.0,
+            winsorize_method="mad",
+            winsorize_n_sigma=3.0,
             enable_market_cap_neutralization=False,
             enable_industry_neutralization=False,
             standardize_method="zscore",
         )
         config_std = PreprocessingConfig(
-            winsorize_method="std", winsorize_n_sigma=3.0,
+            winsorize_method="std",
+            winsorize_n_sigma=3.0,
             enable_market_cap_neutralization=False,
             enable_industry_neutralization=False,
             standardize_method="zscore",
@@ -165,8 +175,9 @@ class TestWinsorization:
         # 1.4826修正因子使MAD法与STD法在正态分布下截断比例接近
         ratio_mad = stats_mad["winsorized_count"] / len(factor)
         ratio_std = stats_std["winsorized_count"] / len(factor)
-        assert abs(ratio_mad - ratio_std) < 0.02, \
-            f"MAD截断比例{ratio_mad:.3f}与STD截断比例{ratio_std:.3f}偏差过大，1.4826修正因子可能缺失"
+        assert (
+            abs(ratio_mad - ratio_std) < 0.02
+        ), f"MAD截断比例{ratio_mad:.3f}与STD截断比例{ratio_std:.3f}偏差过大，1.4826修正因子可能缺失"
 
 
 class TestNeutralization:
@@ -192,8 +203,7 @@ class TestNeutralization:
         valid_mask = result.notna()
         corr_after = np.corrcoef(result[valid_mask].values, np.log(market_cap[valid_mask.values]))[0, 1]
 
-        assert abs(corr_after) < abs(corr_before) * 0.2, \
-            f"相关性降低不足: {corr_before:.4f} -> {corr_after:.4f}"
+        assert abs(corr_after) < abs(corr_before) * 0.2, f"相关性降低不足: {corr_before:.4f} -> {corr_after:.4f}"
 
     def test_industry_neutralization_should_reduce_industry_effect(self):
         """行业中性化应降低行业间因子差异"""
@@ -249,6 +259,7 @@ class TestStandardization:
 # 2. 统计指标基准测试
 # ============================================================
 
+
 class TestFinancialMetrics:
     """金融统计指标基准测试"""
 
@@ -262,13 +273,14 @@ class TestFinancialMetrics:
 
         sharpe = result["Q1"]["sharpe"]
         # 使用empyrical自身计算作为基准，验证service正确委托了empyrical
-        expected_sharpe = float(empyrical.sharpe_ratio(
-            returns.values, risk_free=0.03 / 252, period='daily', annualization=252
-        ))
+        expected_sharpe = float(
+            empyrical.sharpe_ratio(returns.values, risk_free=0.03 / 252, period="daily", annualization=252)
+        )
 
         # 验证service的Sharpe与empyrical基准一致（方向和数值）
-        assert abs(sharpe - expected_sharpe) < 0.01, \
-            f"Sharpe {sharpe:.4f} 与empyrical基准 {expected_sharpe:.4f} 偏差过大"
+        assert (
+            abs(sharpe - expected_sharpe) < 0.01
+        ), f"Sharpe {sharpe:.4f} 与empyrical基准 {expected_sharpe:.4f} 偏差过大"
 
     def test_annual_return_should_use_compound(self):
         """年化收益率应使用复利计算 - 验证service委托empyrical"""
@@ -280,20 +292,20 @@ class TestFinancialMetrics:
 
         annual_return = result["Q1"]["annual_return"]
         # 使用empyrical复利年化作为基准
-        expected = float(empyrical.annual_return(
-            returns.values, period='daily', annualization=252
-        ))
+        expected = float(empyrical.annual_return(returns.values, period="daily", annualization=252))
         # 简单乘法年化（错误方式）
         wrong = returns.mean() * 252
 
         # 结果应与empyrical复利年化一致
-        assert abs(annual_return - expected) < 0.01, \
-            f"年化收益 {annual_return:.4f} 与empyrical基准 {expected:.4f} 偏差过大"
+        assert (
+            abs(annual_return - expected) < 0.01
+        ), f"年化收益 {annual_return:.4f} 与empyrical基准 {expected:.4f} 偏差过大"
         # 结果应更接近复利年化而非简单乘法
         diff_compound = abs(annual_return - expected)
         diff_simple = abs(annual_return - wrong)
-        assert diff_compound <= diff_simple + 0.01, \
-            f"年化收益 {annual_return:.4f} 更接近简单乘法 {wrong:.4f} 而非复利 {expected:.4f}"
+        assert (
+            diff_compound <= diff_simple + 0.01
+        ), f"年化收益 {annual_return:.4f} 更接近简单乘法 {wrong:.4f} 而非复利 {expected:.4f}"
 
     def test_max_drawdown_with_negative_cumulative_returns(self):
         """最大回撤在累计收益为负时应正确计算 - 使用empyrical"""
@@ -319,19 +331,21 @@ class TestFinancialMetrics:
         metrics = strategy.calculate_metrics(returns, risk_free_rate=0.0)
 
         # 使用empyrical作为基准验证
-        expected_sortino = float(empyrical.sortino_ratio(
-            returns.values, required_return=0.0, period='daily', annualization=252
-        ))
+        expected_sortino = float(
+            empyrical.sortino_ratio(returns.values, required_return=0.0, period="daily", annualization=252)
+        )
 
         sortino = metrics["sortino_ratio"]
         # BaseStrategy应委托empyrical计算，结果应一致
-        assert abs(sortino - expected_sortino) < 0.01, \
-            f"Sortino {sortino:.4f} 与empyrical基准 {expected_sortino:.4f} 偏差过大"
+        assert (
+            abs(sortino - expected_sortino) < 0.01
+        ), f"Sortino {sortino:.4f} 与empyrical基准 {expected_sortino:.4f} 偏差过大"
 
 
 # ============================================================
 # 3. 因子分析基准测试
 # ============================================================
+
 
 class TestFactorAnalysis:
     """因子分析基准测试"""
@@ -351,8 +365,7 @@ class TestFactorAnalysis:
 
         # 验证t检验结果的基本合理性
         assert 0 < result["p_value"] < 1, f"p值 {result['p_value']} 不在合理范围"
-        assert abs(result["mean_ic"] - 0.05) < 0.05, \
-            f"IC均值 {result['mean_ic']:.4f} 与构造值0.05偏差过大"
+        assert abs(result["mean_ic"] - 0.05) < 0.05, f"IC均值 {result['mean_ic']:.4f} 与构造值0.05偏差过大"
 
         # 对比Fisher z变换与t检验：对于大IC，两者统计量应有差异
         large_ic = 0.8
@@ -366,8 +379,7 @@ class TestFactorAnalysis:
 
         # t检验统计量与Fisher z统计量在大IC时应不同
         t_stat = result_large["t_statistic"]
-        assert abs(t_stat - z_stat) > 0.1, \
-            f"t统计量 {t_stat:.4f} 和Fisher z统计量 {z_stat:.4f} 在大IC时应不同"
+        assert abs(t_stat - z_stat) > 0.1, f"t统计量 {t_stat:.4f} 和Fisher z统计量 {z_stat:.4f} 在大IC时应不同"
 
     def test_welch_t_test_standard_error(self):
         """Welch t检验标准误应正确计算 - 验证StatisticsService分层检验"""
@@ -381,19 +393,18 @@ class TestFactorAnalysis:
 
         service = StatisticsService()
         # 使用analyze_quantile_returns验证分层收益分析
-        result = service.analyze_quantile_returns(
-            {"Q1": top_returns, "Q5": bot_returns}, annual_trading_days=252
-        )
+        result = service.analyze_quantile_returns({"Q1": top_returns, "Q5": bot_returns}, annual_trading_days=252)
 
         # 验证两组统计量计算正确
-        assert result["Q1"]["mean"] > result["Q5"]["mean"], \
-            f"Q1均值 {result['Q1']['mean']:.4f} 应大于Q5均值 {result['Q5']['mean']:.4f}"
+        assert (
+            result["Q1"]["mean"] > result["Q5"]["mean"]
+        ), f"Q1均值 {result['Q1']['mean']:.4f} 应大于Q5均值 {result['Q5']['mean']:.4f}"
 
         # 正确的Welch SE公式
         std_top, std_bot = top_returns.std(), bot_returns.std()
-        se_correct = np.sqrt(std_top ** 2 / n_top + std_bot ** 2 / n_bot)
+        se_correct = np.sqrt(std_top**2 / n_top + std_bot**2 / n_bot)
         # 错误的公式
-        se_wrong = np.sqrt(std_top ** 2 + std_bot ** 2) * np.sqrt(1 / n_top + 1 / n_bot)
+        se_wrong = np.sqrt(std_top**2 + std_bot**2) * np.sqrt(1 / n_top + 1 / n_bot)
         # 正确SE应更小
         assert se_correct < se_wrong, "正确SE应小于错误SE"
 
@@ -413,11 +424,13 @@ class TestCorrelationAnalysis:
         factor_b = base + rng.standard_normal(n) * 0.01
         market_cap = rng.uniform(1e8, 1e10, n)
 
-        df = pd.DataFrame({
-            "factor_a": factor_a,
-            "factor_b": factor_b,
-            "market_cap": market_cap,
-        })
+        df = pd.DataFrame(
+            {
+                "factor_a": factor_a,
+                "factor_b": factor_b,
+                "market_cap": market_cap,
+            }
+        )
 
         service = FactorNeutralizationService()
         # 验证联合中性化在共线性数据下不崩溃
@@ -428,30 +441,43 @@ class TestCorrelationAnalysis:
     def test_weekly_alignment_should_not_mix_years(self):
         """周频率对齐不应跨年混叠 - 验证ISO周分组逻辑"""
         # 构造跨两年的日期序列，两年都有第1周
-        dates_2023 = pd.DatetimeIndex([
-            "2023-01-02", "2023-01-03", "2023-01-04", "2023-01-05", "2023-01-06",
-        ])  # 2023年第1周
-        dates_2024 = pd.DatetimeIndex([
-            "2024-01-01", "2024-01-02", "2024-01-03", "2024-01-04", "2024-01-05",
-        ])  # 2024年第1周
+        dates_2023 = pd.DatetimeIndex(
+            [
+                "2023-01-02",
+                "2023-01-03",
+                "2023-01-04",
+                "2023-01-05",
+                "2023-01-06",
+            ]
+        )  # 2023年第1周
+        dates_2024 = pd.DatetimeIndex(
+            [
+                "2024-01-01",
+                "2024-01-02",
+                "2024-01-03",
+                "2024-01-04",
+                "2024-01-05",
+            ]
+        )  # 2024年第1周
         dates = dates_2023.append(dates_2024)
 
         # 正确做法：按年份+周号分组（避免跨年混叠）
         iso_cal = dates.isocalendar()
-        group_keys = iso_cal['year'].astype(str) + "-" + iso_cal['week'].astype(str)
+        group_keys = iso_cal["year"].astype(str) + "-" + iso_cal["week"].astype(str)
         week_groups = dates.groupby(group_keys)
 
         # 应有2个组（2023年第1周和2024年第1周）
         assert len(week_groups) == 2, f"应有2个周组，实际 {len(week_groups)}"
 
         # 错误做法：仅按周号分组会导致跨年混叠（两年的第1周合并为1组）
-        week_groups_wrong = dates.groupby(iso_cal['week'])
+        week_groups_wrong = dates.groupby(iso_cal["week"])
         assert len(week_groups_wrong) == 1, "仅按周号分组会跨年混叠"
 
 
 # ============================================================
 # 4. 回测策略基准测试
 # ============================================================
+
 
 class TestBacktestStrategies:
     """回测策略基准测试"""
@@ -462,10 +488,13 @@ class TestBacktestStrategies:
 
         rng = np.random.default_rng(42)
         n = 100
-        df = pd.DataFrame({
-            "close": 10.0 * (1 + rng.normal(0.001, 0.02, n)).cumprod(),
-            "factor": rng.standard_normal(n),
-        }, index=pd.bdate_range("2023-01-01", periods=n))
+        df = pd.DataFrame(
+            {
+                "close": 10.0 * (1 + rng.normal(0.001, 0.02, n)).cumprod(),
+                "factor": rng.standard_normal(n),
+            },
+            index=pd.bdate_range("2023-01-01", periods=n),
+        )
 
         strategy = EqualWeightStrategy()
         result = strategy.generate_signals(df)
@@ -480,10 +509,13 @@ class TestBacktestStrategies:
 
         rng = np.random.default_rng(42)
         n = 50
-        df = pd.DataFrame({
-            "close": 100.0 * (1 + rng.normal(0.001, 0.02, n)).cumprod(),
-            "factor": rng.standard_normal(n),
-        }, index=pd.bdate_range("2023-01-01", periods=n))
+        df = pd.DataFrame(
+            {
+                "close": 100.0 * (1 + rng.normal(0.001, 0.02, n)).cumprod(),
+                "factor": rng.standard_normal(n),
+            },
+            index=pd.bdate_range("2023-01-01", periods=n),
+        )
 
         strategy = EqualWeightStrategy()
         result = strategy.backtest(df)
@@ -493,21 +525,22 @@ class TestBacktestStrategies:
         # 手动验证：weights.diff()第一个值为NaN，fillna(0)后为0，不计为交易
         weights = result["weights"]
         manual_count = (weights.diff().fillna(0) != 0).sum()
-        assert trades_count == manual_count, \
-            f"交易次数 {trades_count} 与手动计算 {manual_count} 不一致"
+        assert trades_count == manual_count, f"交易次数 {trades_count} 与手动计算 {manual_count} 不一致"
 
     def test_forward_return_no_lookahead_bias(self):
         """前向收益率不应存在前视偏差 - 验证BaseStrategy.backtest"""
         from backend.strategies.equal_weight_strategy import EqualWeightStrategy
 
         close = pd.Series([100.0, 101.0, 99.0, 102.0, 98.0])
-        df = pd.DataFrame({
-            "close": close,
-            "factor": [0.1, 0.2, -0.1, 0.3, -0.2],
-        })
+        df = pd.DataFrame(
+            {
+                "close": close,
+                "factor": [0.1, 0.2, -0.1, 0.3, -0.2],
+            }
+        )
 
         strategy = EqualWeightStrategy()
-        result = strategy.backtest(df)
+        strategy.backtest(df)
 
         # BaseStrategy使用 close.pct_change(1).shift(-1) 计算前向收益
         # 验证：t日权重配对t+1日收益，无前视偏差
@@ -519,6 +552,7 @@ class TestBacktestStrategies:
 # ============================================================
 # 5. 评分系统基准测试
 # ============================================================
+
 
 class TestScoringSystem:
     """评分系统基准测试"""
@@ -533,8 +567,7 @@ class TestScoringSystem:
         score_pos = min(abs(ir_positive) * 40, 100)
         score_neg = min(abs(ir_negative) * 40, 100)
 
-        assert score_pos == score_neg, \
-            f"正负IR得分应相等: pos={score_pos}, neg={score_neg}"
+        assert score_pos == score_neg, f"正负IR得分应相等: pos={score_pos}, neg={score_neg}"
         assert score_pos == 80, f"IR=2.0得分应为80，实际 {score_pos}"
 
     def test_sharpe_score_should_have_lower_bound(self):
@@ -562,8 +595,7 @@ class TestScoringSystem:
         # 未修复的公式会产生反转
         risk_score_wrong = max(100 - (volatility / 0.2 * 50 + max_drawdown_negative / 0.15 * 50), 0)
         # -0.15/0.15*50 = -50, 所以 100 - (37.5 + (-50)) = 112.5
-        assert risk_score_wrong > 100 or risk_score_wrong > risk_score, \
-            "未修复公式在负回撤时得分异常高"
+        assert risk_score_wrong > 100 or risk_score_wrong > risk_score, "未修复公式在负回撤时得分异常高"
 
     def test_ic_positive_ratio_should_be_fair_to_negative_ic(self):
         """IC>0占比评分应对负IC因子公平"""
@@ -575,8 +607,7 @@ class TestScoringSystem:
         ratio_negative = 0.05
         score_neg = max(ratio_negative, 1 - ratio_negative) * 10
 
-        assert abs(score_pos - score_neg) < 0.01, \
-            f"正负IC因子得分应相等: pos={score_pos}, neg={score_neg}"
+        assert abs(score_pos - score_neg) < 0.01, f"正负IC因子得分应相等: pos={score_pos}, neg={score_neg}"
 
         # IC方向混乱
         ratio_mixed = 0.5
@@ -588,6 +619,7 @@ class TestScoringSystem:
 # 6. 数据处理基准测试
 # ============================================================
 
+
 class TestDataProcessing:
     """数据处理基准测试"""
 
@@ -598,12 +630,12 @@ class TestDataProcessing:
         industry_map = {"000001": "银行", "600000": "银行", "300001": "科技"}
         stock_codes = ["000001.SZ", "600000.SH", "300001.SZ"]
 
-        service = FactorNeutralizationService()
+        FactorNeutralizationService()
         # 使用service的add_industry_classification方法
         df = pd.DataFrame({"stock_code": stock_codes, "factor": [1.0, 2.0, 3.0]})
 
         # 验证后缀去除逻辑（service内部使用相同的正则）
-        pure_codes = df["stock_code"].str.replace(r'\.(SH|SZ|BJ)$', '', regex=True)
+        pure_codes = df["stock_code"].str.replace(r"\.(SH|SZ|BJ)$", "", regex=True)
         mapped = pure_codes.map(industry_map)
 
         assert mapped.notna().all(), f"映射后存在NaN: {mapped.tolist()}"
@@ -615,11 +647,8 @@ class TestDataProcessing:
         from backend.services.statistics_service import StatisticsService
 
         rng = np.random.default_rng(42)
-        n = 100
         # 构造先涨后跌的市场收益序列
-        market_return = pd.Series(
-            [0.01] * 50 + [-0.01] * 50
-        )
+        pd.Series([0.01] * 50 + [-0.01] * 50)
         factor_data = {"bull": pd.Series(rng.standard_normal(50)), "bear": pd.Series(rng.standard_normal(50))}
         return_data = {"bull": pd.Series(rng.standard_normal(50)), "bear": pd.Series(rng.standard_normal(50))}
 
@@ -652,24 +681,22 @@ class TestDataProcessing:
 
         # 正确条件
         condition_correct = (
-            f"Q{n_quantiles}" in bootstrapped_returns and
-            "Q1" in bootstrapped_returns and
-            len(bootstrapped_returns[f"Q{n_quantiles}"]) > 0 and
-            len(bootstrapped_returns["Q1"]) > 0
+            f"Q{n_quantiles}" in bootstrapped_returns
+            and "Q1" in bootstrapped_returns
+            and len(bootstrapped_returns[f"Q{n_quantiles}"]) > 0
+            and len(bootstrapped_returns["Q1"]) > 0
         )
         assert condition_correct is True
 
         # 错误条件（整数键）
-        condition_wrong = (
-            n_quantiles in bootstrapped_returns and
-            0 in bootstrapped_returns
-        )
+        condition_wrong = n_quantiles in bootstrapped_returns and 0 in bootstrapped_returns
         assert condition_wrong is False
 
 
 # ============================================================
 # 7. 性能基准测试
 # ============================================================
+
 
 class TestPerformance:
     """性能基准测试"""
@@ -685,12 +712,11 @@ class TestPerformance:
         pipeline = FactorPreprocessingPipeline(config)
 
         start = time.time()
-        result = pipeline.process_single_factor(factor)
+        pipeline.process_single_factor(factor)
         elapsed = time.time() - start
 
         throughput = n / elapsed
-        assert throughput > 3000, \
-            f"吞吐量 {throughput:.0f} 样本/秒低于基准 3000"
+        assert throughput > 3000, f"吞吐量 {throughput:.0f} 样本/秒低于基准 3000"
 
     def test_multi_factor_preprocessing_throughput(self):
         """多因子预处理吞吐量应满足要求 - 使用process_multi_stock_factors API"""
@@ -708,11 +734,14 @@ class TestPerformance:
         data = {}
         for i in range(n_stocks):
             stock_code = f"{600000 + i:06d}"
-            df = pd.DataFrame({
-                **{f"factor_{j}": rng.standard_normal(n_days) for j in range(n_factors)},
-                "market_cap": rng.uniform(1e8, 1e10, n_days),
-                "industry": rng.choice(["银行", "地产", "科技", "医药", "能源"], n_days),
-            }, index=dates)
+            df = pd.DataFrame(
+                {
+                    **{f"factor_{j}": rng.standard_normal(n_days) for j in range(n_factors)},
+                    "market_cap": rng.uniform(1e8, 1e10, n_days),
+                    "industry": rng.choice(["银行", "地产", "科技", "医药", "能源"], n_days),
+                },
+                index=dates,
+            )
             data[stock_code] = df
 
         # 禁用中性化以避免单股票时间序列回归的警告
@@ -724,18 +753,18 @@ class TestPerformance:
 
         start = time.time()
         result_data, all_stats = pipeline.process_multi_stock_factors(
-            data, factor_names, parallel_stocks=False,
+            data,
+            factor_names,
+            parallel_stocks=False,
         )
         elapsed = time.time() - start
 
         total_samples = n_stocks * n_factors * n_days
-        throughput = total_samples / elapsed
+        total_samples / elapsed
         # 多因子(5) x 多股票(50) x 250天 应 < 10秒
-        assert elapsed < 10.0, \
-            f"多因子预处理耗时 {elapsed:.2f}s 超过基准 10s"
+        assert elapsed < 10.0, f"多因子预处理耗时 {elapsed:.2f}s 超过基准 10s"
         # 验证所有股票都有处理结果
-        assert len(result_data) == n_stocks, \
-            f"处理结果股票数 {len(result_data)} 与输入 {n_stocks} 不一致"
+        assert len(result_data) == n_stocks, f"处理结果股票数 {len(result_data)} 与输入 {n_stocks} 不一致"
 
 
 if __name__ == "__main__":
