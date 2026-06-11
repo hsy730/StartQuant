@@ -582,9 +582,10 @@ async def promote_generated_factor(generated_id: int, request: PromoteFactorRequ
                 raise HTTPException(status_code=404, detail="生成因子不存在")
 
             if not gen_factor.is_valid:
+                score_str = f"{gen_factor.validation_score:.1f}" if gen_factor.validation_score is not None else "N/A"
                 raise HTTPException(
                     status_code=400,
-                    detail=f"因子未通过验证（验证得分: {gen_factor.validation_score:.1f}），不能提升到因子库",
+                    detail=f"因子未通过验证（验证得分: {score_str}），不能提升到因子库",
                 )
 
             if gen_factor.is_saved:

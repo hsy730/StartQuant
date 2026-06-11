@@ -8,8 +8,6 @@ import pandas as pd
 import empyrical
 import numpy as np
 
-from pypfopt import EfficientFrontier, HRPOpt, risk_models, expected_returns
-
 from backend.utils.safe_math import safe_divide
 from backend.utils.weight_utils import normalize_weights
 from backend.services.risk_metrics import calculate_relative_metrics
@@ -332,58 +330,21 @@ class PortfolioAnalysisService:
                 weights = pd.Series(result["weights"])
                 extra_info["ic_values"] = {k: v for k, v in result["weights"].items()}
 
-        # 3. 风险平价 — 使用HRPOpt（层次风险平价，考虑因子间相关性）
-        elif method == "risk_parity":
-            if n_factors >= 2:
-                try:
-                    hrp = HRPOpt(factor_returns)
-                    _raw_weights = hrp.optimize()  # noqa: F841
-                    clean_weights = hrp.clean_weights()
-                    weights = pd.Series(clean_weights, index=factor_returns.columns)
-                    extra_info["optimization_status"] = "success"
-                except Exception as e:
-                    logger.warning(f"PyPortfolioOpt risk_parity失败: {e}，回退到等权重")
-                    weights = pd.Series(1.0 / n_factors, index=factor_returns.columns)
-                    extra_info["optimization_status"] = f"fallback: {str(e)}"
-            else:
-                weights = pd.Series(1.0, index=factor_returns.columns)
-                extra_info["optimization_status"] = "skipped: only one factor"
+        # 3-5. 风险平价/最大夏普/最小方差 — 委托WeightOptimizer统一入口（规则2/5）
+        elif method in ("risk_parity", "max_sharpe", "min_variance"):
+            from backend.services.weight_optimizer_service import WeightOptimizer
 
-        # 4. 最大夏普比率（使用PyPortfolioOpt实现均值-方差优化）
-        elif method == "max_sharpe":
-            if n_factors >= 2:
-                try:
-                    mu = expected_returns.mean_historical_return(factor_returns, returns_data=True, frequency=252)
-                    S = risk_models.sample_cov(factor_returns, returns_data=True, frequency=252)
-                    ef = EfficientFrontier(mu, S)
-                    ef.max_sharpe(risk_free_rate=risk_free_rate)
-                    weights = pd.Series(ef.clean_weights(), index=factor_returns.columns)
-                    extra_info["optimization_status"] = "success"
-                except Exception as e:
-                    logger.warning(f"PyPortfolioOpt max_sharpe失败: {e}，回退到等权重")
-                    weights = pd.Series(1.0 / n_factors, index=factor_returns.columns)
-                    extra_info["optimization_status"] = f"fallback: {str(e)}"
-            else:
-                weights = pd.Series(1.0, index=factor_returns.columns)
-                extra_info["optimization_status"] = "skipped: only one factor"
-
-        # 5. 最小方差（使用PyPortfolioOpt实现最小方差优化）
-        elif method == "min_variance":
-            if n_factors >= 2:
-                try:
-                    mu = expected_returns.mean_historical_return(factor_returns, returns_data=True, frequency=252)
-                    S = risk_models.sample_cov(factor_returns, returns_data=True, frequency=252)
-                    ef = EfficientFrontier(mu, S)
-                    ef.min_volatility()
-                    weights = pd.Series(ef.clean_weights(), index=factor_returns.columns)
-                    extra_info["optimization_status"] = "success"
-                except Exception as e:
-                    logger.warning(f"PyPortfolioOpt min_variance失败: {e}，回退到等权重")
-                    weights = pd.Series(1.0 / n_factors, index=factor_returns.columns)
-                    extra_info["optimization_status"] = f"fallback: {str(e)}"
-            else:
-                weights = pd.Series(1.0, index=factor_returns.columns)
-                extra_info["optimization_status"] = "skipped: only one factor"
+            optimizer = WeightOptimizer()
+            # 适配接口：factor_returns DataFrame → factor_values dict
+            fv_dict = {col: factor_returns[col] for col in factor_returns.columns}
+            result = optimizer.calculate_weights(
+                factor_values=fv_dict,
+                factor_names=list(factor_returns.columns),
+                method=method,
+                returns=None,
+            )
+            weights = pd.Series(result["weights"])
+            extra_info["optimization_status"] = result.get("method", method)
 
         else:
             return {"weights": {}, "method": method, "error": f"不支持的权重优化方法: {method}"}

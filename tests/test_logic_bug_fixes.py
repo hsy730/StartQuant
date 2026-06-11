@@ -47,7 +47,7 @@ class TestPyPortfolioOptReturnsData:
         assert "returns_data=True" in source, "_min_variance 中 sample_cov 应传 returns_data=True"
 
     def test_portfolio_analysis_max_sharpe_uses_returns_data(self):
-        """portfolio_analysis.optimize_weights max_sharpe 应传 returns_data=True"""
+        """portfolio_analysis.optimize_weights max_sharpe 委托 WeightOptimizer"""
         from backend.services.portfolio_analysis_service import PortfolioAnalysisService
         from unittest.mock import patch, MagicMock
 
@@ -56,24 +56,14 @@ class TestPyPortfolioOptReturnsData:
         dates = pd.date_range("2024-01-01", periods=60, freq="B")
         factor_returns = pd.DataFrame(np.random.randn(60, 2) * 0.01, index=dates, columns=["f1", "f2"])
 
-        with (
-            patch("backend.services.portfolio_analysis_service.expected_returns") as mock_er,
-            patch("backend.services.portfolio_analysis_service.risk_models") as mock_rm,
-            patch("backend.services.portfolio_analysis_service.EfficientFrontier") as mock_ef,
-        ):
-            mock_er.mean_historical_return.return_value = pd.Series({"f1": 0.05, "f2": 0.03})
-            mock_rm.sample_cov.return_value = pd.DataFrame(
-                [[0.01, 0.002], [0.002, 0.01]], index=["f1", "f2"], columns=["f1", "f2"]
-            )
-            mock_instance = MagicMock()
-            mock_instance.max_sharpe.return_value = {"f1": 0.6, "f2": 0.4}
-            mock_instance.clean_weights.return_value = {"f1": 0.6, "f2": 0.4}
-            mock_ef.return_value = mock_instance
+        with patch("backend.services.weight_optimizer_service.WeightOptimizer.calculate_weights") as mock_calc:
+            mock_calc.return_value = {"weights": {"f1": 0.6, "f2": 0.4}, "method": "max_sharpe"}
 
             service.optimize_weights(factor_returns, method="max_sharpe")
 
-            call_kwargs = mock_er.mean_historical_return.call_args
-            assert call_kwargs[1].get("returns_data") is True
+            # 验证 WeightOptimizer.calculate_weights 被正确调用
+            call_kwargs = mock_calc.call_args
+            assert call_kwargs[1].get("method") == "max_sharpe"
 
 
 # ============================================================
@@ -529,13 +519,18 @@ class TestRiskParityHRPOpt:
     """验证portfolio_analysis风险平价使用HRPOpt"""
 
     def test_risk_parity_uses_hrp_opt(self):
-        """portfolio_analysis risk_parity 应使用 HRPOpt"""
+        """portfolio_analysis risk_parity 委托 WeightOptimizer（使用 HRPOpt）"""
         from backend.services.portfolio_analysis_service import PortfolioAnalysisService
+        from backend.services.weight_optimizer_service import WeightOptimizer
         import inspect
 
+        # portfolio_analysis 委托 WeightOptimizer
         source = inspect.getsource(PortfolioAnalysisService.optimize_weights)
-        # risk_parity 分支应包含 HRPOpt
-        assert "HRPOpt" in source, "risk_parity 应使用 HRPOpt 考虑因子间相关性"
+        assert "WeightOptimizer" in source, "risk_parity 应委托 WeightOptimizer 统一入口"
+
+        # WeightOptimizer 内部使用 HRPOpt
+        optimizer_source = inspect.getsource(WeightOptimizer._risk_parity)
+        assert "HRPOpt" in optimizer_source, "WeightOptimizer._risk_parity 应使用 HRPOpt"
 
 
 # ============================================================

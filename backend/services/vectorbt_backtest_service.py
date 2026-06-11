@@ -642,7 +642,7 @@ class VectorBTBacktestService:
                     if "limit_down_mask" in df.columns
                     else 0
                 ),
-                "suspended_days": int((not df["tradable_mask"]).sum()) if "tradable_mask" in df.columns else 0,
+                "suspended_days": int((~df["tradable_mask"]).sum()) if "tradable_mask" in df.columns else 0,
                 "mask_applied": "tradable_mask" in df.columns,
             },
             "chunking_info": {

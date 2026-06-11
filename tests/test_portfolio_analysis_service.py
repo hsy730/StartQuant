@@ -743,7 +743,8 @@ class TestOptimizeWeights:
         result = self.service.optimize_weights(single_factor, method="max_sharpe")
 
         assert result["weights"]["factor_0"] == pytest.approx(1.0, abs=1e-6)
-        assert result.get("optimization_status") == "skipped: only one factor"
+        # 委托WeightOptimizer后，单因子回退到等权，optimization_status为equal_weight
+        assert result.get("optimization_status") in ("skipped: only one factor", "equal_weight")
 
     def test_min_variance_single_factor_should_return_weight_one(self):
         """最小方差单因子应返回权重1"""

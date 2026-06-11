@@ -277,7 +277,7 @@ class DeepFactorMiningService:
         self._feature_std: Optional[np.ndarray] = None
 
         self.progress_callback = None
-        self._cancel_flag = False
+        self._cancel_event = threading.Event()
 
     # ------------------------------------------------------------------
     # 股票池设置
@@ -356,7 +356,7 @@ class DeepFactorMiningService:
 
     def request_cancel(self):
         """请求取消挖掘任务"""
-        self._cancel_flag = True
+        self._cancel_event.set()
         logger.info("收到取消请求，将在当前epoch结束后停止")
 
     # ------------------------------------------------------------------
@@ -542,7 +542,7 @@ class DeepFactorMiningService:
 
         for epoch in range(1, self.n_epochs + 1):
             # 取消检查
-            if self._cancel_flag:
+            if self._cancel_event.is_set():
                 logger.info(f"深度因子训练在第 {epoch} 个epoch被用户取消")
                 break
 

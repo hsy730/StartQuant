@@ -681,9 +681,11 @@ def _update_progress(task_id, gen, total_gen, best_fitness, avg_fitness, algorit
             fitness_history=mining_tasks[task_id]["fitness_history"],
         )
 
+    bf = _safe_float(best_fitness, default=0.0)
+    af = _safe_float(avg_fitness, default=0.0)
     logger.info(
         f"Progress: {progress}%, {algorithm} Gen {gen}/{total_gen}, "
-        f"Best: {_safe_float(best_fitness):.4f}, Avg: {_safe_float(avg_fitness):.4f}"
+        f"Best: {bf:.4f}, Avg: {af:.4f}"
     )
 
 
