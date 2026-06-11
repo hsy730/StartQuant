@@ -37,6 +37,16 @@ from backend.utils.ic_calculator import calculate_rolling_ic
 logger = logging.getLogger(__name__)
 
 
+def _spearman_autocorr(series, lag):
+    """Spearman自相关（规则7.25：前视偏差检测必须使用Spearman）"""
+    shifted = series.shift(lag)
+    aligned = pd.DataFrame({"s": series, "s_lag": shifted}).dropna()
+    if len(aligned) < 5:
+        return np.nan
+    corr, _ = spearmanr(aligned["s"], aligned["s_lag"])
+    return corr
+
+
 class BiasRiskLevel(str, Enum):
     """风险等级枚举"""
 
@@ -585,7 +595,7 @@ class LookaheadBiasDetector:
         if len(factor) < 20:
             return self._skip_result("autocorrelation_lag1", "数据量不足")
 
-        ac1 = factor.autocorr(lag=1)
+        ac1 = _spearman_autocorr(factor, lag=1)
         abs_ac1 = abs(ac1) if pd.notna(ac1) else 0.0
         threshold = self.thresholds["autocorr_lag1_max"]
 
@@ -608,7 +618,7 @@ class LookaheadBiasDetector:
         if len(factor) < 30:
             return self._skip_result("autocorrelation_lag5", "数据量不足")
 
-        ac5 = factor.autocorr(lag=5)
+        ac5 = _spearman_autocorr(factor, lag=5)
         abs_ac5 = abs(ac5) if pd.notna(ac5) else 0.0
         threshold = self.thresholds["autocorr_lag5_max"]
 

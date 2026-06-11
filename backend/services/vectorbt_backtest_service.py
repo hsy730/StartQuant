@@ -869,7 +869,7 @@ class VectorBTBacktestService:
                 rolling_std = df[factor_name].rolling(std_window, min_periods=20).std()
                 df[f"{factor_name}_normalized"] = safe_series_divide(
                     df[factor_name] - rolling_mean, rolling_std, fill_value=np.nan
-                ).fillna(0)
+                )
 
         # 2. 计算因子组合得分
         normalized_factors = [f"{name}_normalized" for name in factor_names]

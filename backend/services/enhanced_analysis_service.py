@@ -13,7 +13,7 @@ from scipy.stats import spearmanr
 from backend.services.factor_neutralization_service import factor_neutralization_service
 from backend.services.factor_stability_service import factor_stability_service
 from backend.services.factor_summary_service import factor_summary_service
-from backend.utils.safe_math import safe_ir
+from backend.utils.safe_math import safe_ir, safe_divide
 
 logger = logging.getLogger(__name__)
 
@@ -84,7 +84,7 @@ class EnhancedAnalysisService:
             # 计算置信区间
             alpha = 1 - confidence_level
             t_critical = stats.t.ppf(1 - alpha / 2, df=len(ic_series) - 1)
-            se = ic_series.std(ddof=1) / np.sqrt(len(ic_series))
+            se = safe_divide(ic_series.std(ddof=1), np.sqrt(len(ic_series)), default=0.0)
             ci_lower = mean_ic - t_critical * se
             ci_upper = mean_ic + t_critical * se
 
@@ -364,6 +364,7 @@ class EnhancedAnalysisService:
                                 }
 
                 except Exception as e:
+                    logger.warning(f"中性化处理失败({factor_name}): {e}")
                     results["neutralization"][factor_name] = {"error": str(e)}
 
             # 稳定性分析
@@ -417,6 +418,7 @@ class EnhancedAnalysisService:
                     }
 
                 except Exception as e:
+                    logger.warning(f"稳定性分析失败({factor_name}): {e}")
                     results["stability"][factor_name] = {"error": str(e)}
 
             # 生成摘要
@@ -438,6 +440,7 @@ class EnhancedAnalysisService:
                         results["summary"][factor_name] = summary
 
                 except Exception as e:
+                    logger.warning(f"摘要生成失败({factor_name}): {e}")
                     results["summary"][factor_name] = {"error": str(e)}
 
         return results

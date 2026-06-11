@@ -834,8 +834,8 @@ class GeneticFactorMiningService(BaseMiningService):
 
             if progress:
                 record = self.stats.compile(population) if logbook is None else logbook[-1]
-                best_fit = float(record.get("max", 0.0))
-                avg_fit = float(record.get("avg", 0.0))
+                best_fit = float(record["max"]) if record.get("max") is not None else 0.0
+                avg_fit = float(record["avg"]) if record.get("avg") is not None else 0.0
 
                 if self.progress_callback:
                     self.progress_callback(gen, n_generations, best_fit, avg_fit)

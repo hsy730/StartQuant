@@ -550,8 +550,10 @@ class FactorStabilityService:
                 results["coefficient_of_variation"] = cv_result
 
                 # CV得分：CV越小越稳定
-                cv = cv_result.get("cv", float("inf"))
-                if np.isnan(cv) or np.isinf(cv):
+                cv = cv_result.get("cv")
+                if cv is None:
+                    cv_score = 0.3
+                elif np.isnan(cv) or np.isinf(cv):
                     cv_score = 0.3
                 elif cv < 0.5:
                     cv_score = 0.9
@@ -723,7 +725,8 @@ class FactorStabilityService:
 
         # 分布稳定性警告
         dist = results.get("distribution_stability", {})
-        if dist.get("stable_ratio", 1.0) < 0.6:
+        stable_ratio = dist.get("stable_ratio")
+        if stable_ratio is not None and stable_ratio < 0.6:
             warnings.append("⚠️ 因子分布在不同时期差异显著，可能存在结构性变化")
 
         # 平稳性警告
@@ -733,7 +736,8 @@ class FactorStabilityService:
 
         # 变异系数警告
         cv = results.get("coefficient_of_variation", {})
-        if cv.get("cv", 0) > 1.5:
+        cv_val = cv.get("cv")
+        if cv_val is not None and cv_val > 1.5:
             warnings.append("⚠️ IC变异程度较高，因子收益波动较大")
 
         # 市场环境警告

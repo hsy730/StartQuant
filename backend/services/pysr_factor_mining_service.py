@@ -321,7 +321,7 @@ class PySRFactorMiningService(BaseMiningService):
                         },
                         "ir_validation": {
                             "ir": ir_capped,
-                            "passed": ir_capped >= 0.3,
+                            "passed": ir_capped >= 0.3 if ir_capped is not None else False,
                         },
                         "score": max(0.0, fitness * 100),
                         "_raw_ic_mean": ic_mean_val,
@@ -331,7 +331,7 @@ class PySRFactorMiningService(BaseMiningService):
                     alphalens_success = True
                     logger.info(
                         f"[PySR Eval] ✅ Alphalens SUCCESS: "
-                        f"IC={ic_mean_val:.4f}, IR={ir_val:.4f} (capped={ir_capped:.4f})"
+                        f"IC={ic_mean_val:.4f}, IR={ir_val:.4f if ir_val is not None else 'N/A'} (capped={ir_capped:.4f if ir_capped is not None else 'N/A'})"
                     )
         except Exception as e:
             logger.warning(f"[PySR Eval] ❌ Alphalens FAILED: {e}")
