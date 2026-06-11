@@ -39,6 +39,7 @@ from backend.services.lookahead_bias_detector import (
 )
 from backend.utils.safe_math import safe_ir, safe_divide
 from backend.utils.weight_utils import normalize_weights
+from backend.utils.ic_calculator import calculate_rolling_ic
 
 
 class AnalysisService:
@@ -583,7 +584,6 @@ class AnalysisService:
                 logger.warning("⚠️ IC分析: 未找到tradable_mask列！IC可能虚高18%")
 
         ic_series = {}
-        rank_ic_series = {}
         for factor_name in factor_names:
             if factor_name not in df.columns:
                 continue
@@ -600,16 +600,8 @@ class AnalysisService:
                 # 这样rolling窗口基于自然日而非有效行数，语义正确
                 factor_masked = factor_values.where(combined_mask)
                 return_masked = return_values.where(combined_mask)
-                min_periods = max(2, int(60 * 0.6))
-                rolling_ic = factor_masked.rolling(window=60, min_periods=min_periods).corr(return_masked)
-                # Rank IC: 使用per-window Spearman（全局rank+rolling Pearson是近似，不精确）
-                # 在lambda内先对齐factor和return，去除NaN后再调用spearmanr
-                rolling_rank_ic = factor_masked.rolling(window=60, min_periods=min_periods).apply(
-                    lambda x: (
-                        lambda vx, vy: spearmanr(vx, vy)[0] if len(vx) >= min_periods else np.nan
-                    )(x.dropna(), return_masked.loc[x.index].dropna().reindex(x.dropna().index).dropna()),
-                    raw=False
-                )
+                # 使用统一的 calculate_rolling_ic 计算滚动 Spearman IC（Rule 7.1/7.30）
+                rolling_ic = calculate_rolling_ic(factor_masked, return_masked, window=60, method='spearman')
             else:
                 valid_mask = (
                     factor_values.notna() & return_values.notna()
@@ -619,47 +611,31 @@ class AnalysisService:
                 return_clean = return_values[valid_mask]
                 if len(factor_clean) < 60:
                     continue
-                rolling_ic = factor_clean.rolling(window=60).corr(return_clean)
-                # Rank IC: 使用per-window Spearman（全局rank+rolling Pearson是近似，不精确）
-                # 在lambda内先对齐factor和return，去除NaN后再调用spearmanr
-                rolling_rank_ic = factor_clean.rolling(window=60).apply(
-                    lambda x: (
-                        lambda vx, vy: spearmanr(vx, vy)[0] if len(vx) >= 2 else np.nan
-                    )(x.dropna(), return_clean.loc[x.index].dropna().reindex(x.dropna().index).dropna()),
-                    raw=False
-                )
+                # 使用统一的 calculate_rolling_ic 计算滚动 Spearman IC（Rule 7.1/7.30）
+                rolling_ic = calculate_rolling_ic(factor_clean, return_clean, window=60, method='spearman')
 
             rolling_ic = rolling_ic.replace([np.inf, -np.inf], np.nan).dropna()
-            rolling_rank_ic = rolling_rank_ic.replace([np.inf, -np.inf], np.nan).dropna()
 
             if len(rolling_ic) > 0:
                 ic_series[factor_name] = rolling_ic
-            if len(rolling_rank_ic) > 0:
-                rank_ic_series[factor_name] = rolling_rank_ic
 
         ic_stats = {}
         for factor_name, ic_s in ic_series.items():
-            # 优先使用Rank IC（Spearman）作为主统计量，与业界标准一致
-            primary_ic = rank_ic_series.get(factor_name, ic_s)
-            ic_mean = primary_ic.mean()
-            ic_std = primary_ic.std()
+            # ic_series 已全部为 Spearman IC（Rule 7.1/7.30）
+            ic_mean = ic_s.mean()
+            ic_std = ic_s.std()
             ir = safe_ir(ic_mean, ic_std, default=None)
             stats = {
                 "IC均值": ic_mean, "IC标准差": ic_std, "IR": ir,
-                "IC>0占比": (primary_ic > 0).mean(), "IC绝对值均值": abs(primary_ic).mean(),
-                "IC序列": primary_ic.to_dict(), "IC类型": "时序Rank IC（单股票，Spearman）",
+                "IC>0占比": (ic_s > 0).mean(), "IC绝对值均值": abs(ic_s).mean(),
+                "IC序列": ic_s.to_dict(), "IC类型": "时序Rank IC（单股票，Spearman）",
                 "Mask-First": tradable_mask is not None,
             }
-            # Pearson IC作为辅助参考
-            pearson_ic_s = ic_s
-            stats["Pearson_IC均值"] = pearson_ic_s.mean()
-            stats["Pearson_IC标准差"] = pearson_ic_s.std()
-            stats["Pearson_IR"] = safe_ir(pearson_ic_s.mean(), pearson_ic_s.std(), default=None)
             ic_stats[factor_name] = stats
 
-        # 优先使用Rank IC（Spearman）计算monthly_ic和rolling_ir
-        monthly_ic_source = rank_ic_series if rank_ic_series else ic_series
-        rolling_ir_source = rank_ic_series if rank_ic_series else ic_series
+        # 使用 Spearman IC 计算 monthly_ic 和 rolling_ir
+        monthly_ic_source = ic_series
+        rolling_ir_source = ic_series
 
         result = {
             "ic_stats": ic_stats,
@@ -1083,14 +1059,14 @@ class AnalysisService:
 
                         all_ic_stats[factor_key] = {
                             "IC均值": float(weighted_mean),
-                            "IC标准差": float(period_stats.get("std_ic", ic_s.std())),
+                            "IC标准差": float(period_stats.get("std_ic")) if period_stats.get("std_ic") is not None else float(ic_s.std()),
                             "IR": safe_ir(float(weighted_mean), float(std_ic_val), default=None),
                             "IC>0占比": float((ic_s > 0).mean()),
                             "IC绝对值均值": float(abs(ic_s).mean()),
                             "IC序列": ic_s.to_dict(),
                             "IC类型": f"横截面{ic_type_name}（{weight_type}加权）",
-                            "t统计量": float(period_stats.get("t_statistic", 0)),
-                            "p值": float(period_stats.get("p_value", 1)),
+                            "t统计量": float(period_stats.get("t_statistic")) if period_stats.get("t_statistic") is not None else 0.0,
+                            "p值": float(period_stats.get("p_value")) if period_stats.get("p_value") is not None else 1.0,
                             "weight_type": weight_type,
                         }
                         if len(ic_s) > 0:
@@ -1131,7 +1107,7 @@ class AnalysisService:
 
         weights_series = pd.Series(date_weights)
         total_weight = weights_series.sum()
-        if total_weight == 0:
+        if total_weight < 1e-10:
             return float(ic_s.mean())
         weights_normalized = normalize_weights(weights_series)
 

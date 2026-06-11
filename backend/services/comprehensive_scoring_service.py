@@ -145,7 +145,7 @@ class ComprehensiveScoringService:
             # 年化滑点成本 = 滑点率 * 换手率 * 2（买入+卖出）
             annual_cost = slip * turnover * 2
             net_return = annual_return - annual_cost
-            if annual_return is None or annual_return == 0:
+            if annual_return is None or abs(annual_return) < 1e-10:
                 return_decay = float('inf')
             else:
                 return_decay = safe_divide(float(annual_cost), float(annual_return), default=float('inf')) * 100

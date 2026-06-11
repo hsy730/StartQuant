@@ -43,7 +43,7 @@ def safe_div(a, b):
     if hasattr(b, 'replace'):
         b = b.replace(0, np.nan)
     else:
-        b = np.where(b == 0, np.nan, b)
+        b = np.where(np.abs(b) < 1e-10, np.nan, b)
     return a / b
 
 

@@ -1094,12 +1094,10 @@ async def full_tear_sheet(request: QuantileReturnsRequest):
             raise HTTPException(status_code=500, detail=result.get("error", "Tear Sheet生成失败"))
         
         tear_sheet = result["tear_sheet"]
-        score = tear_sheet["summary"]["overall_score"]
-        grade = tear_sheet["summary"]["grade"]
-        
-        logger.info(
-            f"✅ Tear Sheet生成完成: 得分={score:.1f}, 等级={grade}"
-        )
+        score = tear_sheet.get("summary", {}).get("overall_score")
+        grade = tear_sheet.get("summary", {}).get("grade", "N/A")
+        score_str = f"{score:.1f}" if score is not None else "N/A"
+        logger.info(f"Tear Sheet生成完成: 得分={score_str}, 等级={grade}")
         
         return sanitize_dict({
             "success": True,
@@ -1409,39 +1407,80 @@ async def detect_lookahead_bias(request: LookaheadBiasRequest):
 
             factor_data = all_factor_data[factor_name]
 
-            # 收集单股票或多股票的因子值和收益
-            all_factor_values = []
-            all_return_values = []
+            # 判断单股票还是多股票，选择正确的检测方法（Rule 7.1）
+            stock_codes = list(factor_data.keys())
+            if len(stock_codes) > 1:
+                # 多股票：构建横截面 DataFrame，使用 detect_cross_sectional
+                rows = []
+                for stock_code, df in factor_data.items():
+                    if factor_name in df.columns and "close" in df.columns:
+                        fv = df[factor_name]
+                        ret = df["close"].pct_change(1).shift(-1)
+                        for date_idx in fv.index:
+                            f_val = fv.loc[date_idx] if pd.notna(fv.loc[date_idx]) else None
+                            r_val = ret.loc[date_idx] if date_idx in ret.index and pd.notna(ret.loc[date_idx]) else None
+                            if f_val is not None and r_val is not None:
+                                rows.append({
+                                    "date": date_idx,
+                                    "stock_code": stock_code,
+                                    factor_name: f_val,
+                                    "return": r_val,
+                                })
 
-            for stock_code, df in factor_data.items():
-                if factor_name in df.columns and "close" in df.columns:
-                    fv = df[factor_name]
-                    ret = df["close"].pct_change(1).shift(-1)
-                    combined = pd.DataFrame({"factor": fv, "return": ret}).dropna()
-                    if len(combined) >= 20:
-                        all_factor_values.extend(combined["factor"].tolist())
-                        all_return_values.extend(combined["return"].tolist())
+                if len(rows) < 30:
+                    per_factor_results[factor_name] = {
+                        "has_bias": False,
+                        "risk_level": "unknown",
+                        "risk_score": 0,
+                        "summary": f"因子 [{factor_name}] 有效样本不足({len(rows)})",
+                        "checks": [],
+                        "recommendations": [],
+                    }
+                    continue
 
-            if len(all_factor_values) < 30:
-                per_factor_results[factor_name] = {
-                    "has_bias": False,
-                    "risk_level": "unknown",
-                    "risk_score": 0,
-                    "summary": f"因子 [{factor_name}] 有效样本不足({len(all_factor_values)})",
-                    "checks": [],
-                    "recommendations": [],
-                }
-                continue
+                factor_df = pd.DataFrame(rows)
+                return_df = factor_df[["date", "stock_code", "return"]].copy()
+                result = detector.detect_cross_sectional(
+                    factor_df=factor_df,
+                    return_df=return_df,
+                    date_column="date",
+                    stock_column="stock_code",
+                    factor_name=factor_name,
+                )
+            else:
+                # 单股票：使用 detect 方法
+                all_factor_values = []
+                all_return_values = []
 
-            factor_series = pd.Series(all_factor_values)
-            return_series = pd.Series(all_return_values)
+                for stock_code, df in factor_data.items():
+                    if factor_name in df.columns and "close" in df.columns:
+                        fv = df[factor_name]
+                        ret = df["close"].pct_change(1).shift(-1)
+                        combined = pd.DataFrame({"factor": fv, "return": ret}).dropna()
+                        if len(combined) >= 20:
+                            all_factor_values.extend(combined["factor"].tolist())
+                            all_return_values.extend(combined["return"].tolist())
 
-            # 执行检测
-            result = detector.detect(
-                factor_values=factor_series,
-                return_values=return_series,
-                factor_name=factor_name,
-            )
+                if len(all_factor_values) < 30:
+                    per_factor_results[factor_name] = {
+                        "has_bias": False,
+                        "risk_level": "unknown",
+                        "risk_score": 0,
+                        "summary": f"因子 [{factor_name}] 有效样本不足({len(all_factor_values)})",
+                        "checks": [],
+                        "recommendations": [],
+                    }
+                    continue
+
+                factor_series = pd.Series(all_factor_values)
+                return_series = pd.Series(all_return_values)
+
+                # 执行检测
+                result = detector.detect(
+                    factor_values=factor_series,
+                    return_values=return_series,
+                    factor_name=factor_name,
+                )
 
             per_factor_results[factor_name] = {
                 "has_bias": result.has_bias,

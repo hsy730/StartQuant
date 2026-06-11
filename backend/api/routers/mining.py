@@ -718,9 +718,9 @@ def _unified_validate_factor(expression: str, factor_calculator, data, return_va
             )
             ic_val = validation.get("ic_validation", {})
             ir_val = validation.get("ir_validation", {})
-            ic = abs(float(ic_val.get("ic", 0.0)))
-            ir_capped = float(ir_val.get("ir", 0.0))
-            score = float(validation.get("score", 0.0))
+            ic = abs(float(ic_val.get("ic")) if ic_val.get("ic") is not None else 0.0)
+            ir_capped = float(ir_val.get("ir")) if ir_val.get("ir") is not None else 0.0
+            score = float(validation.get("score")) if validation.get("score") is not None else 0.0
             overall_passed = validation.get("overall_passed", False)
             turnover_val = validation.get("turnover_validation", {})
             stability_val = validation.get("stability_validation", {})

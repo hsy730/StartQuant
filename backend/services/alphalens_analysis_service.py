@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 from typing import Dict, List, Optional, Tuple, Any
 from scipy import stats as scipy_stats
+from scipy.stats import spearmanr
 
 logger = logging.getLogger(__name__)
 
@@ -185,7 +186,7 @@ class AlphalensAnalysisService:
             if len(merged) < 2:
                 continue
             daily_ic = merged.groupby(merged.index).apply(
-                lambda g: g['factor'].corr(g['return']) if len(g) >= 2 else np.nan
+                lambda g: spearmanr(g['factor'], g['return'])[0] if len(g) >= 2 else np.nan
             ).dropna()
             if len(daily_ic) > 0:
                 ic_results[period_col] = daily_ic

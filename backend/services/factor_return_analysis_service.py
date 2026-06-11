@@ -205,7 +205,7 @@ class FactorReturnAnalysisService:
                 if self.config.weight_by_market_cap and "market_cap" in group_data.columns:
                     weights = group_data["market_cap"].fillna(group_data["market_cap"].median())
                     weight_sum = weights.sum()
-                    if weight_sum == 0 or np.isnan(weight_sum):
+                    if weight_sum < 1e-10 or np.isnan(weight_sum):
                         avg_return = group_data["future_return"].mean()
                     else:
                         weights = safe_divide(weights, weight_sum, default=0.0)
@@ -568,10 +568,11 @@ class FactorReturnAnalysisService:
             std_top**2 / n_top + std_bottom**2 / n_bottom
         ) if n_top > 0 and n_bottom > 0 else 0.0
 
-        if se > 0:
-            t_stat = safe_divide(spread, se, default=0.0)
-        elif abs(spread) > 1e-10:
-            t_stat = float('inf')
+        if se > 1e-10:
+            t_stat = float(spread) / float(se)  # se guaranteed positive (Rule 7.34)
+        elif se > 0:
+            # se is very small but positive → extremely significant
+            t_stat = float('inf') if abs(spread) > 1e-10 else 0.0
         else:
             t_stat = 0.0
 

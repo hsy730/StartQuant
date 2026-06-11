@@ -626,7 +626,7 @@ class FactorValidationService:
 
             if len(aligned_data) >= 10:
                 corr = aligned_data["new_factor"].corr(
-                    aligned_data["existing_factor"]
+                    aligned_data["existing_factor"], method='spearman'
                 )
                 correlations.append(corr)
 

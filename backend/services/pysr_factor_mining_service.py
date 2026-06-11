@@ -298,12 +298,12 @@ class PySRFactorMiningService(BaseMiningService):
                             first_period = list(ic_type_data.keys())[0] if ic_type_data else None
                             if first_period:
                                 period_stats = ic_type_data[first_period]
-                                ic_mean_val = float(period_stats.get("mean_ic", 0))
+                                ic_mean_val = float(period_stats.get("mean_ic")) if period_stats.get("mean_ic") is not None else 0.0
                                 ir_raw = period_stats.get("ir")
                                 ir_val = float(ir_raw) if ir_raw is not None else 0.0
                                 break
 
-                    _stability = float(ic_results.get("stability", 0))
+                    _stability = float(ic_results.get("stability")) if ic_results.get("stability") is not None else 0.0
 
                     ir_capped = min(ir_val, 5.0)
 

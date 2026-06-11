@@ -283,7 +283,7 @@ class FactorSummaryService:
                 report += f"""
 **时间序列稳定性**
 - 平稳性: {'是' if is_stationary else '否'}
-- P值: {ts.get('p_value', 1):.4f}
+- P值: {_safe_float(ts.get('p_value'), default=1):.4f}
 """
 
         return report

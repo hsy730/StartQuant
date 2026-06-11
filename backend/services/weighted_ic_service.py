@@ -232,8 +232,9 @@ class WeightedICService:
                 if len(valid_ic) < self.config.min_observations:
                     continue
                 
-                mean_ic = abs(valid_ic.mean())
-                std_ic = valid_ic.std()
+                mean_ic = float(valid_ic.mean())  # 保留符号，IR可正可负（Rule 7.10）
+                mean_abs_ic = abs(mean_ic)  # 重要性评分使用绝对值
+                std_ic = float(valid_ic.std())
                 ir = safe_ir(mean_ic, std_ic, default=None)
                 positive_ratio = (valid_ic > 0).mean()
 
@@ -252,17 +253,18 @@ class WeightedICService:
                 ir_for_score = ir if ir is not None else 0.0
                 raw_score = (
                     ir_for_score * 30 +
-                    mean_ic * 100 +
+                    mean_abs_ic * 100 +
                     (positive_ratio - 0.5) * 20 +
                     stability_score * 20 +
                     max(min(momentum_score * 10, 10), -10)
                 )
+                raw_score = max(0.0, min(raw_score, 100.0))  # Rule 7.38
                 
                 importance_scores[name] = {
                     "raw_score": float(raw_score),
                     "components": {
                         "ir": float(ir) if ir is not None else None,
-                        "mean_abs_ic": float(mean_ic),
+                        "mean_abs_ic": float(mean_abs_ic),
                         "positive_ratio": float(positive_ratio),
                         "stability": float(stability_score),
                         "momentum": float(momentum_score),

@@ -4,6 +4,7 @@
 import logging
 from typing import Dict, List, Optional
 import pandas as pd
+import empyrical
 import numpy as np
 
 from pypfopt import EfficientFrontier, HRPOpt, risk_models, expected_returns
@@ -420,7 +421,6 @@ class PortfolioAnalysisService:
             weights = normalize_weights(weights)
 
         # 计算加权期望收益（年化）— 使用几何复利（Rule 7.32）
-        import empyrical
         weighted_daily_returns = (factor_returns * weights).sum(axis=1)
         weighted_return = float(empyrical.annual_return(weighted_daily_returns, period='daily'))
 
