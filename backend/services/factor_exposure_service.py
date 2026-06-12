@@ -60,6 +60,9 @@ class FactorExposureService:
                 }
             }
         """
+        # 防御性复制，防止修改调用方数据
+        factor_data = {k: v.copy() for k, v in factor_data.items()}
+
         # 找一个数据完整且时间最长的股票作为主要分析对象
         longest_stock, longest_df = find_longest_stock(factor_data, factor_name)
 
@@ -91,8 +94,14 @@ class FactorExposureService:
         rolling_mean = time_series.rolling(window=window, min_periods=1).mean()
         rolling_std = time_series.rolling(window=window, min_periods=1).std()
 
-        rolling_mean_dict = {str(date): float(val) if pd.notna(val) else None for date, val in rolling_mean.items()}
-        rolling_std_dict = {str(date): float(val) if pd.notna(val) else None for date, val in rolling_std.items()}
+        rolling_mean_dict = {
+            str(date): float(val) if pd.notna(val) else None
+            for date, val in rolling_mean.items()
+        }
+        rolling_std_dict = {
+            str(date): float(val) if pd.notna(val) else None
+            for date, val in rolling_std.items()
+        }
 
         # 使用最新的滚动统计值计算变异系数
         latest_mean = rolling_mean.iloc[-1]
@@ -117,7 +126,8 @@ class FactorExposureService:
             "std": float(factor_series.std()),
             "count": len(factor_series),
             "percentiles": {
-                f"p{p}": float(factor_series.quantile(p / 100)) for p in [1, 5, 10, 25, 50, 75, 90, 95, 99]
+                f"p{p}": float(factor_series.quantile(p / 100))
+                for p in [1, 5, 10, 25, 50, 75, 90, 95, 99]
             },
         }
 
@@ -141,7 +151,9 @@ class FactorExposureService:
             "histogram": histogram,
         }
 
-    def calculate_exposure_by_stock(self, factor_data: Dict[str, pd.DataFrame], factor_name: str) -> Dict[str, Dict]:
+    def calculate_exposure_by_stock(
+        self, factor_data: Dict[str, pd.DataFrame], factor_name: str
+    ) -> Dict[str, Dict]:
         """
         计算每只股票的因子暴露度
 
@@ -224,10 +236,16 @@ class FactorExposureService:
             "q80": float(values.quantile(0.8)),
         }
 
-        deciles = {f"d{i*10}": float(values.quantile(i / 10)) for i in range(1, 10)}
+        deciles = {f"d{i * 10}": float(values.quantile(i / 10)) for i in range(1, 10)}
 
         # 按五分位数分组
-        distribution_by_quintile = {"0-20%": [], "20-40%": [], "40-60%": [], "60-80%": [], "80-100%": []}
+        distribution_by_quintile = {
+            "0-20%": [],
+            "20-40%": [],
+            "40-60%": [],
+            "60-80%": [],
+            "80-100%": [],
+        }
 
         for stock_code, value in stock_latest_values.items():
             if value <= quintiles["q20"]:
@@ -241,7 +259,11 @@ class FactorExposureService:
             else:
                 distribution_by_quintile["80-100%"].append(stock_code)
 
-        return {"quintiles": quintiles, "deciles": deciles, "distribution_by_quintile": distribution_by_quintile}
+        return {
+            "quintiles": quintiles,
+            "deciles": deciles,
+            "distribution_by_quintile": distribution_by_quintile,
+        }
 
     def calculate_rolling_exposure(
         self, factor_data: Dict[str, pd.DataFrame], factor_name: str, window: int = 20
@@ -265,6 +287,9 @@ class FactorExposureService:
                 "lower_band": list   # 均值 - 2倍标准差
             }
         """
+        # 防御性复制，防止修改调用方数据
+        factor_data = {k: v.copy() for k, v in factor_data.items()}
+
         # 找一个数据完整且时间最长的股票
         longest_stock, longest_df = find_longest_stock(factor_data, factor_name)
 
@@ -289,12 +314,24 @@ class FactorExposureService:
         return {
             "dates": dates,
             "values": [float(v) for v in time_series.values],
-            "rolling_mean": [float(v) if pd.notna(v) else None for v in rolling_mean.values],
-            "rolling_std": [float(v) if pd.notna(v) else None for v in rolling_std.values],
-            "rolling_min": [float(v) if pd.notna(v) else None for v in rolling_min.values],
-            "rolling_max": [float(v) if pd.notna(v) else None for v in rolling_max.values],
-            "upper_band": [float(v) if pd.notna(v) else None for v in upper_band.values],
-            "lower_band": [float(v) if pd.notna(v) else None for v in lower_band.values],
+            "rolling_mean": [
+                float(v) if pd.notna(v) else None for v in rolling_mean.values
+            ],
+            "rolling_std": [
+                float(v) if pd.notna(v) else None for v in rolling_std.values
+            ],
+            "rolling_min": [
+                float(v) if pd.notna(v) else None for v in rolling_min.values
+            ],
+            "rolling_max": [
+                float(v) if pd.notna(v) else None for v in rolling_max.values
+            ],
+            "upper_band": [
+                float(v) if pd.notna(v) else None for v in upper_band.values
+            ],
+            "lower_band": [
+                float(v) if pd.notna(v) else None for v in lower_band.values
+            ],
         }
 
 

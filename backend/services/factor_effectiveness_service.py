@@ -24,7 +24,10 @@ class FactorEffectivenessService:
         pass
 
     def analyze_effectiveness(
-        self, factor_data: Dict[str, pd.DataFrame], factor_name: str, future_periods: List[int] = [1, 5, 10, 20]
+        self,
+        factor_data: Dict[str, pd.DataFrame],
+        factor_name: str,
+        future_periods: List[int] = [1, 5, 10, 20],
     ) -> Dict[str, Any]:
         """
         分析因子有效性
@@ -51,20 +54,28 @@ class FactorEffectivenessService:
 
         results["ic_time_series"] = self._calculate_ic_series(factor_data, factor_name)
 
-        results["event_response"] = self._analyze_event_response(factor_data, factor_name)
+        results["event_response"] = self._analyze_event_response(
+            factor_data, factor_name
+        )
 
-        results["decay_analysis"] = self._analyze_decay(factor_data, factor_name, future_periods)
+        results["decay_analysis"] = self._analyze_decay(
+            factor_data, factor_name, future_periods
+        )
 
         return results
 
-    def _create_scatter_data(self, factor_data: Dict[str, pd.DataFrame], factor_name: str) -> Dict[str, Any]:
+    def _create_scatter_data(
+        self, factor_data: Dict[str, pd.DataFrame], factor_name: str
+    ) -> Dict[str, Any]:
         """创建因子-收益散点图数据"""
         factor_values = []
         returns = []
 
         for stock_code, df in factor_data.items():
             if factor_name in df.columns and "close" in df.columns:
-                df_copy = calculate_future_returns(df[[factor_name, "close"]], periods=[1])
+                df_copy = calculate_future_returns(
+                    df[[factor_name, "close"]], periods=[1]
+                )
                 valid_data = df_copy[[factor_name, "future_return_1"]].dropna()
                 valid_data = valid_data[~np.isinf(valid_data["future_return_1"])]
                 factor_values.extend(valid_data[factor_name].tolist())
@@ -80,7 +91,9 @@ class FactorEffectivenessService:
             panel_frames = []
             for stock_code, df in factor_data.items():
                 if factor_name in df.columns and "close" in df.columns:
-                    df_copy = calculate_future_returns(df[[factor_name, "close"]], periods=[1])
+                    df_copy = calculate_future_returns(
+                        df[[factor_name, "close"]], periods=[1]
+                    )
                     df_copy = df_copy[[factor_name, "future_return_1"]].dropna()
                     if len(df_copy) > 0:
                         df_copy = df_copy.copy()
@@ -92,7 +105,9 @@ class FactorEffectivenessService:
                 for date, group in panel_df.groupby(panel_df.index):
                     if len(group) < 3:
                         continue
-                    ic_val, p_val = spearmanr(group[factor_name], group["future_return_1"])
+                    ic_val, p_val = spearmanr(
+                        group[factor_name], group["future_return_1"]
+                    )
                     if not np.isnan(ic_val):
                         cross_sectional_ics.append(ic_val)
 
@@ -128,7 +143,9 @@ class FactorEffectivenessService:
         all_data = []
         for stock_code, df in factor_data.items():
             if factor_name in df.columns and "close" in df.columns:
-                df_copy = calculate_future_returns(df[[factor_name, "close"]], periods=[1])
+                df_copy = calculate_future_returns(
+                    df[[factor_name, "close"]], periods=[1]
+                )
                 df_copy = df_copy.rename(columns={"future_return_1": "future_return"})
                 df_copy["stock_code"] = stock_code
                 all_data.append(df_copy[[factor_name, "future_return", "stock_code"]])
@@ -200,7 +217,9 @@ class FactorEffectivenessService:
                 "ic_values": valid_values,
                 "ic_mean": float(ic_s.mean()),
                 "ic_std": float(ic_s.std()) if len(ic_s) > 1 else None,
-                "ir": safe_ir(float(ic_s.mean()), float(ic_s.std()), default=None) if len(ic_s) > 1 else None,
+                "ir": safe_ir(float(ic_s.mean()), float(ic_s.std()), default=None)
+                if len(ic_s) > 1
+                else None,
                 "ic_positive_ratio": float((ic_s > 0).mean()),
                 "source": "Alphalens",
             }
@@ -208,19 +227,25 @@ class FactorEffectivenessService:
             logger.debug(f"Alphalens IC计算失败，使用fallback: {e}")
             return None
 
-    def _calculate_timeseries_ic(self, df: pd.DataFrame, factor_name: str, window: int = 20) -> Dict[str, Any]:
+    def _calculate_timeseries_ic(
+        self, df: pd.DataFrame, factor_name: str, window: int = 20
+    ) -> Dict[str, Any]:
         """计算时间序列滚动IC（适用于单只股票）"""
         factor_vals = df[factor_name].dropna()
         return_vals = df["future_return"].dropna()
 
         common_index = factor_vals.index.intersection(return_vals.index)
         if len(common_index) < window + 1:
-            return {"error": f"数据不足，需要至少{window+1}个数据点，当前只有{len(common_index)}个"}
+            return {
+                "error": f"数据不足，需要至少{window + 1}个数据点，当前只有{len(common_index)}个"
+            }
 
         factor_aligned = factor_vals.loc[common_index]
         return_aligned = return_vals.loc[common_index]
 
-        rolling_ic = calculate_rolling_ic(factor_aligned, return_aligned, window=window, method="spearman")
+        rolling_ic = calculate_rolling_ic(
+            factor_aligned, return_aligned, window=window, method="spearman"
+        )
         valid_ic = rolling_ic.dropna()
         valid_ic = valid_ic[~np.isinf(valid_ic)]
 
@@ -241,7 +266,9 @@ class FactorEffectivenessService:
             "ic_positive_ratio": float((ic_series > 0).mean()),
         }
 
-    def _calculate_cross_sectional_ic(self, df: pd.DataFrame, factor_name: str) -> Dict[str, Any]:
+    def _calculate_cross_sectional_ic(
+        self, df: pd.DataFrame, factor_name: str
+    ) -> Dict[str, Any]:
         """计算横截面IC（适用于多只股票）"""
         ic_values = []
         dates = []
@@ -274,7 +301,9 @@ class FactorEffectivenessService:
             "ic_values": [float(v) for v in ic_values],
             "ic_mean": float(ic_series.mean()),
             "ic_std": ic_std,
-            "ir": safe_ir(float(ic_series.mean()), ic_std, default=None) if ic_std is not None else None,
+            "ir": safe_ir(float(ic_series.mean()), ic_std, default=None)
+            if ic_std is not None
+            else None,
             "ic_positive_ratio": float((ic_series > 0).mean()),
         }
 
@@ -306,7 +335,9 @@ class FactorEffectivenessService:
             low_returns = {p: [] for p in holding_periods}
 
             for stock_code, df in factor_data.items():
-                df = calculate_future_returns(df[[factor_name, "close"]], periods=holding_periods)
+                df = calculate_future_returns(
+                    df[[factor_name, "close"]], periods=holding_periods
+                )
                 if factor_name not in df.columns or "close" not in df.columns:
                     continue
 
@@ -322,8 +353,12 @@ class FactorEffectivenessService:
                     if date_factor_vals is None or len(date_factor_vals) < 3:
                         continue
 
-                    high_threshold = float(date_factor_vals.quantile(threshold_percentile))
-                    low_threshold = float(date_factor_vals.quantile(1 - threshold_percentile))
+                    high_threshold = float(
+                        date_factor_vals.quantile(threshold_percentile)
+                    )
+                    low_threshold = float(
+                        date_factor_vals.quantile(1 - threshold_percentile)
+                    )
 
                     row = df.loc[[date]] if date in df.index else None
                     if row is None or len(row) == 0:
@@ -354,7 +389,9 @@ class FactorEffectivenessService:
             low_returns = {p: [] for p in holding_periods}
 
             for stock_code, df in factor_data.items():
-                df = calculate_future_returns(df[[factor_name, "close"]], periods=holding_periods)
+                df = calculate_future_returns(
+                    df[[factor_name, "close"]], periods=holding_periods
+                )
                 if factor_name not in df.columns or "close" not in df.columns:
                     continue
 
@@ -378,8 +415,12 @@ class FactorEffectivenessService:
         low_avg = {}
         excess = {}
         for period in holding_periods:
-            high_avg[period] = float(np.mean(high_returns[period])) if high_returns[period] else None
-            low_avg[period] = float(np.mean(low_returns[period])) if low_returns[period] else None
+            high_avg[period] = (
+                float(np.mean(high_returns[period])) if high_returns[period] else None
+            )
+            low_avg[period] = (
+                float(np.mean(low_returns[period])) if low_returns[period] else None
+            )
             excess[period] = (
                 (high_avg[period] - low_avg[period])
                 if (high_avg[period] is not None and low_avg[period] is not None)
@@ -414,7 +455,9 @@ class FactorEffectivenessService:
             for stock_code, df in factor_data.items():
                 if factor_name not in df.columns or "close" not in df.columns:
                     continue
-                df_with_returns = calculate_future_returns(df[[factor_name, "close"]], periods=[period])
+                df_with_returns = calculate_future_returns(
+                    df[[factor_name, "close"]], periods=[period]
+                )
                 future_returns = df_with_returns[f"future_return_{period}"]
                 temp_df = pd.DataFrame(
                     {
@@ -437,9 +480,11 @@ class FactorEffectivenessService:
 
                 for date, group in combined.groupby("date"):
                     if len(group) >= 5:  # 最少5只股票
-                        ic = group["factor"].corr(group["return"], method="spearman")
-                        if not np.isnan(ic) and not np.isinf(ic):
-                            daily_ics.append(ic)
+                        ic_val, _ = spearmanr(
+                            group["factor"], group["return"]
+                        )
+                        if not np.isnan(ic_val) and not np.isinf(ic_val):
+                            daily_ics.append(ic_val)
 
             mean_ic = float(np.mean(daily_ics)) if daily_ics else None
 

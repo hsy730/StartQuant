@@ -9,6 +9,7 @@ from typing import Dict, Union
 import numpy as np
 import pandas as pd
 from backend.utils.safe_math import safe_divide
+from backend.constants import FLOAT_ZERO_THRESHOLD
 
 
 def normalize_weights(
@@ -25,9 +26,10 @@ def normalize_weights(
     Returns:
         归一化后的权重（同类型）
     """
+    zero_threshold = FLOAT_ZERO_THRESHOLD
     if isinstance(weights, dict):
         total = sum(weights.values())
-        if abs(total) < 1e-8 or not np.isfinite(total):
+        if abs(total) < zero_threshold or not np.isfinite(total):
             if default_equal:
                 n = len(weights)
                 return {k: 1.0 / n if n > 0 else 0.0 for k in weights}
@@ -37,7 +39,7 @@ def normalize_weights(
     else:
         # pd.Series
         total = weights.sum()
-        if abs(total) < 1e-8 or not np.isfinite(total):
+        if abs(total) < zero_threshold or not np.isfinite(total):
             if default_equal:
                 n = len(weights)
                 return pd.Series(1.0 / n if n > 0 else 0.0, index=weights.index)

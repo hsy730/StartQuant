@@ -41,7 +41,12 @@ class PhikCorrelationService:
         """检查是否可用"""
         return PHIK_AVAILABLE
 
-    def analyze(self, df: pd.DataFrame, factor_cols: List[str], categorical_cols: List[str] = None) -> Dict[str, Any]:
+    def analyze(
+        self,
+        df: pd.DataFrame,
+        factor_cols: List[str],
+        categorical_cols: List[str] = None,
+    ) -> Dict[str, Any]:
         """执行Phi_K分析"""
         if not PHIK_AVAILABLE:
             return {
@@ -51,7 +56,11 @@ class PhikCorrelationService:
 
         try:
             if categorical_cols is None:
-                categorical_cols = [c for c in factor_cols if df[c].dtype == "object" or df[c].nunique() < 10]
+                categorical_cols = [
+                    c
+                    for c in factor_cols
+                    if df[c].dtype == "object" or df[c].nunique() < 10
+                ]
 
             interval_cols = [c for c in factor_cols if c not in categorical_cols]
 

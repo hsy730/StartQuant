@@ -23,7 +23,6 @@ logger = logging.getLogger(__name__)
 
 from backend.services.data_service import data_service  # noqa: E402
 from backend.utils.safe_math import safe_divide, safe_ir  # noqa: E402
-from backend.constants import IC_PASS_THRESHOLD, IR_PASS_THRESHOLD  # noqa: E402
 
 
 class BaseMiningService(ABC):
@@ -71,7 +70,11 @@ class BaseMiningService(ABC):
         self.cv_folds = cv_folds
         self.naming_pattern = naming_pattern
 
-        self.return_values = data[return_column].copy() if data is not None and return_column in data.columns else None
+        self.return_values = (
+            data[return_column].copy()
+            if data is not None and return_column in data.columns
+            else None
+        )
 
         # 股票池
         self.stock_codes: List[str] = []
@@ -120,7 +123,9 @@ class BaseMiningService(ABC):
 
             self.factor_calculator = factor_service.calculator
 
-        logger.info(f"[{self._service_name}] 预计算 {len(self.base_factor_codes)} 个基础因子...")
+        logger.info(
+            f"[{self._service_name}] 预计算 {len(self.base_factor_codes)} 个基础因子..."
+        )
 
         for i, factor_code in enumerate(self.base_factor_codes):
             try:
@@ -131,13 +136,21 @@ class BaseMiningService(ABC):
                         "code": factor_code,
                         "values": fv,
                     }
-                    logger.info(f"  [{i+1}/{len(self.base_factor_codes)}] {factor_code}: {len(fv.dropna())} 个有效值")
+                    logger.info(
+                        f"  [{i + 1}/{len(self.base_factor_codes)}] {factor_code}: {len(fv.dropna())} 个有效值"
+                    )
                 else:
-                    logger.warning(f"  [{i+1}/{len(self.base_factor_codes)}] {factor_code}: 计算失败或无有效值")
+                    logger.warning(
+                        f"  [{i + 1}/{len(self.base_factor_codes)}] {factor_code}: 计算失败或无有效值"
+                    )
             except Exception as e:
-                logger.warning(f"  [{i+1}/{len(self.base_factor_codes)}] {factor_code}: 计算出错 - {e}")
+                logger.warning(
+                    f"  [{i + 1}/{len(self.base_factor_codes)}] {factor_code}: 计算出错 - {e}"
+                )
 
-        logger.info(f"[{self._service_name}] 成功预计算 {len(self.base_factor_values)} 个基础因子")
+        logger.info(
+            f"[{self._service_name}] 成功预计算 {len(self.base_factor_values)} 个基础因子"
+        )
 
     # ------------------------------------------------------------------
     # 股票池管理
@@ -146,14 +159,18 @@ class BaseMiningService(ABC):
     def set_stock_pool(self, stock_codes: List[str], start_date: str, end_date: str):
         """设置股票池用于截面IC评估"""
         self.stock_codes = stock_codes
-        raw_data = data_service.get_multiple_stocks_data(stock_codes, start_date, end_date)
+        raw_data = data_service.get_multiple_stocks_data(
+            stock_codes, start_date, end_date
+        )
         # 规则3：防御性copy，避免就地修改data_service返回的DataFrame
         self.stock_pool_data = {k: v.copy() for k, v in raw_data.items()}
 
         for code, df in self.stock_pool_data.items():
             if "close" in df.columns:
                 df["return"] = df["close"].pct_change()
-            self.stock_pool_return_values[code] = df[self.return_column] if self.return_column in df.columns else None
+            self.stock_pool_return_values[code] = (
+                df[self.return_column] if self.return_column in df.columns else None
+            )
 
             if self.factor_calculator is None:
                 from backend.services.factor_service import factor_service
@@ -171,7 +188,9 @@ class BaseMiningService(ABC):
                             "values": fv,
                         }
                 except Exception as e:
-                    logger.warning(f"Stock {code} factor {factor_code} compute error: {e}")
+                    logger.warning(
+                        f"Stock {code} factor {factor_code} compute error: {e}"
+                    )
             self.stock_pool_base_factor_values[code] = stock_base_factors
 
         self._refresh_stock_sample()
@@ -282,7 +301,11 @@ class BaseMiningService(ABC):
 
         return best_ic, best_ir
 
-    def _route_fitness(self, ic_results: dict, factor_values_dict: Optional[Dict[str, pd.Series]] = None) -> float:
+    def _route_fitness(
+        self,
+        ic_results: dict,
+        factor_values_dict: Optional[Dict[str, pd.Series]] = None,
+    ) -> float:
         """根据 fitness_objective 选择适应度值
 
         支持的目标:
@@ -318,11 +341,25 @@ class BaseMiningService(ABC):
             # Z-Score归一化使用上一代的统计量（含先验冷启动）
             z_ic = max(
                 -3.0,
-                min(safe_divide(float(best_ic - self._zscore_ic_mean), float(self._zscore_ic_std), default=0.0), 3.0),
+                min(
+                    safe_divide(
+                        float(best_ic - self._zscore_ic_mean),
+                        float(self._zscore_ic_std),
+                        default=0.0,
+                    ),
+                    3.0,
+                ),
             )
             z_ir = max(
                 -3.0,
-                min(safe_divide(float(best_ir - self._zscore_ir_mean), float(self._zscore_ir_std), default=0.0), 3.0),
+                min(
+                    safe_divide(
+                        float(best_ir - self._zscore_ir_mean),
+                        float(self._zscore_ir_std),
+                        default=0.0,
+                    ),
+                    3.0,
+                ),
             )
             # 映射 [-3, 3] → [0, 1]
             norm_ic = (z_ic + 3.0) / 6.0
@@ -357,7 +394,8 @@ class BaseMiningService(ABC):
 
             if ic_std < self._zscore_ic_std * 0.1 or ir_std < self._zscore_ir_std * 0.1:
                 logger.warning(
-                    f"Z-Score σ very small (IC σ={ic_std:.6f}, IR σ={ir_std:.6f}), " f"search may be stagnating"
+                    f"Z-Score σ very small (IC σ={ic_std:.6f}, IR σ={ir_std:.6f}), "
+                    f"search may be stagnating"
                 )
 
             self._zscore_ic_mean = ic_mean
@@ -402,7 +440,9 @@ class BaseMiningService(ABC):
                 valid_ir.append(raw_ir)
 
         if len(valid_ic) < 2 or len(valid_ir) < 2:
-            logger.warning("Too few valid IC/IR values for batch Z-Score, keeping raw scores")
+            logger.warning(
+                "Too few valid IC/IR values for batch Z-Score, keeping raw scores"
+            )
             return best_factors
 
         ic_mean = float(np.mean(valid_ic))
@@ -430,8 +470,20 @@ class BaseMiningService(ABC):
             raw_ic = abs(raw_ic_val) if raw_ic_val is not None else 0.0
             raw_ir = abs(raw_ir_val) if raw_ir_val is not None else 0.0
 
-            z_ic = max(-3.0, min(safe_divide(float(raw_ic - ic_mean), float(ic_std), default=0.0), 3.0))
-            z_ir = max(-3.0, min(safe_divide(float(raw_ir - ir_mean), float(ir_std), default=0.0), 3.0))
+            z_ic = max(
+                -3.0,
+                min(
+                    safe_divide(float(raw_ic - ic_mean), float(ic_std), default=0.0),
+                    3.0,
+                ),
+            )
+            z_ir = max(
+                -3.0,
+                min(
+                    safe_divide(float(raw_ir - ir_mean), float(ir_std), default=0.0),
+                    3.0,
+                ),
+            )
             norm_ic = (z_ic + 3.0) / 6.0
             norm_ir = (z_ir + 3.0) / 6.0
             factor_info["fitness"] = 0.6 * norm_ic + 0.4 * norm_ir

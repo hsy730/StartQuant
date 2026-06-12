@@ -15,7 +15,11 @@ from typing import Dict, Tuple, Optional, List
 from dataclasses import dataclass
 import logging
 
-from backend.core.market_board import MarketBoard, detect_market_board, get_board_n_sigma
+from backend.core.market_board import (
+    MarketBoard,
+    detect_market_board,
+    get_board_n_sigma,
+)
 from backend.utils.safe_math import safe_divide
 
 logger = logging.getLogger(__name__)
@@ -133,7 +137,10 @@ class SmartPreprocessingDetector:
         for stock_code, df in factor_data.items():
             if len(df) > 0:
                 needed_cols = [c for c in factor_names if c in df.columns]
-                if market_cap_column in df.columns and market_cap_column not in needed_cols:
+                if (
+                    market_cap_column in df.columns
+                    and market_cap_column not in needed_cols
+                ):
                     needed_cols.append(market_cap_column)
                 if industry_column in df.columns and industry_column not in needed_cols:
                     needed_cols.append(industry_column)
@@ -191,15 +198,22 @@ class SmartPreprocessingDetector:
 
         if all_factor_stats:
             # 使用峰度绝对值最大的因子（最肥尾）作为基准，确保最保守的参数选择
-            factor_name_selected, factor_col_stats = max(all_factor_stats, key=lambda x: abs(x[1]["kurtosis"]))
+            factor_name_selected, factor_col_stats = max(
+                all_factor_stats, key=lambda x: abs(x[1]["kurtosis"])
+            )
             skewness = factor_col_stats["skewness"]
             kurtosis = factor_col_stats["kurtosis"]
             outlier_ratio = factor_col_stats["outlier_ratio"]
             has_outliers = outlier_ratio > 0
-            is_fat_tail = kurtosis > 3  # 显著肥尾分布（正态分布超额峰度为0，>3为显著肥尾）
+            is_fat_tail = (
+                kurtosis > 3
+            )  # 显著肥尾分布（正态分布超额峰度为0，>3为显著肥尾）
 
             # 横截面波动率（使用最保守因子的统计）
-            if factor_name_selected in merged_df.columns and "date" in merged_df.columns:
+            if (
+                factor_name_selected in merged_df.columns
+                and "date" in merged_df.columns
+            ):
                 factor_col_for_vol = merged_df[factor_name_selected].dropna()
                 daily_std = factor_col_for_vol.groupby(merged_df["date"]).std()
                 factor_vol = daily_std.mean()
@@ -236,7 +250,9 @@ class SmartPreprocessingDetector:
                     if abs(vol_mean) < 1e-10:
                         time_varying_vol = False  # 均值接近0，无法计算变异系数
                     else:
-                        vol_of_vol = safe_divide(float(rolling_vol.std()), vol_mean, default=0.0)
+                        vol_of_vol = safe_divide(
+                            float(rolling_vol.std()), vol_mean, default=0.0
+                        )
                         time_varying_vol = vol_of_vol > 0.3  # 波动率的变异系数>30%
 
         return DataCharacteristics(
@@ -300,7 +316,9 @@ class SmartPreprocessingDetector:
         chars = self.analyze_data(factor_data, factor_names)
 
         # 基于规则生成推荐配置
-        config, confidence, reasoning, warnings = self._generate_recommendation(chars, user_preference)
+        config, confidence, reasoning, warnings = self._generate_recommendation(
+            chars, user_preference
+        )
 
         return PreprocessingRecommendation(
             config_dict=config,
@@ -333,7 +351,9 @@ class SmartPreprocessingDetector:
             config["winsorize_method"] = "percentile"
             config["winsorize_limits"] = (0.02, 0.98)
             confidence_scores.append(0.85)
-            reasoning_parts.append(f"检测到显著偏态(偏度={chars.factor_skewness:.2f})，选用百分位法")
+            reasoning_parts.append(
+                f"检测到显著偏态(偏度={chars.factor_skewness:.2f})，选用百分位法"
+            )
         else:
             # 近似正态 → 使用3σ法或MAD
             config["winsorize_method"] = "mad"
@@ -358,10 +378,14 @@ class SmartPreprocessingDetector:
             # 自适应调整
             if chars.factor_volatility > 15:  # 高波动
                 n_sigma = base_n_sigma * 0.92
-                reasoning_parts.append(f"高波动环境({chars.factor_volatility:.1f})，适度收紧")
+                reasoning_parts.append(
+                    f"高波动环境({chars.factor_volatility:.1f})，适度收紧"
+                )
             elif chars.outlier_ratio > 0.05:  # 异常值多
                 n_sigma = base_n_sigma * 0.95
-                reasoning_parts.append(f"异常值比例较高({chars.outlier_ratio:.1%})，适度收紧")
+                reasoning_parts.append(
+                    f"异常值比例较高({chars.outlier_ratio:.1%})，适度收紧"
+                )
             else:
                 n_sigma = base_n_sigma
                 reasoning_parts.append("使用该板块的标准参数")
@@ -374,12 +398,17 @@ class SmartPreprocessingDetector:
         # 市值中性化
         if (
             chars.avg_market_cap > 0
-            and safe_divide(float(chars.market_cap_std), float(chars.avg_market_cap), default=0.0) > 0.5
+            and safe_divide(
+                float(chars.market_cap_std), float(chars.avg_market_cap), default=0.0
+            )
+            > 0.5
         ):
             # 市值差异大 → 必须中性化
             config["enable_market_cap_neutralization"] = True
             confidence_scores.append(0.95)
-            cv_value = safe_divide(float(chars.market_cap_std), float(chars.avg_market_cap), default=0.0)
+            cv_value = safe_divide(
+                float(chars.market_cap_std), float(chars.avg_market_cap), default=0.0
+            )
             reasoning_parts.append(f"市值差异显著(CV={cv_value:.2f})，启用市值中性化")
         else:
             config["enable_market_cap_neutralization"] = True  # 默认开启
@@ -392,14 +421,20 @@ class SmartPreprocessingDetector:
             config["enable_industry_neutralization"] = True
             confidence_scores.append(0.9)
             reasoning_parts.append(
-                f"行业结构良好({chars.n_industries}个行业，最少{chars.min_industry_size}只/行业)，" f"启用行业中性化"
+                f"行业结构良好({chars.n_industries}个行业，最少{chars.min_industry_size}只/行业)，"
+                f"启用行业中性化"
             )
         elif chars.n_industries >= 2 and chars.min_industry_size >= 5:
             # 行业数尚可但部分行业较小
             config["enable_industry_neutralization"] = True
             confidence_scores.append(0.7)
-            reasoning_parts.append(f"部分行业样本较少(最少{chars.min_industry_size}只)，" f"行业中性化效果可能受限")
-            warnings.append(f"⚠️ 存在仅{chars.min_industry_size}只股票的小行业，中性化效果可能不稳定")
+            reasoning_parts.append(
+                f"部分行业样本较少(最少{chars.min_industry_size}只)，"
+                f"行业中性化效果可能受限"
+            )
+            warnings.append(
+                f"⚠️ 存在仅{chars.min_industry_size}只股票的小行业，中性化效果可能不稳定"
+            )
         else:
             # 行业数太少或样本严重不足
             config["enable_industry_neutralization"] = False
@@ -474,10 +509,10 @@ class SmartPreprocessingDetector:
             f"- **时间跨度**: {chars.n_dates} 个交易日",
             f"- **总样本量**: {chars.total_samples:,}",
             f"- **市场板块**: {self._get_board_name(chars.market_board)}",
-            f"- **平均市值**: {chars.avg_market_cap/1e8:.1f} 亿",
+            f"- **平均市值**: {chars.avg_market_cap / 1e8:.1f} 亿",
             f"- **因子波动率**: {chars.factor_volatility:.4f}",
             "",
-            f"## 🎯 推荐配置 (置信度: {recommendation.confidence*100:.0f}%)",
+            f"## 🎯 推荐配置 (置信度: {recommendation.confidence * 100:.0f}%)",
             "",
             "| 参数 | 推荐值 | 说明 |",
             "|------|--------|------|",

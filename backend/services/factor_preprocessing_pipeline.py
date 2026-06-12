@@ -27,7 +27,7 @@ from sklearn.preprocessing import StandardScaler
 from scipy.stats.mstats import winsorize as scipy_winsorize
 
 import statsmodels.api as sm
-from backend.constants import FLOAT_ZERO_THRESHOLD, WINSORIZE_LOWER, WINSORIZE_UPPER
+from backend.constants import FLOAT_ZERO_THRESHOLD
 
 logger = logging.getLogger(__name__)
 
@@ -131,7 +131,9 @@ class FactorPreprocessingPipeline:
         result = factor_values.copy()
 
         if len(result) < self.config.min_samples:
-            logger.warning(f"样本数{len(result)}小于最小要求{self.config.min_samples}，跳过处理")
+            logger.warning(
+                f"样本数{len(result)}小于最小要求{self.config.min_samples}，跳过处理"
+            )
             return result, {**stats, "skipped": True}
 
         # Step 1: 缺失值处理
@@ -150,9 +152,15 @@ class FactorPreprocessingPipeline:
         stats["winsorized_count"] = winsorize_stats["clipped_count"]
 
         # Step 3: 中性化（⭐支持联合回归）
-        if self.config.enable_market_cap_neutralization or self.config.enable_industry_neutralization:
-
-            if self.config.use_joint_neutralization and market_cap is not None and industry is not None:
+        if (
+            self.config.enable_market_cap_neutralization
+            or self.config.enable_industry_neutralization
+        ):
+            if (
+                self.config.use_joint_neutralization
+                and market_cap is not None
+                and industry is not None
+            ):
                 # ⭐ 联合回归：同时控制市值和行业（推荐）
                 result = self._neutralize_joint(
                     factor_values=result,
@@ -164,7 +172,10 @@ class FactorPreprocessingPipeline:
                 stats["neutralization_method"] = "joint"
             else:
                 # 顺序方法（fallback）
-                if self.config.enable_market_cap_neutralization and market_cap is not None:
+                if (
+                    self.config.enable_market_cap_neutralization
+                    and market_cap is not None
+                ):
                     result = self._neutralize_market_cap(result, market_cap, date_index)
                     stats["neutralized"] = True
                     stats["neutralization_method"] = "sequential"
@@ -239,7 +250,11 @@ class FactorPreprocessingPipeline:
                 for col in factor_columns:
                     try:
                         processed_col, stats = self._process_cross_sectional(
-                            result_df, col, market_cap_column, industry_column, date_column
+                            result_df,
+                            col,
+                            market_cap_column,
+                            industry_column,
+                            date_column,
                         )
                         result_df[col] = processed_col
                         all_stats[col] = stats
@@ -298,7 +313,10 @@ class FactorPreprocessingPipeline:
 
         # 逐股票时间序列模式（fallback）
         # 注意：单股票模式下市值/行业中性化是对时间序列做回归，非横截面回归，量化意义有限
-        if self.config.enable_market_cap_neutralization or self.config.enable_industry_neutralization:
+        if (
+            self.config.enable_market_cap_neutralization
+            or self.config.enable_industry_neutralization
+        ):
             logger.warning(
                 "单股票逐时间序列模式下，市值/行业中性化对时间维度回归（非横截面），"
                 "量化意义有限。建议使用横截面模式(cross_sectional=True)获得正确的中性化结果。"
@@ -319,7 +337,9 @@ class FactorPreprocessingPipeline:
                         factor_values=processed_df[factor_name],
                         market_cap=processed_df.get(market_cap_col),
                         industry=processed_df.get(industry_col),
-                        date_index=processed_df.index if isinstance(processed_df.index, pd.DatetimeIndex) else None,
+                        date_index=processed_df.index
+                        if isinstance(processed_df.index, pd.DatetimeIndex)
+                        else None,
                     )
                     processed_df[factor_name] = processed_series
                     stock_stats[factor_name] = stats
@@ -331,7 +351,10 @@ class FactorPreprocessingPipeline:
 
         if parallel_stocks and len(factor_data) > 1:
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                futures = {executor.submit(_process_one_stock, code, df): code for code, df in factor_data.items()}
+                futures = {
+                    executor.submit(_process_one_stock, code, df): code
+                    for code, df in factor_data.items()
+                }
 
                 for future in futures:
                     try:
@@ -422,32 +445,47 @@ class FactorPreprocessingPipeline:
             stock_rows_by_date.index = pd.to_datetime(stock_rows_by_date.index)
 
             for factor_name in factor_names:
-                if factor_name not in stock_rows_by_date.columns or factor_name not in result_df.columns:
+                if (
+                    factor_name not in stock_rows_by_date.columns
+                    or factor_name not in result_df.columns
+                ):
                     continue
 
                 factor_values_by_date = stock_rows_by_date[factor_name]
 
                 if isinstance(result_df.index, pd.DatetimeIndex):
                     # DatetimeIndex：直接按索引对齐赋值
-                    common_idx = result_df.index.intersection(factor_values_by_date.index)
+                    common_idx = result_df.index.intersection(
+                        factor_values_by_date.index
+                    )
                     if len(common_idx) > 0:
-                        result_df.loc[common_idx, factor_name] = factor_values_by_date.loc[common_idx]
+                        result_df.loc[common_idx, factor_name] = (
+                            factor_values_by_date.loc[common_idx]
+                        )
                 else:
                     # 非DatetimeIndex：通过日期列对齐，使用索引对齐而非 .values
                     if "date" in result_df.columns:
                         result_temp = result_df.set_index("date")
                         result_temp.index = pd.to_datetime(result_temp.index)
-                        common_idx = result_temp.index.intersection(factor_values_by_date.index)
+                        common_idx = result_temp.index.intersection(
+                            factor_values_by_date.index
+                        )
                         if len(common_idx) > 0:
-                            result_temp.loc[common_idx, factor_name] = factor_values_by_date.loc[common_idx]
+                            result_temp.loc[common_idx, factor_name] = (
+                                factor_values_by_date.loc[common_idx]
+                            )
                         result_df[factor_name] = result_temp[factor_name].values
                     else:
                         # 无日期列：尝试将原始索引转为日期
                         result_temp = result_df.copy()
                         result_temp.index = pd.to_datetime(result_temp.index)
-                        common_idx = result_temp.index.intersection(factor_values_by_date.index)
+                        common_idx = result_temp.index.intersection(
+                            factor_values_by_date.index
+                        )
                         if len(common_idx) > 0:
-                            result_temp.loc[common_idx, factor_name] = factor_values_by_date.loc[common_idx]
+                            result_temp.loc[common_idx, factor_name] = (
+                                factor_values_by_date.loc[common_idx]
+                            )
                         result_df[factor_name] = result_temp[factor_name].values
 
             result_data[stock_code] = result_df
@@ -494,7 +532,11 @@ class FactorPreprocessingPipeline:
                 # MAD=0时（如数据过于集中），用标准差作为σ_hat的估计
                 # σ_hat ≈ std()，因此fallback直接使用std()而非std()*0.6745
                 sigma_hat = series.std()
-                if sigma_hat == 0 or np.isnan(sigma_hat) or sigma_hat < FLOAT_ZERO_THRESHOLD:
+                if (
+                    sigma_hat == 0
+                    or np.isnan(sigma_hat)
+                    or sigma_hat < FLOAT_ZERO_THRESHOLD
+                ):
                     return series, {"clipped_count": 0}
 
             lower_bound = median - self.config.winsorize_n_sigma * sigma_hat
@@ -511,7 +553,9 @@ class FactorPreprocessingPipeline:
             # scipy.winsorize的limits参数：(低端截断比例, 高端截断比例)
             # 例如1%-99%分位 → limits=(0.01, 0.01)，即两端各截1%
             # lower_pct=0.01, upper_pct=0.99 → 高端截断比例=1-0.99=0.01
-            winsorized = scipy_winsorize(series.values, limits=(lower_pct, 1 - upper_pct), nan_policy="omit")
+            winsorized = scipy_winsorize(
+                series.values, limits=(lower_pct, 1 - upper_pct), nan_policy="omit"
+            )
             result = pd.Series(winsorized, index=series.index)
             clipped_count = int((result != series).sum())
 
@@ -553,7 +597,8 @@ class FactorPreprocessingPipeline:
             "original_count": len(df),
             "dates_processed": 0,
             "total_winsorized": 0,
-            "neutralized": self.config.enable_market_cap_neutralization or self.config.enable_industry_neutralization,
+            "neutralized": self.config.enable_market_cap_neutralization
+            or self.config.enable_industry_neutralization,
         }
 
         result = df[factor_column].copy()
@@ -584,10 +629,18 @@ class FactorPreprocessingPipeline:
             if self.config.winsorize_method == WinsorizeMethod.MAD:
                 median = factor_vals.median()
                 sigma_hat = 1.4826 * (factor_vals - median).abs().median()
-                if sigma_hat == 0 or np.isnan(sigma_hat) or sigma_hat < FLOAT_ZERO_THRESHOLD:
+                if (
+                    sigma_hat == 0
+                    or np.isnan(sigma_hat)
+                    or sigma_hat < FLOAT_ZERO_THRESHOLD
+                ):
                     # 同_winsorize方法：MAD=0或极小时用std作为σ_hat估计
                     sigma_hat = factor_vals.std()
-                    if sigma_hat == 0 or np.isnan(sigma_hat) or sigma_hat < FLOAT_ZERO_THRESHOLD:
+                    if (
+                        sigma_hat == 0
+                        or np.isnan(sigma_hat)
+                        or sigma_hat < FLOAT_ZERO_THRESHOLD
+                    ):
                         # 数据完全一致，无需去极值
                         pass
                     else:
@@ -603,7 +656,10 @@ class FactorPreprocessingPipeline:
             elif self.config.winsorize_method == WinsorizeMethod.PERCENTILE:
                 winsorized = scipy_winsorize(
                     factor_vals.values,
-                    limits=(self.config.winsorize_limits[0], 1 - self.config.winsorize_limits[1]),
+                    limits=(
+                        self.config.winsorize_limits[0],
+                        1 - self.config.winsorize_limits[1],
+                    ),
                     nan_policy="omit",
                 )
                 factor_vals = pd.Series(winsorized, index=factor_vals.index)
@@ -617,12 +673,18 @@ class FactorPreprocessingPipeline:
                     )
 
             # 中性化（⭐优先使用联合回归）
-            if self.config.enable_market_cap_neutralization or self.config.enable_industry_neutralization:
-
+            if (
+                self.config.enable_market_cap_neutralization
+                or self.config.enable_industry_neutralization
+            ):
                 has_market_cap = market_cap_column in group.columns
                 has_industry = industry_column in group.columns
 
-                if self.config.use_joint_neutralization and has_market_cap and has_industry:
+                if (
+                    self.config.use_joint_neutralization
+                    and has_market_cap
+                    and has_industry
+                ):
                     valid_mask = (
                         factor_vals.notna()
                         & group[market_cap_column].notna()
@@ -631,7 +693,9 @@ class FactorPreprocessingPipeline:
                     )
 
                     if valid_mask.sum() >= self.config.min_samples:
-                        log_mc = np.log(group.loc[valid_mask, market_cap_column].replace(0, np.nan))
+                        log_mc = np.log(
+                            group.loc[valid_mask, market_cap_column].replace(0, np.nan)
+                        )
                         log_mc = log_mc.fillna(log_mc.mean())
 
                         industries = group.loc[valid_mask, industry_column].astype(str)
@@ -639,13 +703,19 @@ class FactorPreprocessingPipeline:
                         industry_counts = industries.value_counts()
                         small_industries = industry_counts[industry_counts < 5].index
                         if len(small_industries) > 0:
-                            industries = industries.replace(small_industries.to_list(), "Other")
+                            industries = industries.replace(
+                                small_industries.to_list(), "Other"
+                            )
                         unique_inds = sorted(industries.unique())
 
                         if len(unique_inds) >= 2:
-                            industry_dummies = pd.get_dummies(industries, drop_first=True).astype(float)
+                            industry_dummies = pd.get_dummies(
+                                industries, drop_first=True
+                            ).astype(float)
 
-                            X = np.column_stack([log_mc.values, industry_dummies.values])
+                            X = np.column_stack(
+                                [log_mc.values, industry_dummies.values]
+                            )
 
                             y = factor_vals[valid_mask].values
                             model = LinearRegression()
@@ -655,7 +725,10 @@ class FactorPreprocessingPipeline:
                             factor_vals.loc[valid_mask] = residuals
                         else:
                             # 行业数不足2，仅做市值中性化
-                            if has_market_cap and valid_mask.sum() >= self.config.min_samples:
+                            if (
+                                has_market_cap
+                                and valid_mask.sum() >= self.config.min_samples
+                            ):
                                 X_mc = log_mc.values.reshape(-1, 1)
                                 y_mc = factor_vals[valid_mask].values
                                 model = LinearRegression()
@@ -669,10 +742,16 @@ class FactorPreprocessingPipeline:
                     # 顺序方法（fallback）
                     if self.config.enable_market_cap_neutralization and has_market_cap:
                         valid_mask = (
-                            factor_vals.notna() & group[market_cap_column].notna() & (group[market_cap_column] > 0)
+                            factor_vals.notna()
+                            & group[market_cap_column].notna()
+                            & (group[market_cap_column] > 0)
                         )
                         if valid_mask.sum() >= self.config.min_samples:
-                            log_mc = np.log(group.loc[valid_mask, market_cap_column].replace(0, np.nan))
+                            log_mc = np.log(
+                                group.loc[valid_mask, market_cap_column].replace(
+                                    0, np.nan
+                                )
+                            )
                             log_mc = log_mc.fillna(log_mc.mean())
 
                             X = log_mc.values.reshape(-1, 1)
@@ -686,7 +765,9 @@ class FactorPreprocessingPipeline:
 
                     if self.config.enable_industry_neutralization and has_industry:
                         industry_series = group[industry_column]
-                        factor_vals = self._neutralize_industry(factor_vals, industry_series)
+                        factor_vals = self._neutralize_industry(
+                            factor_vals, industry_series
+                        )
 
             # 标准化
             if self.config.standardize_method == StandardizeMethod.ZSCORE:
@@ -788,7 +869,8 @@ class FactorPreprocessingPipeline:
         if len(small_industries) > 0:
             industries = industries.replace(small_industries.to_list(), "Other")
             logger.info(
-                f"将{len(small_industries)}个小行业（样本<5）合并为'Other'类别: " f"{small_industries.to_list()}"
+                f"将{len(small_industries)}个小行业（样本<5）合并为'Other'类别: "
+                f"{small_industries.to_list()}"
             )
             # 合并后重新检查行业数
             unique_inds = sorted(industries.unique())
@@ -828,7 +910,12 @@ class FactorPreprocessingPipeline:
 
         其中 ε 即为中性化后的因子值。
         """
-        valid_mask = factor_values.notna() & market_cap.notna() & industry.notna() & (market_cap > 0)
+        valid_mask = (
+            factor_values.notna()
+            & market_cap.notna()
+            & industry.notna()
+            & (market_cap > 0)
+        )
 
         if valid_mask.sum() < self.config.min_samples:
             logger.warning("有效样本不足，跳过联合中性化")
@@ -863,7 +950,9 @@ class FactorPreprocessingPipeline:
                 f"F-stat={ols_model.fvalue:.2f}(p={ols_model.f_pvalue:.4f})"
             )
         except Exception as e:
-            logger.warning(f"statsmodels OLS失败（共线性或奇异矩阵），回退到sklearn: {e}")
+            logger.warning(
+                f"statsmodels OLS失败（共线性或奇异矩阵），回退到sklearn: {e}"
+            )
             model = LinearRegression()
             model.fit(X, y)
             residuals = y - model.predict(X)
@@ -925,14 +1014,18 @@ class FactorPreprocessingPipeline:
             Markdown格式的摘要字符串
         """
         lines = ["## 数据美颜处理摘要\n"]
-        lines.append("| 因子名称 | 原始数量 | 缺失值 | 截断数量 | 是否中性化 | 中性化方法 |")
+        lines.append(
+            "| 因子名称 | 原始数量 | 缺失值 | 截断数量 | 是否中性化 | 中性化方法 |"
+        )
         lines.append("|---------|---------|--------|---------|-----------|----------|")
 
         for factor_name, stats in stats_dict.items():
             if not isinstance(stats, dict):
                 continue
             if "error" in stats:
-                lines.append(f"| {factor_name} | - | - | - | ❌ 错误: {stats['error']} | - |")
+                lines.append(
+                    f"| {factor_name} | - | - | - | ❌ 错误: {stats['error']} | - |"
+                )
             else:
                 neutralized = "✅ 是" if stats.get("neutralized", False) else "❌ 否"
                 method = stats.get("neutralization_method", "-")
@@ -946,7 +1039,9 @@ class FactorPreprocessingPipeline:
                 )
 
         total_factors = len(stats_dict)
-        success_count = sum(1 for s in stats_dict.values() if isinstance(s, dict) and "error" not in s)
+        success_count = sum(
+            1 for s in stats_dict.values() if isinstance(s, dict) and "error" not in s
+        )
         lines.append(f"\n**总计**: {success_count}/{total_factors} 个因子处理成功")
 
         return "\n".join(lines)

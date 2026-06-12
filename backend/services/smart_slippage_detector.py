@@ -191,7 +191,9 @@ class SmartSlippageDetector:
             if len(valid_mc) > 0:
                 avg_mc = valid_mc.mean()
                 median_mc = valid_mc.median()
-                mc_cv = safe_divide(float(valid_mc.std()), abs(float(avg_mc)), default=None)
+                mc_cv = safe_divide(
+                    float(valid_mc.std()), abs(float(avg_mc)), default=None
+                )
 
             if "volume" in market_data.columns:
                 avg_volume = market_data["volume"].dropna().mean()
@@ -247,7 +249,9 @@ class SmartSlippageDetector:
             has_illiquid_stocks=has_illiquid,
         )
 
-    def _detect_board_distribution(self, stock_codes: List[str]) -> Dict[MarketBoard, float]:
+    def _detect_board_distribution(
+        self, stock_codes: List[str]
+    ) -> Dict[MarketBoard, float]:
         """检测各市场板块占比"""
         board_counts: Dict[MarketBoard, int] = {}
 
@@ -291,8 +295,8 @@ class SmartSlippageDetector:
         chars = self.analyze_market(stock_codes, market_data, price_data)
 
         # 生成推荐配置
-        recommended, conservative, aggressive, confidence, reasoning, warnings, tips = self._generate_recommendation(
-            chars, strategy_turnover, user_preference
+        recommended, conservative, aggressive, confidence, reasoning, warnings, tips = (
+            self._generate_recommendation(chars, strategy_turnover, user_preference)
         )
 
         # 进行敏感性分析
@@ -324,12 +328,16 @@ class SmartSlippageDetector:
         reasoning_parts = []
 
         # ==================== 1️⃣ 基础滑点（基于市场板块）====================
-        base_config = self._BOARD_BASE_CONFIG.get(chars.market_board, self._BOARD_BASE_CONFIG[MarketBoard.UNKNOWN])
+        base_config = self._BOARD_BASE_CONFIG.get(
+            chars.market_board, self._BOARD_BASE_CONFIG[MarketBoard.UNKNOWN]
+        )
         base_slippage = base_config["base_slippage"]
         vol_factor = base_config["volatility_factor"]
 
         confidence_scores.append(0.9)
-        reasoning_parts.append(f"{base_config['description']}基础滑点{base_slippage*100:.2f}%")
+        reasoning_parts.append(
+            f"{base_config['description']}基础滑点{base_slippage * 100:.2f}%"
+        )
 
         # ==================== 2️⃣ 流动性调整 ====================
         liquidity_level = self._assess_liquidity(chars.avg_daily_amount)
@@ -357,15 +365,21 @@ class SmartSlippageDetector:
             if chars.price_volatility > 0.4:  # 年化波动率>40%（高波动）
                 vol_adjustment = 0.001 * vol_factor
                 confidence_scores.append(0.87)
-                reasoning_parts.append(f"高波动环境({chars.price_volatility*100:.1f}%/年)，增加波动性溢价")
+                reasoning_parts.append(
+                    f"高波动环境({chars.price_volatility * 100:.1f}%/年)，增加波动性溢价"
+                )
                 tips.append("💡 高波动期建议使用限价单而非市价单")
             elif chars.price_volatility > 0.3:  # 年化波动率>30%（中高波动）
                 vol_adjustment = 0.0005 * vol_factor
                 confidence_scores.append(0.89)
-                reasoning_parts.append(f"中等偏高波动({chars.price_volatility*100:.1f}%/年)")
+                reasoning_parts.append(
+                    f"中等偏高波动({chars.price_volatility * 100:.1f}%/年)"
+                )
             else:
                 confidence_scores.append(0.91)
-                reasoning_parts.append(f"正常波动环境({chars.price_volatility*100:.1f}%/年)")
+                reasoning_parts.append(
+                    f"正常波动环境({chars.price_volatility * 100:.1f}%/年)"
+                )
 
         # ==================== 4️⃣ 换手率惩罚因子 ====================
         turnover_penalty = 0.0
@@ -375,7 +389,9 @@ class SmartSlippageDetector:
             turnover_penalty = np.log1p(turnover / 12) * base_slippage * 0.5
 
             if turnover > 30:
-                warnings.append(f"⚠️ 超高换手率策略(>{turnover:.0f}倍/年)，滑点影响将被显著放大")
+                warnings.append(
+                    f"⚠️ 超高换手率策略(>{turnover:.0f}倍/年)，滑点影响将被显著放大"
+                )
                 tips.append("💡 考虑降低换手率或使用算法交易")
             elif turnover > 12:
                 tips.append("💡 中高频策略，建议关注交易执行质量")
@@ -416,7 +432,15 @@ class SmartSlippageDetector:
         overall_confidence = np.mean(confidence_scores)
         full_reasoning = "；".join(reasoning_parts)
 
-        return recommended, conservative, aggressive, overall_confidence, full_reasoning, warnings, tips
+        return (
+            recommended,
+            conservative,
+            aggressive,
+            overall_confidence,
+            full_reasoning,
+            warnings,
+            tips,
+        )
 
     def _assess_liquidity(self, avg_daily_amount: float) -> LiquidityLevel:
         """评估流动性等级"""
@@ -459,13 +483,20 @@ class SmartSlippageDetector:
             # 简化的滑点成本模型：cost = slippage * turnover * 2（买入+卖出）
             annual_slippage_cost = slip * turnover * 2
             net_return = assumed_annual_return - annual_slippage_cost
-            return_decay = safe_divide(annual_slippage_cost, assumed_annual_return, default=float("inf")) * 100
+            return_decay = (
+                safe_divide(
+                    annual_slippage_cost, assumed_annual_return, default=float("inf")
+                )
+                * 100
+            )
 
-            results[f"{slip*100:.2f}%"] = {
+            results[f"{slip * 100:.2f}%"] = {
                 "slippage_rate": slip,
                 "estimated_annual_cost": round(annual_slippage_cost, 4),
                 "net_return_estimate": round(net_return, 4),
-                "return_decay_pct": round(return_decay, 2) if np.isfinite(return_decay) else None,
+                "return_decay_pct": round(return_decay, 2)
+                if np.isfinite(return_decay)
+                else None,
             }
 
         # 计算敏感性指标
@@ -475,10 +506,16 @@ class SmartSlippageDetector:
             "base_scenario": {
                 "slippage": base_slippage,
                 "estimated_annual_impact": round(base_cost, 4),
-                "impact_per_1bps_change": round(turnover * 2 * 0.0001, 4),  # 每1个基点变化的影响
+                "impact_per_1bps_change": round(
+                    turnover * 2 * 0.0001, 4
+                ),  # 每1个基点变化的影响
             },
-            "sensitivity_level": self._classify_sensitivity(base_cost, assumed_annual_return),
-            "recommendation": self._get_sensitivity_recommendation(turnover, base_slippage),
+            "sensitivity_level": self._classify_sensitivity(
+                base_cost, assumed_annual_return
+            ),
+            "recommendation": self._get_sensitivity_recommendation(
+                turnover, base_slippage
+            ),
         }
 
         return sensitivity
@@ -526,28 +563,28 @@ class SmartSlippageDetector:
             f"- **市场板块**: {self._get_board_name(chars.market_board)} "
             f"({self._get_board_distribution_str(chars.board_distribution)})",
             (
-                f"- **平均市值**: {chars.avg_market_cap/1e8:.2f} 亿"
+                f"- **平均市值**: {chars.avg_market_cap / 1e8:.2f} 亿"
                 if chars.avg_market_cap > 0
                 else "- **平均市值**: 数据不足"
             ),
             (
-                f"- **日均成交额**: {chars.avg_daily_amount/1e8:.2f} 亿"
+                f"- **日均成交额**: {chars.avg_daily_amount / 1e8:.2f} 亿"
                 if chars.avg_daily_amount > 0
                 else "- **日均成交额**: 数据不足"
             ),
             (
-                f"- **价格波动率**: {chars.price_volatility*100:.1f}%/年"
+                f"- **价格波动率**: {chars.price_volatility * 100:.1f}%/年"
                 if chars.price_volatility > 0
                 else "- **价格波动率**: 数据不足"
             ),
             "",
-            f"## 🎯 推荐滑点设置 (置信度: {rec.confidence*100:.0f}%)",
+            f"## 🎯 推荐滑点设置 (置信度: {rec.confidence * 100:.0f}%)",
             "",
             "| 场景 | 滑点率 | 说明 |",
             "|------|--------|------|",
-            f"| **推荐值** | **{rec.recommended_slippage*100:.3f}%** | 基于市场特征的最优估计 |",
-            f"| 保守估计 | {rec.conservative_slippage*100:.3f}% | 不利情况下的上限 |",
-            f"| 激进估计 | {rec.aggressive_slippage*100:.3f}% | 理想情况下的下限 |",
+            f"| **推荐值** | **{rec.recommended_slippage * 100:.3f}%** | 基于市场特征的最优估计 |",
+            f"| 保守估计 | {rec.conservative_slippage * 100:.3f}% | 不利情况下的上限 |",
+            f"| 激进估计 | {rec.aggressive_slippage * 100:.3f}% | 理想情况下的下限 |",
             "",
             "## 💡 推荐理由",
             f"{rec.reasoning}",
@@ -562,8 +599,8 @@ class SmartSlippageDetector:
 
         for scenario, data in rec.sensitivity_analysis["test_scenarios"].items():
             lines.append(
-                f"| {scenario} | {data['estimated_annual_cost']*100:.2f}% "
-                f"| {data['net_return_estimate']*100:.2f}% "
+                f"| {scenario} | {data['estimated_annual_cost'] * 100:.2f}% "
+                f"| {data['net_return_estimate'] * 100:.2f}% "
                 f"| {data['return_decay_pct']:.1f}% |"
             )
 
@@ -597,9 +634,11 @@ class SmartSlippageDetector:
         }
         return names.get(board, "未知")
 
-    def _get_board_distribution_str(self, distribution: Dict[MarketBoard, float]) -> str:
+    def _get_board_distribution_str(
+        self, distribution: Dict[MarketBoard, float]
+    ) -> str:
         parts = [
-            f"{self._get_board_name(k)}{v*100:.0f}%"
+            f"{self._get_board_name(k)}{v * 100:.0f}%"
             for k, v in sorted(distribution.items(), key=lambda x: -x[1])
             if v > 0.05
         ]

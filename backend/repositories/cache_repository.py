@@ -2,6 +2,7 @@
 缓存元数据仓储
 """
 
+import logging
 from datetime import datetime
 from typing import Optional, List
 
@@ -10,6 +11,8 @@ from sqlalchemy.orm import Session
 
 from backend.models.cache_metadata import CacheMetadataModel
 
+logger = logging.getLogger(__name__)
+
 
 class CacheRepository:
     """缓存元数据仓储类"""
@@ -17,7 +20,9 @@ class CacheRepository:
     def __init__(self, db: Session):
         self.db = db
 
-    def create(self, cache_key: str, file_path: str, ttl: Optional[int], size: int) -> CacheMetadataModel:
+    def create(
+        self, cache_key: str, file_path: str, ttl: Optional[int], size: int
+    ) -> CacheMetadataModel:
         """创建缓存元数据记录"""
         metadata = CacheMetadataModel(
             cache_key=cache_key,
@@ -29,14 +34,21 @@ class CacheRepository:
             last_accessed=None,
             expired=False,
         )
-        self.db.add(metadata)
-        self.db.commit()
-        self.db.refresh(metadata)
+        try:
+            self.db.add(metadata)
+            self.db.commit()
+            self.db.refresh(metadata)
+        except Exception as e:
+            self.db.rollback()
+            logger.error(f"创建缓存元数据失败: {e}")
+            raise
         return metadata
 
     def get_by_key(self, cache_key: str) -> Optional[CacheMetadataModel]:
         """根据缓存键获取元数据"""
-        stmt = select(CacheMetadataModel).where(CacheMetadataModel.cache_key == cache_key)
+        stmt = select(CacheMetadataModel).where(
+            CacheMetadataModel.cache_key == cache_key
+        )
         result = self.db.execute(stmt).scalar_one_or_none()
         return result
 

@@ -404,7 +404,11 @@ async def preselect_factors(request: PreselectRequest):
         # 暂时返回示例数据
         return {
             "success": True,
-            "data": {"total": len(request.factors), "selected": len(request.factors), "factors": request.factors},
+            "data": {
+                "total": len(request.factors),
+                "selected": len(request.factors),
+                "factors": request.factors,
+            },
         }
     except Exception as e:
         logger.error(f"预筛选因子失败: {e}", exc_info=True)
@@ -447,7 +451,7 @@ async def validate_factor(request: ValidateFactorRequest):
             "message": "验证通过",
         }
     except Exception as e:
-        logger.warning(f"验证因子表达式失败: {e}")
+        logger.error(f"验证因子表达式失败: {e}", exc_info=True)
         return {"success": False, "message": str(e)}
 
 
@@ -468,7 +472,10 @@ async def copy_factor(factor_id: int):
 
         # 查找已存在的同名副本数量
         existing_copies = [
-            f for f in factors if f.get("source") == "user" and f.get("name", "").startswith(base_name + "_")
+            f
+            for f in factors
+            if f.get("source") == "user"
+            and f.get("name", "").startswith(base_name + "_")
         ]
 
         # 提取已有的数字后缀
@@ -497,7 +504,11 @@ async def copy_factor(factor_id: int):
             formula_type=original_factor.get("formula_type", "expression"),
         )
 
-        return {"success": True, "data": new_factor, "message": f"因子已复制为 {new_name}"}
+        return {
+            "success": True,
+            "data": new_factor,
+            "message": f"因子已复制为 {new_name}",
+        }
     except HTTPException:
         raise
     except Exception as e:
@@ -520,7 +531,9 @@ async def get_generated_factors(
     """
     try:
         from backend.core.database import get_db
-        from backend.repositories.generated_factor_repository import GeneratedFactorRepository
+        from backend.repositories.generated_factor_repository import (
+            GeneratedFactorRepository,
+        )
 
         with get_db() as db:
             repo = GeneratedFactorRepository(db)
@@ -549,7 +562,9 @@ async def get_generated_factor(generated_id: int):
     """获取单个生成因子的详情"""
     try:
         from backend.core.database import get_db
-        from backend.repositories.generated_factor_repository import GeneratedFactorRepository
+        from backend.repositories.generated_factor_repository import (
+            GeneratedFactorRepository,
+        )
 
         with get_db() as db:
             repo = GeneratedFactorRepository(db)
@@ -588,7 +603,9 @@ async def promote_generated_factor(generated_id: int, request: PromoteFactorRequ
     """
     try:
         from backend.core.database import get_db
-        from backend.repositories.generated_factor_repository import GeneratedFactorRepository
+        from backend.repositories.generated_factor_repository import (
+            GeneratedFactorRepository,
+        )
 
         with get_db() as db:
             repo = GeneratedFactorRepository(db)
@@ -598,25 +615,39 @@ async def promote_generated_factor(generated_id: int, request: PromoteFactorRequ
                 raise HTTPException(status_code=404, detail="生成因子不存在")
 
             if not gen_factor.is_valid:
-                score_str = f"{gen_factor.validation_score:.1f}" if gen_factor.validation_score is not None else "N/A"
+                score_str = (
+                    f"{gen_factor.validation_score:.1f}"
+                    if gen_factor.validation_score is not None
+                    else "N/A"
+                )
                 raise HTTPException(
                     status_code=400,
                     detail=f"因子未通过验证（验证得分: {score_str}），不能提升到因子库",
                 )
 
             if gen_factor.is_saved:
-                raise HTTPException(status_code=400, detail=f"因子已保存为 '{gen_factor.factor_name}'，请勿重复操作")
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"因子已保存为 '{gen_factor.factor_name}'，请勿重复操作",
+                )
 
             # 将表达式包装为完整函数
             expression = gen_factor.expression
 
             # 验证表达式安全性，防止代码注入
             if not _validate_expression_safety(expression):
-                raise HTTPException(status_code=400, detail=f"因子表达式包含不安全代码: {expression[:50]}")
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"因子表达式包含不安全代码: {expression[:50]}",
+                )
 
         import re
 
-        processed_expr = re.sub(r"\b(open|close|high|low|volume)\b", lambda m: f"df['{m.group(1)}']", expression)
+        processed_expr = re.sub(
+            r"\b(open|close|high|low|volume)\b",
+            lambda m: f"df['{m.group(1)}']",
+            expression,
+        )
 
         code = f"""def calculate_factor(df):  # noqa: F821
     \"\"\"
@@ -668,7 +699,9 @@ async def delete_generated_factor(generated_id: int):
     """删除生成因子（从暂存池移除）"""
     try:
         from backend.core.database import get_db
-        from backend.repositories.generated_factor_repository import GeneratedFactorRepository
+        from backend.repositories.generated_factor_repository import (
+            GeneratedFactorRepository,
+        )
 
         with get_db() as db:
             repo = GeneratedFactorRepository(db)
@@ -678,7 +711,9 @@ async def delete_generated_factor(generated_id: int):
                 raise HTTPException(status_code=404, detail="生成因子不存在")
 
             if factor.is_saved:
-                raise HTTPException(status_code=400, detail="该因子已保存到因子库，请从因子库中删除")
+                raise HTTPException(
+                    status_code=400, detail="该因子已保存到因子库，请从因子库中删除"
+                )
 
             repo.delete(generated_id)
 

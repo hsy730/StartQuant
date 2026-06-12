@@ -2,11 +2,14 @@
 生成因子数据访问层
 """
 
+import logging
 from typing import List, Optional, Dict
 from sqlalchemy.orm import Session
 from sqlalchemy import select
 
 from backend.models.generated_factor import GeneratedFactorModel
+
+logger = logging.getLogger(__name__)
 
 
 class GeneratedFactorRepository:
@@ -28,7 +31,11 @@ class GeneratedFactorRepository:
 
     def get_by_expression(self, expression: str) -> Optional[GeneratedFactorModel]:
         """根据表达式获取生成因子（用于去重）"""
-        return self.db.scalar(select(GeneratedFactorModel).where(GeneratedFactorModel.expression == expression))
+        return self.db.scalar(
+            select(GeneratedFactorModel).where(
+                GeneratedFactorModel.expression == expression
+            )
+        )
 
     def get_all_valid(self) -> List[GeneratedFactorModel]:
         """获取所有验证通过的因子"""
@@ -45,7 +52,7 @@ class GeneratedFactorRepository:
         return list(
             self.db.scalars(
                 select(GeneratedFactorModel)
-                .where(not GeneratedFactorModel.is_saved)
+                .where(~GeneratedFactorModel.is_saved)
                 .order_by(GeneratedFactorModel.created_at.desc())
             ).all()
         )
@@ -53,7 +60,11 @@ class GeneratedFactorRepository:
     def get_all(self) -> List[GeneratedFactorModel]:
         """获取所有生成因子记录"""
         return list(
-            self.db.scalars(select(GeneratedFactorModel).order_by(GeneratedFactorModel.created_at.desc())).all()
+            self.db.scalars(
+                select(GeneratedFactorModel).order_by(
+                    GeneratedFactorModel.created_at.desc()
+                )
+            ).all()
         )
 
     def mark_saved(self, id: int, factor_name: str) -> bool:

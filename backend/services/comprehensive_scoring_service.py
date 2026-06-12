@@ -72,7 +72,10 @@ class ComprehensiveScoringService:
         ir_val = factor_metrics.get("ir")
         if ir_val is not None:
             ir_score = min(abs(ir_val) * 40, MAX_SCORE)
-        elif factor_metrics.get("ic_mean") is not None and abs(factor_metrics.get("ic_mean", 0)) > 1e-10:
+        elif (
+            factor_metrics.get("ic_mean") is not None
+            and abs(factor_metrics.get("ic_mean", 0)) > 1e-10
+        ):
             # IR不可计算但IC非零 → 因子极其稳定，给予高分
             ir_score = MAX_SCORE
         else:
@@ -161,21 +164,30 @@ class ComprehensiveScoringService:
             if annual_return is None or abs(annual_return) < 1e-10:
                 return_decay = float("inf")
             else:
-                return_decay = safe_divide(float(annual_cost), float(annual_return), default=float("inf")) * 100
+                return_decay = (
+                    safe_divide(
+                        float(annual_cost), float(annual_return), default=float("inf")
+                    )
+                    * 100
+                )
 
             scenario = {
                 "slippage_rate": slip,
                 "slippage_pct": f"{slip * 100:.2f}%",
                 "annual_cost_pct": round(annual_cost * 100, 2),
                 "net_annual_return": round(net_return * 100, 2),
-                "return_decay_pct": round(return_decay, 2) if not np.isinf(return_decay) else None,
+                "return_decay_pct": round(return_decay, 2)
+                if not np.isinf(return_decay)
+                else None,
                 "is_recommended": abs(slip - base_slippage) < 0.0001,
             }
             scenarios.append(scenario)
 
         # 敏感性等级评估
         base_cost = base_slippage * turnover * 2
-        sensitivity_ratio = safe_divide(float(abs(base_cost)), float(annual_return), default=float("inf"))
+        sensitivity_ratio = safe_divide(
+            float(abs(base_cost)), float(annual_return), default=float("inf")
+        )
 
         if sensitivity_ratio < 0.1:
             sensitivity_level = "low"
@@ -203,7 +215,9 @@ class ComprehensiveScoringService:
             "original_annual_return": round(annual_return * 100, 2),
             "sensitivity_level": sensitivity_level,
             "sensitivity_description": sensitivity_desc,
-            "cost_impact_ratio": round(sensitivity_ratio * 100, 2) if not np.isinf(sensitivity_ratio) else None,
+            "cost_impact_ratio": round(sensitivity_ratio * 100, 2)
+            if not np.isinf(sensitivity_ratio)
+            else None,
             "scenarios": scenarios,
             "recommendations": recommendations,
         }
@@ -438,7 +452,9 @@ class ComprehensiveScoringService:
         max_drawdown = portfolio_metrics.get("max_drawdown")
         max_drawdown = max_drawdown if max_drawdown is not None else 0.1
         # empyrical 返回负值（如 -0.15 表示15%回撤），需取绝对值
-        risk_score = max(100 - (volatility / 0.2 * 50 + abs(max_drawdown) / 0.15 * 50), 0)
+        risk_score = max(
+            100 - (volatility / 0.2 * 50 + abs(max_drawdown) / 0.15 * 50), 0
+        )
         total_score += weights["risk"] * risk_score
         details["risk_score"] = float(risk_score)
 

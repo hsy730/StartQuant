@@ -43,7 +43,9 @@ try:
     XGB_AVAILABLE = True
 except ImportError:
     XGB_AVAILABLE = False
-    logger.warning("XGBoost 未安装，StockRanker 排序学习功能不可用。请执行: pip install xgboost")
+    logger.warning(
+        "XGBoost 未安装，StockRanker 排序学习功能不可用。请执行: pip install xgboost"
+    )
 
 
 class RankObjective(str, Enum):
@@ -256,7 +258,11 @@ class StockRankerService:
         # 自动识别特征列
         if feature_cols is None:
             exclude_cols = {date_col, label_col, "stock_code", "asset", "index"}
-            feature_cols = [c for c in df.columns if c not in exclude_cols and pd.api.types.is_numeric_dtype(df[c])]
+            feature_cols = [
+                c
+                for c in df.columns
+                if c not in exclude_cols and pd.api.types.is_numeric_dtype(df[c])
+            ]
 
         if len(feature_cols) == 0:
             raise ValueError("没有可用的数值特征列")
@@ -283,10 +289,17 @@ class StockRankerService:
                     processed_series, stats = pipeline.process_single_factor(df[feat])
                     df[feat] = processed_series.values
                 preprocessing_stats = {"applied": True, "config": str(pp_config)}
-                logger.info(f"[StockRanker] 因子预处理已完成: {len(feature_cols)}个特征")
+                logger.info(
+                    f"[StockRanker] 因子预处理已完成: {len(feature_cols)}个特征"
+                )
             except ImportError:
-                logger.warning("[StockRanker] FactorPreprocessingPipeline 不可用，跳过预处理")
-                preprocessing_stats = {"applied": False, "reason": "pipeline_unavailable"}
+                logger.warning(
+                    "[StockRanker] FactorPreprocessingPipeline 不可用，跳过预处理"
+                )
+                preprocessing_stats = {
+                    "applied": False,
+                    "reason": "pipeline_unavailable",
+                }
             except Exception as e:
                 logger.warning(f"[StockRanker] 因子预处理失败，跳过: {e}")
                 preprocessing_stats = {"applied": False, "reason": str(e)}
@@ -306,7 +319,9 @@ class StockRankerService:
                         factor_name=feat,
                     )
                     if check.risk_level.value in ("high", "critical"):
-                        bias_warnings.append(f"特征 [{feat}] 存在未来函数风险({check.risk_level.value})，建议移除")
+                        bias_warnings.append(
+                            f"特征 [{feat}] 存在未来函数风险({check.risk_level.value})，建议移除"
+                        )
                 except Exception as e:
                     logger.debug(f"未来函数检测失败: {e}")
 
@@ -323,10 +338,14 @@ class StockRankerService:
         split_idx = int(len(df) * (1 - validation_split))
 
         # 将 groups 按行数分割到 train/valid，并获取对齐组边界的 adjusted_split_idx
-        train_groups, valid_groups, adjusted_split_idx = self._split_groups(groups, len(df), split_idx)
+        train_groups, valid_groups, adjusted_split_idx = self._split_groups(
+            groups, len(df), split_idx
+        )
 
         if adjusted_split_idx != split_idx:
-            logger.info(f"[StockRanker] 分割点已调整: {split_idx} → {adjusted_split_idx}（对齐日期组边界）")
+            logger.info(
+                f"[StockRanker] 分割点已调整: {split_idx} → {adjusted_split_idx}（对齐日期组边界）"
+            )
 
         # 特征缺失值填充：仅用训练集统计量，避免数据泄漏
         train_df = df.iloc[:adjusted_split_idx]
@@ -335,22 +354,36 @@ class StockRankerService:
         for feat in feature_cols:
             missing_ratio = train_df[feat].isna().mean()
             if missing_ratio > 0.3:
-                logger.warning(f"特征 [{feat}] 训练集缺失率 {missing_ratio*100:.1f}% > 30%，建议检查数据质量")
+                logger.warning(
+                    f"特征 [{feat}] 训练集缺失率 {missing_ratio * 100:.1f}% > 30%，建议检查数据质量"
+                )
 
         # 使用训练集中位数填充缺失值（仅用训练集统计量，避免数据泄漏）
         feature_medians = train_df[feature_cols].median().to_dict()
         # 将 NaN 中位数（整列缺失时）回退为 0.0
-        feature_medians = {k: (v if not pd.isna(v) else 0.0) for k, v in feature_medians.items()}
+        feature_medians = {
+            k: (v if not pd.isna(v) else 0.0) for k, v in feature_medians.items()
+        }
 
         # 复用 _fill_missing_features，确保训练和预测走完全相同的代码路径
-        df[feature_cols] = self._fill_missing_features(df, feature_cols, feature_medians)
+        df[feature_cols] = self._fill_missing_features(
+            df, feature_cols, feature_medians
+        )
 
         # 重新提取特征矩阵（填充后）
         X = df[feature_cols].values
         y = df[label_col].values
 
-        dtrain = xgb.DMatrix(X[:adjusted_split_idx], label=y[:adjusted_split_idx], feature_names=feature_cols)
-        dvalid = xgb.DMatrix(X[adjusted_split_idx:], label=y[adjusted_split_idx:], feature_names=feature_cols)
+        dtrain = xgb.DMatrix(
+            X[:adjusted_split_idx],
+            label=y[:adjusted_split_idx],
+            feature_names=feature_cols,
+        )
+        dvalid = xgb.DMatrix(
+            X[adjusted_split_idx:],
+            label=y[adjusted_split_idx:],
+            feature_names=feature_cols,
+        )
         dtrain.set_group(train_groups)
         dvalid.set_group(valid_groups)
 
@@ -393,7 +426,9 @@ class StockRankerService:
 
         # ---- 特征重要性 ----
         importance = model.get_score(importance_type="gain")
-        importance_sorted = dict(sorted(importance.items(), key=lambda x: x[1], reverse=True))
+        importance_sorted = dict(
+            sorted(importance.items(), key=lambda x: x[1], reverse=True)
+        )
 
         # ---- 保存模型 ----
         train_period = f"{df[date_col].min()} ~ {df[date_col].max()}"
@@ -425,8 +460,12 @@ class StockRankerService:
             config=cfg,
             training_metrics={
                 "best_iteration": int(best_iter),
-                "train_score": float(eval_result["train"][eval_metric][-1]) if eval_result.get("train") else 0,
-                "valid_score": float(eval_result["valid"][eval_metric][-1]) if eval_result.get("valid") else 0,
+                "train_score": float(eval_result["train"][eval_metric][-1])
+                if eval_result.get("train")
+                else 0,
+                "valid_score": float(eval_result["valid"][eval_metric][-1])
+                if eval_result.get("valid")
+                else 0,
                 "eval_history": (
                     {
                         k: (
@@ -445,7 +484,9 @@ class StockRankerService:
                 ),
             },
             feature_importance=importance_sorted,
-            shap_summary=self._compute_shap_summary(model, dtrain, feature_cols) if len(feature_cols) <= 50 else None,
+            shap_summary=self._compute_shap_summary(model, dtrain, feature_cols)
+            if len(feature_cols) <= 50
+            else None,
             duration_seconds=duration,
             n_samples=len(df),
             n_features=len(feature_cols),
@@ -501,11 +542,13 @@ class StockRankerService:
                 group_col = col
                 break
         if group_col is not None:
-            result_df["rank_position"] = result_df.groupby(group_col)["rank_score"].rank(
+            result_df["rank_position"] = result_df.groupby(group_col)[
+                "rank_score"
+            ].rank(ascending=False, method="first")
+        else:
+            result_df["rank_position"] = result_df["rank_score"].rank(
                 ascending=False, method="first"
             )
-        else:
-            result_df["rank_position"] = result_df["rank_score"].rank(ascending=False, method="first")
 
         result_df = result_df.sort_values("rank_score", ascending=False)
 
@@ -520,7 +563,9 @@ class StockRankerService:
             "score_range": float(np.max(scores) - np.min(scores)),
             "n_predicted": len(features),
             "score_cv": safe_divide(
-                float(np.std(scores, ddof=1)), float(np.abs(np.mean(scores))), default=None
+                float(np.std(scores, ddof=1)),
+                float(np.abs(np.mean(scores))),
+                default=None,
             ),  # 变异系数，衡量分数区分度
         }
 
@@ -570,7 +615,8 @@ class StockRankerService:
         feature_medians = metadata.get("feature_medians", {})
 
         logger.info(
-            f"[StockRanker] 开始预测+回测: model_id={model_id}, " f"历史数据={len(feature_history)}行, top_n={top_n}"
+            f"[StockRanker] 开始预测+回测: model_id={model_id}, "
+            f"历史数据={len(feature_history)}行, top_n={top_n}"
         )
 
         # 训练期重叠校验：检测回测数据是否与训练期重叠，避免 in-sample bias
@@ -583,7 +629,9 @@ class StockRankerService:
                     train_start = pd.Timestamp(parts[0].strip())
                     train_end = pd.Timestamp(parts[1].strip())
                     pred_dates = pd.to_datetime(feature_history[date_col])
-                    overlap_mask = (pred_dates >= train_start) & (pred_dates <= train_end)
+                    overlap_mask = (pred_dates >= train_start) & (
+                        pred_dates <= train_end
+                    )
                     overlap_count = overlap_mask.sum()
                     if overlap_count > 0:
                         overlap_pct = overlap_count / len(feature_history) * 100
@@ -641,18 +689,22 @@ class StockRankerService:
 
         # 送入回测引擎
         try:
-            from backend.services.vectorbt_backtest_service import vectorbt_backtest_service
+            from backend.services.vectorbt_backtest_service import (
+                vectorbt_backtest_service,
+            )
 
-            backtest_result = vectorbt_backtest_service.run_vectorbt_backtest_from_weights(
-                weights_df=weights_df,
-                price_data=(
-                    feature_history[[date_col, stock_col, price_col]].rename(
-                        columns={stock_col: "ticker", price_col: "close"}
-                    )
-                    if stock_col != "ticker"
-                    else feature_history[[date_col, stock_col, price_col]]
-                ),
-                rebalance_freq=rebalance_freq,
+            backtest_result = (
+                vectorbt_backtest_service.run_vectorbt_backtest_from_weights(
+                    weights_df=weights_df,
+                    price_data=(
+                        feature_history[[date_col, stock_col, price_col]].rename(
+                            columns={stock_col: "ticker", price_col: "close"}
+                        )
+                        if stock_col != "ticker"
+                        else feature_history[[date_col, stock_col, price_col]]
+                    ),
+                    rebalance_freq=rebalance_freq,
+                )
             )
             backtest_result["success"] = True
             backtest_result["model_id"] = model_id
@@ -691,15 +743,22 @@ class StockRankerService:
 
         # 特征重要性
         importance = model.get_score(importance_type="gain")
-        importance_sorted = sorted(importance.items(), key=lambda x: x[1], reverse=True)[:max_display]
+        importance_sorted = sorted(
+            importance.items(), key=lambda x: x[1], reverse=True
+        )[:max_display]
 
         result = {
             "model_id": model_id,
-            "feature_importance_gain": [{"feature": feat, "importance": float(imp)} for feat, imp in importance_sorted],
+            "feature_importance_gain": [
+                {"feature": feat, "importance": float(imp)}
+                for feat, imp in importance_sorted
+            ],
             "feature_importance_split": [
                 {"feature": feat, "importance": float(imp)}
                 for feat, imp in sorted(
-                    model.get_score(importance_type="weight").items(), key=lambda x: x[1], reverse=True
+                    model.get_score(importance_type="weight").items(),
+                    key=lambda x: x[1],
+                    reverse=True,
                 )[:max_display]
             ],
             "n_features": len(feature_cols),
@@ -711,7 +770,9 @@ class StockRankerService:
             try:
                 # 使用训练集中位数填充缺失值，与训练路径保持一致
                 feature_medians = metadata.get("feature_medians", {})
-                shap_data = self._fill_missing_features(feature_sample, feature_cols, feature_medians)
+                shap_data = self._fill_missing_features(
+                    feature_sample, feature_cols, feature_medians
+                )
                 shap_summary = self._compute_shap_summary(
                     model,
                     xgb.DMatrix(shap_data, feature_names=feature_cols),
@@ -763,12 +824,15 @@ class StockRankerService:
                 "n_estimators": config.n_estimators,
             },
             "feature_cols": feature_cols,
-            "feature_medians": feature_medians or {},  # 训练集各特征中位数，预测时用于填充
+            "feature_medians": feature_medians
+            or {},  # 训练集各特征中位数，预测时用于填充
             "tags": tags or [],
             "framework": "xgboost_ranking",
             "version": "1.0.0",
             "train_period": train_period,
-            "preprocessing_stats": preprocessing_stats if preprocessing_stats is not None else {},
+            "preprocessing_stats": preprocessing_stats
+            if preprocessing_stats is not None
+            else {},
         }
 
         if self.model_registry:
@@ -805,7 +869,9 @@ class StockRankerService:
     # ==================== 文件系统存储（fallback）====================
 
     def _model_dir(self) -> str:
-        base = os.path.join(os.path.dirname(__file__), "..", "..", "models", "stock_ranker")
+        base = os.path.join(
+            os.path.dirname(__file__), "..", "..", "models", "stock_ranker"
+        )
         os.makedirs(base, exist_ok=True)
         return base
 
@@ -886,7 +952,9 @@ class StockRankerService:
     # ==================== SHAP 辅助 ====================
 
     @staticmethod
-    def _split_groups(groups: List[int], total_rows: int, split_idx: int) -> Tuple[List[int], List[int], int]:
+    def _split_groups(
+        groups: List[int], total_rows: int, split_idx: int
+    ) -> Tuple[List[int], List[int], int]:
         """
         将分组列表按行数分割为训练集和验证集，确保分割点对齐到组边界
 
@@ -932,7 +1000,9 @@ class StockRankerService:
                 adjusted_split_idx -= last_train
             elif train_groups:
                 # 仅有一个日期组：无法按组分割，发出警告并使用空验证集
-                logger.warning("[StockRanker] 仅有一个日期组，无法创建验证集，early stopping 将失效")
+                logger.warning(
+                    "[StockRanker] 仅有一个日期组，无法创建验证集，early stopping 将失效"
+                )
 
         return train_groups, valid_groups, adjusted_split_idx
 
@@ -951,13 +1021,19 @@ class StockRankerService:
 
             # 全局特征重要性（按 |mean(SHAP)| 排序）
             mean_abs_shap = np.abs(shap_values).mean(axis=0)
-            shap_importance = {feat: float(mean_abs_shap[i]) for i, feat in enumerate(feature_names)}
-            shap_importance_sorted = dict(sorted(shap_importance.items(), key=lambda x: x[1], reverse=True))
+            shap_importance = {
+                feat: float(mean_abs_shap[i]) for i, feat in enumerate(feature_names)
+            }
+            shap_importance_sorted = dict(
+                sorted(shap_importance.items(), key=lambda x: x[1], reverse=True)
+            )
 
             return {
                 "shap_importance": shap_importance_sorted,
                 "shap_shape": list(shap_values.shape),
-                "base_value": float(explainer.expected_value) if hasattr(explainer, "expected_value") else None,
+                "base_value": float(explainer.expected_value)
+                if hasattr(explainer, "expected_value")
+                else None,
             }
         except ImportError:
             logger.debug("SHAP 库未安装，跳过 SHAP 分析")

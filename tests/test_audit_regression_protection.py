@@ -375,16 +375,11 @@ class TestDivisionSafety:
         assert result is None  # 安全返回None
 
     def test_divide_none_by_number_returns_none(self):
-        """None / number 应返回None（注意：safe_divide可能尚未处理此情况）"""
+        """None / number 应返回None"""
         from backend.utils.safe_math import safe_divide
 
-        # 注意：如果safe_divide不处理None分子，这是一个待修复的Bug
-        try:
-            result = safe_divide(None, 5.0)
-            assert result is None
-        except TypeError:
-            # safe_divide当前不支持None分子 — 这是一个已知的防护缺口
-            pytest.xfail("safe_divide尚不支持None分子，需后续加固")
+        result = safe_divide(None, 5.0)
+        assert result is None
 
     def test_divide_number_by_none_returns_none(self):
         """number / None 应返回None"""

@@ -10,14 +10,17 @@ import logging
 import numpy as np
 import asyncio
 
-logger = logging.getLogger(__name__)
-
 from backend.utils.serialization import sanitize_dict
-from backend.services.vectorbt_backtest_service import VectorBTBacktestService, check_vectorbt_available
+from backend.services.vectorbt_backtest_service import (
+    VectorBTBacktestService,
+    check_vectorbt_available,
+)
 from backend.services.risk_metrics import calculate_sharpe, calculate_volatility
 from backend.repositories.backtest_repository import BacktestRepository
 from backend.repositories.factor_repository import FactorRepository
 from backend.core.database import get_db
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -71,7 +74,9 @@ async def run_single_backtest(request: SingleBacktestRequest):
     """运行单策略回测"""
     try:
         if not check_vectorbt_available():
-            raise HTTPException(status_code=503, detail="VectorBT未安装，请先安装: pip install vectorbt")
+            raise HTTPException(
+                status_code=503, detail="VectorBT未安装，请先安装: pip install vectorbt"
+            )
 
         from backend.services.data_service import data_service
         from backend.services.factor_service import factor_service
@@ -83,7 +88,9 @@ async def run_single_backtest(request: SingleBacktestRequest):
             # 多因子策略
             factor_names_to_use = request.factor_names or []
             if not factor_names_to_use:
-                raise HTTPException(status_code=400, detail="多因子策略需要选择至少一个因子")
+                raise HTTPException(
+                    status_code=400, detail="多因子策略需要选择至少一个因子"
+                )
             primary_factor_name = factor_names_to_use[0]  # 使用第一个因子作为主因子
         else:
             # 单因子策略
@@ -99,7 +106,9 @@ async def run_single_backtest(request: SingleBacktestRequest):
             for factor_name in factor_names_to_use:
                 factor_def = repo.get_by_name(factor_name)
                 if not factor_def:
-                    raise HTTPException(status_code=404, detail=f"因子 '{factor_name}' 不存在")
+                    raise HTTPException(
+                        status_code=404, detail=f"因子 '{factor_name}' 不存在"
+                    )
                 factor_defs[factor_name] = factor_def
 
         # 获取数据并计算所有因子
@@ -107,7 +116,12 @@ async def run_single_backtest(request: SingleBacktestRequest):
         for stock_code in request.stock_codes:
             # 根据频率选择日线或分钟线数据源
             if request.freq.upper() != "D":
-                minute_period = (request.period or request.freq).lower().replace("min", "").replace("t", "")
+                minute_period = (
+                    (request.period or request.freq)
+                    .lower()
+                    .replace("min", "")
+                    .replace("t", "")
+                )
                 raw_data = data_service.get_stock_minute_data(
                     stock_code,
                     request.start_date,
@@ -115,7 +129,9 @@ async def run_single_backtest(request: SingleBacktestRequest):
                     period=minute_period if minute_period.isdigit() else "5",
                 )
             else:
-                raw_data = data_service.get_stock_data(stock_code, request.start_date, request.end_date)
+                raw_data = data_service.get_stock_data(
+                    stock_code, request.start_date, request.end_date
+                )
 
             if raw_data is None or len(raw_data) == 0:
                 continue
@@ -126,7 +142,9 @@ async def run_single_backtest(request: SingleBacktestRequest):
                 factor_calculator = factor_service.calculator
                 for factor_name in factor_names_to_use:
                     factor_def = factor_defs[factor_name]
-                    factor_values = factor_calculator.calculate(stock_data, factor_def.code)
+                    factor_values = factor_calculator.calculate(
+                        stock_data, factor_def.code
+                    )
                     stock_data[factor_name] = factor_values
 
                 all_factor_data[stock_code] = stock_data
@@ -229,9 +247,15 @@ async def run_single_backtest(request: SingleBacktestRequest):
                 # 计算复合得分（等权归一化因子值求和）
                 for factor_name in factor_names_to_use:
                     if factor_name in df.columns:
-                        df[f"{factor_name}_rank"] = df.groupby("date")[factor_name].rank(pct=True)
+                        df[f"{factor_name}_rank"] = df.groupby("date")[
+                            factor_name
+                        ].rank(pct=True)
 
-                rank_cols = [f"{fn}_rank" for fn in factor_names_to_use if f"{fn}_rank" in df.columns]
+                rank_cols = [
+                    f"{fn}_rank"
+                    for fn in factor_names_to_use
+                    if f"{fn}_rank" in df.columns
+                ]
                 if rank_cols:
                     df["composite_score"] = df[rank_cols].mean(axis=1)
                 else:
@@ -311,9 +335,15 @@ async def run_single_backtest(request: SingleBacktestRequest):
             stock_chart_data = {
                 "kline": {
                     "dates": df.index.strftime("%Y-%m-%d").tolist(),
-                    "open": df["open"].tolist() if "open" in df.columns else df["close"].tolist(),
-                    "high": df["high"].tolist() if "high" in df.columns else df["close"].tolist(),
-                    "low": df["low"].tolist() if "low" in df.columns else df["close"].tolist(),
+                    "open": df["open"].tolist()
+                    if "open" in df.columns
+                    else df["close"].tolist(),
+                    "high": df["high"].tolist()
+                    if "high" in df.columns
+                    else df["close"].tolist(),
+                    "low": df["low"].tolist()
+                    if "low" in df.columns
+                    else df["close"].tolist(),
                     "close": df["close"].tolist(),
                 },
                 "factor": {
@@ -321,7 +351,10 @@ async def run_single_backtest(request: SingleBacktestRequest):
                     # 单因子模式：保持原有格式（向后兼容）
                     # 多因子模式：返回所有因子数据
                     "factors": [
-                        {"name": factor_name, "values": clean_factor_values(df[factor_name])}
+                        {
+                            "name": factor_name,
+                            "values": clean_factor_values(df[factor_name]),
+                        }
                         for factor_name in factor_names_to_use
                         if factor_name in df.columns
                     ],
@@ -329,7 +362,9 @@ async def run_single_backtest(request: SingleBacktestRequest):
             }
 
             # 买卖信号 - 两种类型
-            factor_rank = df[primary_factor_name].rolling(252, min_periods=1).rank(pct=True)
+            factor_rank = (
+                df[primary_factor_name].rolling(252, min_periods=1).rank(pct=True)
+            )
             percentile_threshold = request.percentile / 100.0
 
             if request.direction == "long":
@@ -388,7 +423,10 @@ async def run_single_backtest(request: SingleBacktestRequest):
             stock_chart_data["signals"] = {
                 "strategy": {
                     "buy": {"dates": strategy_buy_dates, "prices": strategy_buy_prices},
-                    "sell": {"dates": strategy_sell_dates, "prices": strategy_sell_prices},
+                    "sell": {
+                        "dates": strategy_sell_dates,
+                        "prices": strategy_sell_prices,
+                    },
                 },
                 "actual": {
                     "buy": {"dates": actual_buy_dates, "prices": actual_buy_prices},
@@ -414,7 +452,9 @@ async def run_single_backtest(request: SingleBacktestRequest):
                 if isinstance(result, dict) and "metrics" in result:
                     portfolio_returns = result.get("portfolio_returns")
                     if portfolio_returns is not None and len(portfolio_returns) > 0:
-                        equity_curve = (1 + portfolio_returns).cumprod() * request.initial_capital
+                        equity_curve = (
+                            1 + portfolio_returns
+                        ).cumprod() * request.initial_capital
                         equity_values = equity_curve.tolist()
                         equity_dates = (
                             portfolio_returns.index.strftime("%Y-%m-%d").tolist()
@@ -423,13 +463,22 @@ async def run_single_backtest(request: SingleBacktestRequest):
                         )
 
                 if equity_values is not None and equity_dates is not None:
-                    stock_chart_data["equity"] = {"dates": equity_dates, "values": equity_values}
+                    stock_chart_data["equity"] = {
+                        "dates": equity_dates,
+                        "values": equity_values,
+                    }
                 else:
                     # Fallback: 使用基准价格曲线（明确标注为基准）
-                    first_close = df["close"].iloc[0] if len(df) > 0 and df["close"].iloc[0] != 0 else 1.0
+                    first_close = (
+                        df["close"].iloc[0]
+                        if len(df) > 0 and df["close"].iloc[0] != 0
+                        else 1.0
+                    )
                     stock_chart_data["equity"] = {
                         "dates": df.index.strftime("%Y-%m-%d").tolist(),
-                        "values": (df["close"] / first_close * request.initial_capital).tolist(),
+                        "values": (
+                            df["close"] / first_close * request.initial_capital
+                        ).tolist(),
                         "is_benchmark": True,  # 标记为基准曲线
                     }
 
@@ -448,7 +497,11 @@ async def run_single_backtest(request: SingleBacktestRequest):
 
         return {
             "success": True,
-            "data": {"metrics": cleaned_metrics, "result": cleaned_result, "chart_data": cleaned_chart_data},
+            "data": {
+                "metrics": cleaned_metrics,
+                "result": cleaned_result,
+                "chart_data": cleaned_chart_data,
+            },
         }
     except HTTPException:
         raise
@@ -468,7 +521,9 @@ async def run_strategy_comparison(request: ComparisonRequest):
         # 获取数据
         all_data = {}
         for stock_code in request.stock_codes:
-            data = data_service.get_stock_data(stock_code, request.start_date, request.end_date)
+            data = data_service.get_stock_data(
+                stock_code, request.start_date, request.end_date
+            )
             if data is not None and not data.empty:
                 all_data[stock_code] = data
 
@@ -488,9 +543,9 @@ async def run_strategy_comparison(request: ComparisonRequest):
         # 确保有return列
         if "return" not in merged_data.columns and "close" in merged_data.columns:
             merged_data = merged_data.sort_values(["stock_code", "date"])
-            merged_data["return"] = merged_data.groupby("stock_code")["close"].transform(
-                lambda s: s.pct_change().shift(-1)
-            )
+            merged_data["return"] = merged_data.groupby("stock_code")[
+                "close"
+            ].transform(lambda s: s.pct_change().shift(-1))
 
         merged_data = merged_data.sort_values(["date", "stock_code"])
 
@@ -508,7 +563,9 @@ async def run_strategy_comparison(request: ComparisonRequest):
                 continue
 
             # 计算因子值（使用因子代码）
-            factor_values = factor_service.calculator.calculate(merged_data, factor_def.code)
+            factor_values = factor_service.calculator.calculate(
+                merged_data, factor_def.code
+            )
 
             if factor_values is not None:
                 # 创建因子DataFrame
@@ -532,7 +589,11 @@ async def run_strategy_comparison(request: ComparisonRequest):
                         next_returns = (
                             merged_data[
                                 (merged_data["date"] == date)
-                                & (merged_data["stock_code"].isin(top_stocks["stock_code"]))
+                                & (
+                                    merged_data["stock_code"].isin(
+                                        top_stocks["stock_code"]
+                                    )
+                                )
                             ]
                             .groupby("stock_code")["return"]
                             .first()
@@ -553,7 +614,9 @@ async def run_strategy_comparison(request: ComparisonRequest):
                         if total_return <= -1:
                             annual_return = -1.0  # 完全亏损
                         else:
-                            annual_return = float((1 + total_return) ** (252 / n_days) - 1)
+                            annual_return = float(
+                                (1 + total_return) ** (252 / n_days) - 1
+                            )
                     else:
                         annual_return = None
 
@@ -566,7 +629,9 @@ async def run_strategy_comparison(request: ComparisonRequest):
 
                     # 计算夏普比率（委托risk_metrics统一入口，符合规则2）
                     sharpe = calculate_sharpe(returns_series, risk_free_rate=0.03)
-                    results[strategy_name]["sharpe_ratio"] = sharpe if sharpe is not None else None
+                    results[strategy_name]["sharpe_ratio"] = (
+                        sharpe if sharpe is not None else None
+                    )
 
         results_clean = sanitize_dict(results)
 

@@ -26,7 +26,9 @@ class PreprocessingConfigRequest(BaseModel):
 
     # 可选的用户覆盖参数（如果提供则使用，否则使用智能推荐）
     mode: str = Field("smart", description="模式: smart/auto/custom")
-    user_config: Optional[Dict[str, Any]] = Field(None, description="用户自定义配置（覆盖智能推荐）")
+    user_config: Optional[Dict[str, Any]] = Field(
+        None, description="用户自定义配置（覆盖智能推荐）"
+    )
 
 
 class SmartRecommendationResponse(BaseModel):
@@ -58,7 +60,9 @@ async def get_smart_recommendation(request: PreprocessingConfigRequest):
         from backend.services.factor_service import factor_service
         from backend.services.smart_preprocessing_detector import smart_detector
 
-        logger.info(f"获取智能推荐: {len(request.stock_codes)}只股票, {request.factor_names}")
+        logger.info(
+            f"获取智能推荐: {len(request.stock_codes)}只股票, {request.factor_names}"
+        )
 
         # 1. 获取因子数据（用于分析特征）
         factor_data = factor_service.calculate_factors_for_stocks(
@@ -100,9 +104,13 @@ async def get_smart_recommendation(request: PreprocessingConfigRequest):
                     "market_board": recommendation.data_characteristics.market_board.value,
                     "n_stocks": recommendation.data_characteristics.n_stocks,
                     "n_dates": recommendation.data_characteristics.n_dates,
-                    "factor_volatility": round(recommendation.data_characteristics.factor_volatility, 4),
+                    "factor_volatility": round(
+                        recommendation.data_characteristics.factor_volatility, 4
+                    ),
                     "is_fat_tailed": recommendation.data_characteristics.is_fat_tailed,
-                    "outlier_ratio": round(recommendation.data_characteristics.outlier_ratio, 4),
+                    "outlier_ratio": round(
+                        recommendation.data_characteristics.outlier_ratio, 4
+                    ),
                     "n_industries": recommendation.data_characteristics.n_industries,
                     "min_industry_size": recommendation.data_characteristics.min_industry_size,
                 },
@@ -226,6 +234,8 @@ async def validate_config(config: Dict[str, Any]):
             "is_valid": len(warnings) == 0,
             "warnings": warnings,
             "suggestions": suggestions,
-            "risk_level": "low" if len(warnings) <= 1 else ("medium" if len(warnings) <= 2 else "high"),
+            "risk_level": "low"
+            if len(warnings) <= 1
+            else ("medium" if len(warnings) <= 2 else "high"),
         },
     }

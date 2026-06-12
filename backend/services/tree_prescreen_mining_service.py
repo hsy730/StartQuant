@@ -107,7 +107,9 @@ class TreePrescreenMiningService(BaseMiningService):
         pysr_population_size: int = 33,
     ):
         if not TREE_PRESCREEN_AVAILABLE:
-            raise ImportError("LightGBM 和 XGBoost 均未安装，请运行: pip install lightgbm 或 pip install xgboost")
+            raise ImportError(
+                "LightGBM 和 XGBoost 均未安装，请运行: pip install lightgbm 或 pip install xgboost"
+            )
 
         super().__init__(
             base_factors=base_factors,
@@ -186,7 +188,9 @@ class TreePrescreenMiningService(BaseMiningService):
             self._pysr_service.request_cancel()
         logger.info("收到取消请求")
 
-    def _report_progress(self, phase: str, current: float, total: float, message: str = ""):
+    def _report_progress(
+        self, phase: str, current: float, total: float, message: str = ""
+    ):
         """内部进度报告（映射到 0-100% 全局进度）"""
         if self.progress_callback is None:
             return
@@ -275,7 +279,9 @@ class TreePrescreenMiningService(BaseMiningService):
         model_type = self._resolve_tree_model()
         logger.info(f"开始计算特征重要性, 使用 {model_type}...")
 
-        self._report_progress("feature_importance", 0, 3, f"构建特征矩阵 ({model_type})")
+        self._report_progress(
+            "feature_importance", 0, 3, f"构建特征矩阵 ({model_type})"
+        )
 
         X_df, y, feature_names = self._build_feature_matrix()
         n_features = len(feature_names)
@@ -286,9 +292,13 @@ class TreePrescreenMiningService(BaseMiningService):
 
         try:
             if model_type == "lightgbm":
-                importance_dict = self._train_lgb_feature_importance(X_df, y, feature_names)
+                importance_dict = self._train_lgb_feature_importance(
+                    X_df, y, feature_names
+                )
             else:
-                importance_dict = self._train_xgb_feature_importance(X_df, y, feature_names)
+                importance_dict = self._train_xgb_feature_importance(
+                    X_df, y, feature_names
+                )
         except Exception as e:
             logger.warning(f"树模型训练失败: {e}，回退使用全部特征")
             # 回退：使用所有特征
@@ -301,10 +311,17 @@ class TreePrescreenMiningService(BaseMiningService):
         self._report_progress("feature_importance", 2, 3, "选择 Top-K 特征")
 
         # 过滤低重要性特征
-        filtered = {name: imp for name, imp in importance_dict.items() if imp >= self.importance_threshold}
+        filtered = {
+            name: imp
+            for name, imp in importance_dict.items()
+            if imp >= self.importance_threshold
+        }
 
         if not filtered:
-            logger.warning(f"所有特征重要性均低于阈值 {self.importance_threshold}，" "回退使用全部特征")
+            logger.warning(
+                f"所有特征重要性均低于阈值 {self.importance_threshold}，"
+                "回退使用全部特征"
+            )
             filtered = importance_dict
 
         # 确定 Top-K
@@ -314,12 +331,16 @@ class TreePrescreenMiningService(BaseMiningService):
         # 按重要性降序排列，取 Top-K
         sorted_features = sorted(filtered.items(), key=lambda x: x[1], reverse=True)
         selected = [name for name, _ in sorted_features[:effective_k]]
-        _selected_importance = {name: imp for name, imp in sorted_features[:effective_k]}  # noqa: F841
+        _selected_importance = {
+            name: imp for name, imp in sorted_features[:effective_k]
+        }  # noqa: F841
 
         self._feature_importance = importance_dict
         self._selected_features = selected
 
-        logger.info(f"特征重要性计算完成: {n_features} → {len(selected)} 个特征被选中 (Top-{effective_k})")
+        logger.info(
+            f"特征重要性计算完成: {n_features} → {len(selected)} 个特征被选中 (Top-{effective_k})"
+        )
         for name, imp in sorted_features[:effective_k]:
             factor_code = self.base_factor_values.get(name, {}).get("code", name)
             logger.info(f"  {factor_code}: importance={imp:.6f}")
@@ -332,7 +353,9 @@ class TreePrescreenMiningService(BaseMiningService):
         self, X_df: pd.DataFrame, y: pd.Series, feature_names: List[str]
     ) -> Dict[str, float]:
         """使用 LightGBM 计算特征重要性"""
-        train_data = lgb.Dataset(X_df.values, label=y.values, feature_name=feature_names)
+        train_data = lgb.Dataset(
+            X_df.values, label=y.values, feature_name=feature_names
+        )
 
         params = {
             "objective": "regression",
@@ -356,7 +379,9 @@ class TreePrescreenMiningService(BaseMiningService):
         if total < 1e-10:
             return {name: 0.0 for name in feature_names}
 
-        importance_dict = {name: float(imp / total) for name, imp in zip(feature_names, raw_importance)}
+        importance_dict = {
+            name: float(imp / total) for name, imp in zip(feature_names, raw_importance)
+        }
 
         return dict(sorted(importance_dict.items(), key=lambda x: x[1], reverse=True))
 
@@ -390,7 +415,9 @@ class TreePrescreenMiningService(BaseMiningService):
 
         total = sum(importance_dict.values())
         if total > 0:
-            importance_dict = {name: imp / total for name, imp in importance_dict.items()}
+            importance_dict = {
+                name: imp / total for name, imp in importance_dict.items()
+            }
 
         return dict(sorted(importance_dict.items(), key=lambda x: x[1], reverse=True))
 
@@ -442,7 +469,9 @@ class TreePrescreenMiningService(BaseMiningService):
             logger.warning("DEAP 不可用，跳过遗传规划")
             return {"success": False, "message": "DEAP库未安装", "best_factors": []}
 
-        logger.info(f"启动下游 DEAP 遗传规划, 使用 {len(selected_factor_codes)} 个预筛选特征...")
+        logger.info(
+            f"启动下游 DEAP 遗传规划, 使用 {len(selected_factor_codes)} 个预筛选特征..."
+        )
 
         service = create_genetic_mining_service(
             base_factors=selected_factor_codes,
@@ -466,7 +495,10 @@ class TreePrescreenMiningService(BaseMiningService):
 
             def gp_progress(gen, total_gen, best_fitness, avg_fitness):
                 self._report_progress(
-                    "symbolic_regression", gen, total_gen, f"GP Gen {gen}/{total_gen}, best={best_fitness:.4f}"
+                    "symbolic_regression",
+                    gen,
+                    total_gen,
+                    f"GP Gen {gen}/{total_gen}, best={best_fitness:.4f}",
                 )
 
             service.set_progress_callback(gp_progress)
@@ -486,7 +518,9 @@ class TreePrescreenMiningService(BaseMiningService):
             logger.warning("PySR 不可用，跳过符号回归")
             return {"success": False, "message": "PySR库未安装", "best_factors": []}
 
-        logger.info(f"启动下游 PySR 符号回归, 使用 {len(selected_factor_codes)} 个预筛选特征...")
+        logger.info(
+            f"启动下游 PySR 符号回归, 使用 {len(selected_factor_codes)} 个预筛选特征..."
+        )
 
         service = create_pysr_mining_service(
             base_factors=selected_factor_codes,
@@ -510,7 +544,10 @@ class TreePrescreenMiningService(BaseMiningService):
 
             def pysr_progress(iteration, total_iter, best_fitness, avg_fitness):
                 self._report_progress(
-                    "symbolic_regression", iteration, total_iter, f"PySR iter {iteration}/{total_iter}"
+                    "symbolic_regression",
+                    iteration,
+                    total_iter,
+                    f"PySR iter {iteration}/{total_iter}",
                 )
 
             service.set_progress_callback(pysr_progress)
@@ -546,7 +583,9 @@ class TreePrescreenMiningService(BaseMiningService):
                 importance_with_codes[info["code"]] = imp
 
         # 构建适应度历史
-        fitness_history = downstream_result.get("fitness_history", {"best": [], "average": []})
+        fitness_history = downstream_result.get(
+            "fitness_history", {"best": [], "average": []}
+        )
         if not isinstance(fitness_history, dict):
             fitness_history = {"best": [], "average": []}
 
@@ -613,7 +652,10 @@ class TreePrescreenMiningService(BaseMiningService):
         except Exception as e:
             logger.error(f"特征重要性计算失败: {e}", exc_info=True)
             # 回退：使用全部特征
-            feature_importance = {name: 1.0 / max(len(self.base_factor_values), 1) for name in self.base_factor_values}
+            feature_importance = {
+                name: 1.0 / max(len(self.base_factor_values), 1)
+                for name in self.base_factor_values
+            }
             selected_features = list(self.base_factor_values.keys())
             logger.warning(f"回退使用全部 {len(selected_features)} 个特征")
 
@@ -630,7 +672,9 @@ class TreePrescreenMiningService(BaseMiningService):
                 "source": "tree_prescreen",
             }
 
-        logger.info(f"Phase 1 完成: {len(self.base_factor_codes)} → {len(selected_factor_codes)} 个特征")
+        logger.info(
+            f"Phase 1 完成: {len(self.base_factor_codes)} → {len(selected_factor_codes)} 个特征"
+        )
 
         # 取消检查
         if self._cancel_flag:
@@ -654,7 +698,9 @@ class TreePrescreenMiningService(BaseMiningService):
             elif self.downstream_algorithm == "pysr":
                 downstream_result = self._run_downstream_pysr(selected_factor_codes)
             else:
-                logger.warning(f"未知下游算法 '{self.downstream_algorithm}'，回退到 genetic")
+                logger.warning(
+                    f"未知下游算法 '{self.downstream_algorithm}'，回退到 genetic"
+                )
                 downstream_result = self._run_downstream_genetic(selected_factor_codes)
         except Exception as e:
             logger.error(f"下游符号回归失败: {e}", exc_info=True)
@@ -665,7 +711,9 @@ class TreePrescreenMiningService(BaseMiningService):
             }
 
         # ---- 格式化结果 ----
-        result = self._format_result(downstream_result, feature_importance, selected_features)
+        result = self._format_result(
+            downstream_result, feature_importance, selected_features
+        )
 
         # ---- 日志汇总 ----
         n_factors = len(result.get("best_factors", []))
@@ -712,5 +760,8 @@ def create_tree_prescreen_mining_service(
     * PySR 参数: pysr_niterations, pysr_populations 等
     """
     return TreePrescreenMiningService(
-        base_factors=base_factors, data=data, factor_calculator=factor_calculator, **kwargs
+        base_factors=base_factors,
+        data=data,
+        factor_calculator=factor_calculator,
+        **kwargs,
     )

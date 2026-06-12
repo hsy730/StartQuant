@@ -16,7 +16,11 @@ class EqualWeightStrategy(BaseStrategy):
     """
 
     def __init__(
-        self, initial_capital: float = 1000000, commission_rate: float = 0.0003, top_percentile: float = 0.2, **kwargs
+        self,
+        initial_capital: float = 1000000,
+        commission_rate: float = 0.0003,
+        top_percentile: float = 0.2,
+        **kwargs,
     ):
         """
         初始化等权重策略

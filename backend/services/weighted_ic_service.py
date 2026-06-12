@@ -23,7 +23,7 @@ import logging
 
 from backend.utils.safe_math import safe_divide, safe_ir
 from backend.utils.weight_utils import normalize_weights
-from backend.constants import ROLLING_IC_WINDOW, HIGH_CORRELATION_THRESHOLD, IR_CAP
+from backend.constants import HIGH_CORRELATION_THRESHOLD
 
 logger = logging.getLogger(__name__)
 
@@ -125,8 +125,12 @@ class WeightedICService:
 
                 ic_stats[name] = {
                     "mean_ic": float(valid_ic.mean()),
-                    "std_ic": float(valid_ic.std()) if abs(valid_ic.std()) > 1e-10 else None,
-                    "ir": safe_ir(float(valid_ic.mean()), float(valid_ic.std()), default=None),
+                    "std_ic": float(valid_ic.std())
+                    if abs(valid_ic.std()) > 1e-10
+                    else None,
+                    "ir": safe_ir(
+                        float(valid_ic.mean()), float(valid_ic.std()), default=None
+                    ),
                     "ic_positive_ratio": float((valid_ic > 0).mean()),
                     "n_observations": len(valid_ic),
                     "ic_series": valid_ic,
@@ -137,7 +141,10 @@ class WeightedICService:
 
             weights = self._calculate_weights(ic_stats, factor_names)
 
-            if self.config.correlation_adjustment and factor_correlation_matrix is not None:
+            if (
+                self.config.correlation_adjustment
+                and factor_correlation_matrix is not None
+            ):
                 weights, adjustment_info = self._adjust_for_correlation(
                     weights, factor_correlation_matrix, factor_names
                 )
@@ -164,7 +171,9 @@ class WeightedICService:
                         "weight": float(weight),
                         "mean_contribution": float(ic_contribution.mean()),
                         "std_contribution": float(ic_contribution.std()),
-                        "contribution_ratio": float(contribution_ratio) if contribution_ratio is not None else None,
+                        "contribution_ratio": float(contribution_ratio)
+                        if contribution_ratio is not None
+                        else None,
                     }
 
             valid_weighted_ic = weighted_ic_series.dropna()
@@ -175,14 +184,24 @@ class WeightedICService:
                 "factors_analyzed": factor_names,
                 "weighting_method": self.config.weighting_method.value,
                 "weighted_ic": {
-                    "mean": float(valid_weighted_ic.mean()) if len(valid_weighted_ic) > 0 else 0.0,
-                    "std": float(valid_weighted_ic.std()) if len(valid_weighted_ic) > 1 else 0.0,
+                    "mean": float(valid_weighted_ic.mean())
+                    if len(valid_weighted_ic) > 0
+                    else 0.0,
+                    "std": float(valid_weighted_ic.std())
+                    if len(valid_weighted_ic) > 1
+                    else 0.0,
                     "ir": (
-                        safe_ir(float(valid_weighted_ic.mean()), float(valid_weighted_ic.std()), default=None)
+                        safe_ir(
+                            float(valid_weighted_ic.mean()),
+                            float(valid_weighted_ic.std()),
+                            default=None,
+                        )
                         if len(valid_weighted_ic) > 1
                         else None
                     ),
-                    "positive_ratio": float((valid_weighted_ic > 0).mean()) if len(valid_weighted_ic) > 0 else 0.0,
+                    "positive_ratio": float((valid_weighted_ic > 0).mean())
+                    if len(valid_weighted_ic) > 0
+                    else 0.0,
                     "n_observations": len(valid_weighted_ic),
                     "series_dates": [str(d) for d in valid_weighted_ic.index],
                     "series_values": [float(v) for v in valid_weighted_ic.values],
@@ -190,7 +209,11 @@ class WeightedICService:
                 "factor_weights": {
                     name: {
                         "weight": float(weights.get(name, 0.0)),
-                        **{k: v for k, v in ic_stats.get(name, {}).items() if k != "ic_series"},
+                        **{
+                            k: v
+                            for k, v in ic_stats.get(name, {}).items()
+                            if k != "ic_series"
+                        },
                     }
                     for name in factor_names
                     if name in weights
@@ -290,20 +313,35 @@ class WeightedICService:
                 for name in importance_scores.keys():
                     if name in factor_correlation_matrix.columns:
                         other_factors = [
-                            n for n in importance_scores.keys() if n != name and n in factor_correlation_matrix.columns
+                            n
+                            for n in importance_scores.keys()
+                            if n != name and n in factor_correlation_matrix.columns
                         ]
 
                         if other_factors:
                             max_corr_with_others = max(
-                                [abs(factor_correlation_matrix.loc[name, n]) for n in other_factors]
+                                [
+                                    abs(factor_correlation_matrix.loc[name, n])
+                                    for n in other_factors
+                                ]
                             )
 
                             uniqueness_penalty = max_corr_with_others**2 * 20
-                            importance_scores[name]["raw_score"] = max(0.0, importance_scores[name]["raw_score"] - uniqueness_penalty)
-                            importance_scores[name]["components"]["uniqueness_penalty"] = float(uniqueness_penalty)
-                            importance_scores[name]["components"]["max_correlation"] = float(max_corr_with_others)
+                            importance_scores[name]["raw_score"] = max(
+                                0.0,
+                                importance_scores[name]["raw_score"]
+                                - uniqueness_penalty,
+                            )
+                            importance_scores[name]["components"][
+                                "uniqueness_penalty"
+                            ] = float(uniqueness_penalty)
+                            importance_scores[name]["components"]["max_correlation"] = (
+                                float(max_corr_with_others)
+                            )
 
-            sorted_factors = sorted(importance_scores.items(), key=lambda x: x[1]["raw_score"], reverse=True)
+            sorted_factors = sorted(
+                importance_scores.items(), key=lambda x: x[1]["raw_score"], reverse=True
+            )
 
             ranking = []
             for rank, (name, scores) in enumerate(sorted_factors, 1):
@@ -353,7 +391,9 @@ class WeightedICService:
             if all(v == 0 for v in raw_weights.values()):
                 logger.warning("所有因子IR均为负值，IR加权无法分配权重，回退到等权重")
                 n_valid = len(raw_weights)
-                return {name: 1.0 / n_valid for name in raw_weights} if n_valid > 0 else {}
+                return (
+                    {name: 1.0 / n_valid for name in raw_weights} if n_valid > 0 else {}
+                )
 
             return normalize_weights(raw_weights)
 
@@ -374,7 +414,12 @@ class WeightedICService:
                 if name in ic_stats and "ic_series" in ic_stats[name]:
                     ic_series = ic_stats[name]["ic_series"]
 
-                    weights_array = np.array([decay_factor ** (len(ic_series) - 1 - i) for i in range(len(ic_series))])
+                    weights_array = np.array(
+                        [
+                            decay_factor ** (len(ic_series) - 1 - i)
+                            for i in range(len(ic_series))
+                        ]
+                    )
 
                     weighted_mean = np.average(ic_series.values, weights=weights_array)
                     raw_weights[name] = abs(weighted_mean)
@@ -419,18 +464,24 @@ class WeightedICService:
                     continue
 
                 if corr_value > HIGH_CORRELATION_THRESHOLD:
-                    reduction_factor = 1.0 - (corr_value - HIGH_CORRELATION_THRESHOLD) * 0.5
+                    reduction_factor = (
+                        1.0 - (corr_value - HIGH_CORRELATION_THRESHOLD) * 0.5
+                    )
 
                     if adjusted_weights[name_i] >= adjusted_weights[name_j]:
                         adjusted_weights[name_j] *= reduction_factor
-                        adjustment_info["adjustments"][f"{name_j}_reduced_by_{name_i}"] = {
+                        adjustment_info["adjustments"][
+                            f"{name_j}_reduced_by_{name_i}"
+                        ] = {
                             "correlation": float(corr_value),
                             "reduction_factor": float(reduction_factor),
                             "reason": f"与{name_i}高度相关({corr_value:.2f})",
                         }
                     else:
                         adjusted_weights[name_i] *= reduction_factor
-                        adjustment_info["adjustments"][f"{name_i}_reduced_by_{name_j}"] = {
+                        adjustment_info["adjustments"][
+                            f"{name_i}_reduced_by_{name_j}"
+                        ] = {
                             "correlation": float(corr_value),
                             "reduction_factor": float(reduction_factor),
                             "reason": f"与{name_j}高度相关({corr_value:.2f})",
@@ -439,7 +490,9 @@ class WeightedICService:
         # 在归一化之前计算缩减量
         pre_norm_total = sum(adjusted_weights.values())
         original_total = sum(weights.values())
-        adjustment_info["total_reduction"] = float(safe_divide(1.0 - pre_norm_total, original_total, default=0.0))
+        adjustment_info["total_reduction"] = float(
+            safe_divide(1.0 - pre_norm_total, original_total, default=0.0)
+        )
 
         total = sum(adjusted_weights.values())
         if total > 0:
@@ -508,7 +561,11 @@ class WeightedICService:
         if len(valid_names) < 1:
             # 所有因子std均不可靠，回退到等权
             n_valid = len([n for n in factor_names if n in ic_stats])
-            return {name: 1.0 / n_valid for name in factor_names if name in ic_stats} if n_valid > 0 else {}
+            return (
+                {name: 1.0 / n_valid for name in factor_names if name in ic_stats}
+                if n_valid > 0
+                else {}
+            )
 
         ics = np.array(ics)
         stds = np.array(stds)
@@ -519,9 +576,13 @@ class WeightedICService:
         total = raw_weights.sum()
 
         if total > 0:
-            optimal_weights = safe_divide(raw_weights, total, default=1.0 / len(valid_names))
+            optimal_weights = safe_divide(
+                raw_weights, total, default=1.0 / len(valid_names)
+            )
         else:
-            optimal_weights = np.full(len(valid_names), safe_divide(1.0, len(valid_names), default=0.0))
+            optimal_weights = np.full(
+                len(valid_names), safe_divide(1.0, len(valid_names), default=0.0)
+            )
 
         result = dict(zip(valid_names, optimal_weights.tolist()))
 
@@ -558,10 +619,14 @@ class WeightedICService:
         if abs(overall_std) < 1e-6:
             return 1.0
 
-        change_score = 1.0 - min(safe_divide(abs(second_mean - first_mean), overall_std, default=0.0), 1.0)
+        change_score = 1.0 - min(
+            safe_divide(abs(second_mean - first_mean), overall_std, default=0.0), 1.0
+        )
 
         rolling_std = ic_series.rolling(window=20).std()
-        cv_of_std = safe_divide(float(rolling_std.std()), float(rolling_std.mean()), default=1.0)
+        cv_of_std = safe_divide(
+            float(rolling_std.std()), float(rolling_std.mean()), default=1.0
+        )
         consistency_score = max(0, 1.0 - cv_of_std)
 
         return change_score * 0.6 + consistency_score * 0.4
@@ -579,7 +644,9 @@ class WeightedICService:
         for r in ranking[:5]:
             ir_str = f"IR={r['ir']:.3f}" if r.get("ir") is not None else "IR=N/A"
             interpretation_parts.append(
-                f"  {r['rank']}. {r['factor_name']}: " f"综合得分={r['total_score']:.2f}, " f"{ir_str}\n"
+                f"  {r['rank']}. {r['factor_name']}: "
+                f"综合得分={r['total_score']:.2f}, "
+                f"{ir_str}\n"
             )
 
         if n_factors > 5:

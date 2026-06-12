@@ -100,12 +100,22 @@ class MarketCapStrategy(BaseStrategy):
             date_level = level_names.index("date") if "date" in level_names else 0
 
         # 向量化计算：每个日期的市值权重 = 个股市值 / 该日期总市值
-        valid_mask = (signals == 1) & df[self.market_cap_column].notna() & (df[self.market_cap_column] > 0)
+        valid_mask = (
+            (signals == 1)
+            & df[self.market_cap_column].notna()
+            & (df[self.market_cap_column] > 0)
+        )
 
         if date_level is not None:
-            date_grouper = df.index.get_level_values(date_level) if df.index.nlevels > 1 else df.index
+            date_grouper = (
+                df.index.get_level_values(date_level)
+                if df.index.nlevels > 1
+                else df.index
+            )
             total_mcap = (
-                df.loc[valid_mask, self.market_cap_column].groupby(date_grouper[valid_mask.values]).transform("sum")
+                df.loc[valid_mask, self.market_cap_column]
+                .groupby(date_grouper[valid_mask.values])
+                .transform("sum")
             )
             weights[valid_mask] = safe_divide(
                 df.loc[valid_mask, self.market_cap_column].values,

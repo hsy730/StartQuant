@@ -10,7 +10,11 @@ from scipy.stats import ttest_1samp
 import akshare as ak
 import empyrical
 
-from backend.services.risk_metrics import calculate_sharpe, calculate_volatility, calculate_relative_metrics
+from backend.services.risk_metrics import (
+    calculate_sharpe,
+    calculate_volatility,
+    calculate_relative_metrics,
+)
 from backend.utils.safe_math import safe_divide
 from backend.constants import ANNUAL_TRADING_DAYS, RISK_FREE_RATE
 
@@ -23,7 +27,9 @@ class FactorAttributionService:
     def __init__(self):
         self._benchmark_cache = None
 
-    def _get_benchmark_data(self, start_date=None, end_date=None) -> Optional[pd.DataFrame]:
+    def _get_benchmark_data(
+        self, start_date=None, end_date=None
+    ) -> Optional[pd.DataFrame]:
         """
         获取上证指数作为基准数据
 
@@ -57,7 +63,10 @@ class FactorAttributionService:
             return None
 
     def analyze_attribution(
-        self, factor_data: Dict[str, pd.DataFrame], factor_name: str, benchmark_data: Optional[pd.DataFrame] = None
+        self,
+        factor_data: Dict[str, pd.DataFrame],
+        factor_name: str,
+        benchmark_data: Optional[pd.DataFrame] = None,
     ) -> Dict[str, Any]:
         """
         因子贡献度分解
@@ -77,7 +86,9 @@ class FactorAttributionService:
         results = {}
 
         # 1. 因子收益贡献（基于因子暴露度与收益的关系）
-        results["factor_contribution"] = self._calculate_contribution(factor_data, factor_name)
+        results["factor_contribution"] = self._calculate_contribution(
+            factor_data, factor_name
+        )
 
         # 2. Alpha-Beta分解（相对于基准的超额收益）
         # 如果没有提供基准数据，自动获取上证指数
@@ -89,16 +100,24 @@ class FactorAttributionService:
                     all_dates.append(df.index.min())
                     all_dates.append(df.index.max())
             if all_dates:
-                benchmark_data = self._get_benchmark_data(start_date=min(all_dates), end_date=max(all_dates))
+                benchmark_data = self._get_benchmark_data(
+                    start_date=min(all_dates), end_date=max(all_dates)
+                )
 
-        results["alpha_beta"] = self._decompose_alpha_beta(factor_data, factor_name, benchmark_data)
+        results["alpha_beta"] = self._decompose_alpha_beta(
+            factor_data, factor_name, benchmark_data
+        )
 
         # 3. 收益分解（按时间段和股票分解）
-        results["return_decomposition"] = self._decompose_return(factor_data, factor_name)
+        results["return_decomposition"] = self._decompose_return(
+            factor_data, factor_name
+        )
 
         return results
 
-    def _calculate_contribution(self, factor_data: Dict[str, pd.DataFrame], factor_name: str) -> Dict[str, Any]:
+    def _calculate_contribution(
+        self, factor_data: Dict[str, pd.DataFrame], factor_name: str
+    ) -> Dict[str, Any]:
         """
         计算因子收益贡献
 
@@ -123,7 +142,9 @@ class FactorAttributionService:
         for stock_code, df in factor_data.items():
             if factor_name in df.columns and "close" in df.columns:
                 df_copy = df.copy()
-                df_copy["future_return"] = df_copy["close"].shift(-1) / df_copy["close"] - 1
+                df_copy["future_return"] = (
+                    df_copy["close"].shift(-1) / df_copy["close"] - 1
+                )
                 valid = df_copy[[factor_name, "future_return"]].dropna()
                 valid = valid[~np.isinf(valid["future_return"])]
                 for date, group in valid.groupby(valid.index):
@@ -188,12 +209,17 @@ class FactorAttributionService:
             "high_exposure_return": high_return,
             "low_exposure_return": low_return,
             "long_short_return": long_short_return,
-            "contribution_ratio": float(contribution_ratio) if contribution_ratio is not None else None,
+            "contribution_ratio": float(contribution_ratio)
+            if contribution_ratio is not None
+            else None,
             "sample_size": total_samples,
         }
 
     def _decompose_alpha_beta(
-        self, factor_data: Dict[str, pd.DataFrame], factor_name: str, benchmark_data: Optional[pd.DataFrame] = None
+        self,
+        factor_data: Dict[str, pd.DataFrame],
+        factor_name: str,
+        benchmark_data: Optional[pd.DataFrame] = None,
     ) -> Dict[str, Any]:
         """
         Alpha-Beta分解
@@ -223,7 +249,9 @@ class FactorAttributionService:
             for date, group in valid.groupby(valid.index):
                 if date not in date_portfolio_returns:
                     date_portfolio_returns[date] = {"factor": [], "return": []}
-                date_portfolio_returns[date]["factor"].extend(group[factor_name].tolist())
+                date_portfolio_returns[date]["factor"].extend(
+                    group[factor_name].tolist()
+                )
                 date_portfolio_returns[date]["return"].extend(group["return"].tolist())
 
         portfolio_daily_returns = {}
@@ -249,9 +277,13 @@ class FactorAttributionService:
                 "message": "未提供基准数据（如市场指数），无法计算Alpha-Beta",
                 "portfolio_return": {
                     "daily_mean": float(portfolio_returns.mean()),
-                    "annual_return": float(empyrical.annual_return(portfolio_returns, period="daily")),
+                    "annual_return": float(
+                        empyrical.annual_return(portfolio_returns, period="daily")
+                    ),
                     "volatility": calculate_volatility(portfolio_returns),
-                    "sharpe": calculate_sharpe(portfolio_returns, risk_free_rate=RISK_FREE_RATE),
+                    "sharpe": calculate_sharpe(
+                        portfolio_returns, risk_free_rate=RISK_FREE_RATE
+                    ),
                 },
             }
 
@@ -267,7 +299,9 @@ class FactorAttributionService:
         benchmark_returns = benchmark_data["close"].pct_change(1).dropna()
 
         # 通过 dropna 对齐组合和基准，只保留两者都有数据的日期
-        aligned_data = pd.DataFrame({"portfolio": portfolio_returns, "benchmark": benchmark_returns}).dropna()
+        aligned_data = pd.DataFrame(
+            {"portfolio": portfolio_returns, "benchmark": benchmark_returns}
+        ).dropna()
 
         if len(aligned_data) < 10:
             return {"error": "对齐后数据不足"}
@@ -294,7 +328,11 @@ class FactorAttributionService:
             }
 
         # 计算日频 alpha（年化 alpha / ANNUAL_TRADING_DAYS）
-        daily_alpha = safe_divide(alpha_annual, ANNUAL_TRADING_DAYS, default=None) if alpha_annual is not None else None
+        daily_alpha = (
+            safe_divide(alpha_annual, ANNUAL_TRADING_DAYS, default=None)
+            if alpha_annual is not None
+            else None
+        )
 
         # R² = correlation²（规则7.18：ss_tot=0 时 correlation 为 None，R² 返回 None）
         if correlation is not None:
@@ -305,7 +343,11 @@ class FactorAttributionService:
         alpha_str = f"{alpha_annual:.4f}" if alpha_annual is not None else "不可计算"
         beta_str = f"{beta:.4f}" if beta is not None else "不可计算"
         r2_str = f"{r_squared:.4f}" if r_squared is not None else "不可计算"
-        interpretation = f"相对于基准的年化Alpha: {alpha_str}, " f"Beta: {beta_str}, " f"拟合度(R²): {r2_str}"
+        interpretation = (
+            f"相对于基准的年化Alpha: {alpha_str}, "
+            f"Beta: {beta_str}, "
+            f"拟合度(R²): {r2_str}"
+        )
 
         return {
             "has_benchmark": True,
@@ -316,7 +358,9 @@ class FactorAttributionService:
             "interpretation": interpretation,
         }
 
-    def _decompose_return(self, factor_data: Dict[str, pd.DataFrame], factor_name: str) -> Dict[str, Any]:
+    def _decompose_return(
+        self, factor_data: Dict[str, pd.DataFrame], factor_name: str
+    ) -> Dict[str, Any]:
         """
         收益分解
 
@@ -342,11 +386,15 @@ class FactorAttributionService:
 
                     returns_by_stock[stock_code] = {
                         "avg_daily_return": avg_return,
-                        "annual_return": float(empyrical.annual_return(returns, period="daily")),
+                        "annual_return": float(
+                            empyrical.annual_return(returns, period="daily")
+                        ),
                         "cumulative_return": cum_return,
                         "volatility": vol_annual,
                         "daily_volatility": float(returns.std()),
-                        "sharpe": calculate_sharpe(returns, risk_free_rate=RISK_FREE_RATE),
+                        "sharpe": calculate_sharpe(
+                            returns, risk_free_rate=RISK_FREE_RATE
+                        ),
                         "win_rate": float((returns > 0).mean()),
                         "count": len(returns),
                     }
@@ -410,7 +458,10 @@ class FactorAttributionService:
                             ]
                         )
                     )
-                    if any(v.get("annual_return") is not None for v in returns_by_stock.values())
+                    if any(
+                        v.get("annual_return") is not None
+                        for v in returns_by_stock.values()
+                    )
                     else None
                 ),
                 "cumulative_return": overall_cum,

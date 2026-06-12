@@ -50,7 +50,9 @@ class StrategyRegistry:
             ValueError: 策略不存在
         """
         if name not in cls._strategies:
-            raise ValueError(f"策略 '{name}' 不存在。可用策略: {list(cls._strategies.keys())}")
+            raise ValueError(
+                f"策略 '{name}' 不存在。可用策略: {list(cls._strategies.keys())}"
+            )
 
         strategy_class = cls._strategies[name]
         return strategy_class(**kwargs)

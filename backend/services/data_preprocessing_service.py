@@ -110,7 +110,11 @@ class DataPreprocessingService:
 
         elif method == "replace":
             # 替换为均值（排除异常值后计算均值）
-            mean_value = df.loc[~outliers, column].mean() if (~outliers).any() else df[column].mean()
+            mean_value = (
+                df.loc[~outliers, column].mean()
+                if (~outliers).any()
+                else df[column].mean()
+            )
             df.loc[outliers, column] = mean_value
 
         elif method == "replace_median":

@@ -25,7 +25,7 @@ from scipy.stats import spearmanr
 
 from backend.utils.safe_math import safe_divide
 from backend.services.risk_metrics import calculate_sharpe, calculate_risk_metrics
-from backend.constants import STATISTICAL_SIGNIFICANCE_ALPHA, HIGHLY_SIGNIFICANT_ALPHA, ANNUAL_TRADING_DAYS
+from backend.constants import STATISTICAL_SIGNIFICANCE_ALPHA
 
 logger = logging.getLogger(__name__)
 
@@ -123,7 +123,9 @@ class FactorReturnAnalysisService:
                     continue
 
                 df_copy["future_return"] = (
-                    df_copy[price_column].shift(-self.config.forward_period) / df_copy[price_column] - 1
+                    df_copy[price_column].shift(-self.config.forward_period)
+                    / df_copy[price_column]
+                    - 1
                 )
 
                 df_copy["stock_code"] = stock_code
@@ -148,7 +150,10 @@ class FactorReturnAnalysisService:
 
             merged_df = pd.concat(all_records, ignore_index=True)
 
-            if len(merged_df) < self.config.n_quantiles * self.config.min_samples_per_group:
+            if (
+                len(merged_df)
+                < self.config.n_quantiles * self.config.min_samples_per_group
+            ):
                 return {
                     "error": f"数据不足，需要至少{self.config.n_quantiles * self.config.min_samples_per_group}个样本"
                 }
@@ -161,15 +166,23 @@ class FactorReturnAnalysisService:
                     if len(group) >= self.config.n_quantiles:
                         try:
                             merged_df.loc[group.index, "quantile"] = pd.qcut(
-                                group[factor_name], q=self.config.n_quantiles, labels=False, duplicates="drop"
+                                group[factor_name],
+                                q=self.config.n_quantiles,
+                                labels=False,
+                                duplicates="drop",
                             )
                         except ValueError:
                             # 分位数相同时无法切分，跳过该截面
-                            logger.debug(f"qcut跳过截面 {date}: 因子{factor_name}值相同, n={len(group)}")
+                            logger.debug(
+                                f"qcut跳过截面 {date}: 因子{factor_name}值相同, n={len(group)}"
+                            )
             else:
                 # 无日期信息时退化为全局分位（单股票场景）
                 merged_df["quantile"] = pd.qcut(
-                    merged_df[factor_name], q=self.config.n_quantiles, labels=False, duplicates="drop"
+                    merged_df[factor_name],
+                    q=self.config.n_quantiles,
+                    labels=False,
+                    duplicates="drop",
                 )
 
             # 排除无法分位的行
@@ -184,7 +197,7 @@ class FactorReturnAnalysisService:
                 if len(group_data) == 0:
                     quantile_returns.append(
                         {
-                            "group": f"Q{q+1}",
+                            "group": f"Q{q + 1}",
                             "avg_return": None,
                             "std_return": None,
                             "n_observations": 0,
@@ -195,7 +208,7 @@ class FactorReturnAnalysisService:
                     )
                     quantile_stats.append(
                         {
-                            "group": f"Q{q+1}",
+                            "group": f"Q{q + 1}",
                             "mean_factor": None,
                             "min_factor": None,
                             "max_factor": None,
@@ -204,8 +217,13 @@ class FactorReturnAnalysisService:
                     )
                     continue
 
-                if self.config.weight_by_market_cap and "market_cap" in group_data.columns:
-                    weights = group_data["market_cap"].fillna(group_data["market_cap"].median())
+                if (
+                    self.config.weight_by_market_cap
+                    and "market_cap" in group_data.columns
+                ):
+                    weights = group_data["market_cap"].fillna(
+                        group_data["market_cap"].median()
+                    )
                     weight_sum = weights.sum()
                     if weight_sum < 1e-10 or np.isnan(weight_sum):
                         avg_return = group_data["future_return"].mean()
@@ -218,23 +236,29 @@ class FactorReturnAnalysisService:
                 std_return = group_data["future_return"].std()
                 n_obs = len(group_data)
 
-                t_stat, p_value = scipy_stats.ttest_1samp(group_data["future_return"].dropna().values, 0)
+                t_stat, p_value = scipy_stats.ttest_1samp(
+                    group_data["future_return"].dropna().values, 0
+                )
 
                 quantile_returns.append(
                     {
-                        "group": f"Q{q+1}",
+                        "group": f"Q{q + 1}",
                         "avg_return": float(avg_return),
-                        "std_return": float(std_return) if not np.isnan(std_return) else None,
+                        "std_return": float(std_return)
+                        if not np.isnan(std_return)
+                        else None,
                         "n_observations": n_obs,
                         "t_statistic": float(t_stat) if not np.isnan(t_stat) else None,
                         "p_value": float(p_value) if not np.isnan(p_value) else None,
-                        "is_significant": p_value < 0.05 if not np.isnan(p_value) else False,
+                        "is_significant": p_value < 0.05
+                        if not np.isnan(p_value)
+                        else False,
                     }
                 )
 
                 quantile_stats.append(
                     {
-                        "group": f"Q{q+1}",
+                        "group": f"Q{q + 1}",
                         "mean_factor": float(group_data[factor_name].mean()),
                         "min_factor": float(group_data[factor_name].min()),
                         "max_factor": float(group_data[factor_name].max()),
@@ -247,7 +271,9 @@ class FactorReturnAnalysisService:
             monotonicity_result = self._test_monotonicity(quantile_returns)
 
             if self.config.enable_bootstrap:
-                bootstrap_result = self._bootstrap_quantile_returns(merged_df, factor_name, "future_return")
+                bootstrap_result = self._bootstrap_quantile_returns(
+                    merged_df, factor_name, "future_return"
+                )
             else:
                 bootstrap_result = None
 
@@ -307,7 +333,9 @@ class FactorReturnAnalysisService:
                     continue
 
                 df_copy["future_return"] = (
-                    df_copy[price_column].shift(-self.config.forward_period) / df_copy[price_column] - 1
+                    df_copy[price_column].shift(-self.config.forward_period)
+                    / df_copy[price_column]
+                    - 1
                 )
 
                 valid_rows = df_copy[[factor_name, "future_return"]].dropna()
@@ -315,7 +343,11 @@ class FactorReturnAnalysisService:
                     continue
 
                 for idx in valid_rows.index:
-                    date_key = str(idx) if not isinstance(idx, pd.Timestamp) else idx.strftime("%Y-%m-%d")
+                    date_key = (
+                        str(idx)
+                        if not isinstance(idx, pd.Timestamp)
+                        else idx.strftime("%Y-%m-%d")
+                    )
 
                     if date_key not in date_returns:
                         date_returns[date_key] = []
@@ -333,8 +365,10 @@ class FactorReturnAnalysisService:
 
             sorted_dates = sorted(date_returns.keys())
 
-            group_cumreturns = {f"Q{i+1}": [] for i in range(self.config.n_quantiles)}
-            group_cumulative = {f"Q{i+1}": 1.0 for i in range(self.config.n_quantiles)}
+            group_cumreturns = {f"Q{i + 1}": [] for i in range(self.config.n_quantiles)}
+            group_cumulative = {
+                f"Q{i + 1}": 1.0 for i in range(self.config.n_quantiles)
+            }
             long_short_returns = []
             all_dates = []
 
@@ -343,11 +377,14 @@ class FactorReturnAnalysisService:
             for date_str in sorted_dates:
                 observations = date_returns[date_str]
 
-                if len(observations) < self.config.n_quantiles * self.config.min_samples_per_group:
+                if (
+                    len(observations)
+                    < self.config.n_quantiles * self.config.min_samples_per_group
+                ):
                     if long_short:
                         long_short_returns.append(cumulative_ls - 1)
                     for i in range(self.config.n_quantiles):
-                        group_cumreturns[f"Q{i+1}"].append(None)
+                        group_cumreturns[f"Q{i + 1}"].append(None)
                     all_dates.append(date_str)
                     continue
 
@@ -364,7 +401,7 @@ class FactorReturnAnalysisService:
                     if long_short:
                         long_short_returns.append(cumulative_ls - 1)
                     for i in range(self.config.n_quantiles):
-                        group_cumreturns[f"Q{i+1}"].append(None)
+                        group_cumreturns[f"Q{i + 1}"].append(None)
                     all_dates.append(date_str)
                     continue
 
@@ -379,8 +416,10 @@ class FactorReturnAnalysisService:
                 for q in range(self.config.n_quantiles):
                     period_return = group_returns.get(q)
                     if period_return is not None:
-                        group_cumulative[f"Q{q+1}"] *= 1 + period_return
-                    group_cumreturns[f"Q{q+1}"].append(float(group_cumulative[f"Q{q+1}"] - 1))
+                        group_cumulative[f"Q{q + 1}"] *= 1 + period_return
+                    group_cumreturns[f"Q{q + 1}"].append(
+                        float(group_cumulative[f"Q{q + 1}"] - 1)
+                    )
 
                 if long_short:
                     long_return = group_returns.get(self.config.n_quantiles - 1)
@@ -398,7 +437,9 @@ class FactorReturnAnalysisService:
             }
 
             if long_short:
-                result["long_short_cumulative"] = [float(r) if r is not None else None for r in long_short_returns]
+                result["long_short_cumulative"] = [
+                    float(r) if r is not None else None for r in long_short_returns
+                ]
 
                 valid_returns = [r for r in long_short_returns if r is not None]
                 if valid_returns:
@@ -407,18 +448,25 @@ class FactorReturnAnalysisService:
                     sharpe_ratio = self._calculate_sharpe_ratio(
                         pd.Series(
                             [
-                                (long_short_returns[i + 1] + 1) / (long_short_returns[i] + 1) - 1
+                                (long_short_returns[i + 1] + 1)
+                                / (long_short_returns[i] + 1)
+                                - 1
                                 for i in range(len(long_short_returns) - 1)
-                                if long_short_returns[i] is not None and long_short_returns[i + 1] is not None
+                                if long_short_returns[i] is not None
+                                and long_short_returns[i + 1] is not None
                             ]
                         )
                     )
 
                     result["summary_statistics"] = {
                         "final_cumulative_return": float(final_return),
-                        "max_drawdown": float(max_drawdown) if max_drawdown is not None else None,
+                        "max_drawdown": float(max_drawdown)
+                        if max_drawdown is not None
+                        else None,
                         "sharpe_ratio": (
-                            float(sharpe_ratio) if sharpe_ratio is not None and not np.isnan(sharpe_ratio) else None
+                            float(sharpe_ratio)
+                            if sharpe_ratio is not None and not np.isnan(sharpe_ratio)
+                            else None
                         ),
                         "total_periods": len(valid_returns),
                     }
@@ -426,8 +474,9 @@ class FactorReturnAnalysisService:
             if not long_short:
                 result["group_cumulative"] = {}
                 for q in range(self.config.n_quantiles):
-                    result["group_cumulative"][f"Q{q+1}"] = [
-                        float(r) if r is not None else None for r in group_cumreturns[f"Q{q+1}"]
+                    result["group_cumulative"][f"Q{q + 1}"] = [
+                        float(r) if r is not None else None
+                        for r in group_cumreturns[f"Q{q + 1}"]
                     ]
 
             return result
@@ -492,7 +541,9 @@ class FactorReturnAnalysisService:
                     shifted = valid.shift(1).dropna()
                     common_idx = valid.index.intersection(shifted.index)
                     if len(common_idx) >= 5:
-                        auto_corr, _ = spearmanr(valid.loc[common_idx], shifted.loc[common_idx])
+                        auto_corr, _ = spearmanr(
+                            valid.loc[common_idx], shifted.loc[common_idx]
+                        )
                     else:
                         auto_corr = np.nan
                 else:
@@ -507,7 +558,9 @@ class FactorReturnAnalysisService:
             median_turnover = np.median(turnover_rates)
             std_turnover = np.std(turnover_rates)
 
-            avg_autocorr = float(np.mean(autocorrelations)) if autocorrelations else None
+            avg_autocorr = (
+                float(np.mean(autocorrelations)) if autocorrelations else None
+            )
 
             half_life = None
             if avg_autocorr is not None and 0 < avg_autocorr < 1:
@@ -529,15 +582,21 @@ class FactorReturnAnalysisService:
                     "interpretation": self._interpret_turnover(avg_turnover),
                 },
                 "autocorrelation": {
-                    "mean_autocorrelation": float(avg_autocorr) if avg_autocorr is not None else None,
+                    "mean_autocorrelation": float(avg_autocorr)
+                    if avg_autocorr is not None
+                    else None,
                     "n_stocks_with_valid_autocorr": len(autocorrelations),
                     "half_life": float(half_life) if half_life else None,
-                    "interpretation": self._interpret_autocorrelation(avg_autocorr) if avg_autocorr is not None else "无法计算自相关",
+                    "interpretation": self._interpret_autocorrelation(avg_autocorr)
+                    if avg_autocorr is not None
+                    else "无法计算自相关",
                 },
                 "stability_analysis": {
                     "stability_score": float(stability_score),
                     "is_stable": stability_score >= 0.6,
-                    "recommendation": self._generate_stability_recommendation(stability_score, avg_turnover),
+                    "recommendation": self._generate_stability_recommendation(
+                        stability_score, avg_turnover
+                    ),
                 },
             }
 
@@ -595,7 +654,11 @@ class FactorReturnAnalysisService:
             }
 
         # Welch's t-test: t = spread / sqrt(std_top^2/n_top + std_bottom^2/n_bottom)
-        se = np.sqrt(std_top**2 / n_top + std_bottom**2 / n_bottom) if n_top > 0 and n_bottom > 0 else 0.0
+        se = (
+            np.sqrt(std_top**2 / n_top + std_bottom**2 / n_bottom)
+            if n_top > 0 and n_bottom > 0
+            else 0.0
+        )
 
         if se > 1e-10:
             t_stat = float(spread) / float(se)  # se guaranteed positive (Rule 7.34)
@@ -610,7 +673,9 @@ class FactorReturnAnalysisService:
             var_top = top_group["std_return"] ** 2
             var_bottom = bottom_group["std_return"] ** 2
             numerator = (var_top / n_top + var_bottom / n_bottom) ** 2
-            denominator = (var_top / n_top) ** 2 / (n_top - 1) + (var_bottom / n_bottom) ** 2 / (n_bottom - 1)
+            denominator = (var_top / n_top) ** 2 / (n_top - 1) + (
+                var_bottom / n_bottom
+            ) ** 2 / (n_bottom - 1)
             df = safe_divide(numerator, denominator, default=n_top + n_bottom - 2)
         else:
             df = max(n_top + n_bottom - 2, 1)
@@ -637,7 +702,9 @@ class FactorReturnAnalysisService:
 
         有效因子应该呈现单调性：Q1 < Q2 < Q3 < Q4 < Q5（或反向）
         """
-        returns = [q["avg_return"] for q in quantile_returns if q["avg_return"] is not None]
+        returns = [
+            q["avg_return"] for q in quantile_returns if q["avg_return"] is not None
+        ]
         if not returns:
             return {
                 "is_monotonic": False,
@@ -651,22 +718,30 @@ class FactorReturnAnalysisService:
         increasing_count = sum(1 for i in range(n - 1) if returns[i + 1] > returns[i])
         decreasing_count = sum(1 for i in range(n - 1) if returns[i + 1] < returns[i])
 
-        monotonicity_ratio = max(increasing_count, decreasing_count) / (n - 1) if n > 1 else 0
+        monotonicity_ratio = (
+            max(increasing_count, decreasing_count) / (n - 1) if n > 1 else 0
+        )
 
         spearman_corr, spearman_p = scipy_stats.spearmanr(range(n), returns)
 
         is_monotonic = monotonicity_ratio >= 0.8
-        direction = "increasing" if increasing_count >= decreasing_count else "decreasing"
+        direction = (
+            "increasing" if increasing_count >= decreasing_count else "decreasing"
+        )
 
         return {
             "is_monotonic": is_monotonic,
             "direction": direction,
             "monotonicity_ratio": float(monotonicity_ratio),
-            "spearman_correlation": float(spearman_corr) if not np.isnan(spearman_corr) else None,
+            "spearman_correlation": float(spearman_corr)
+            if not np.isnan(spearman_corr)
+            else None,
             "spearman_p_value": float(spearman_p) if not np.isnan(spearman_p) else None,
             "n_increasing_pairs": increasing_count,
             "n_decreasing_pairs": decreasing_count,
-            "interpretation": self._interpret_monotonicity(is_monotonic, direction, monotonicity_ratio),
+            "interpretation": self._interpret_monotonicity(
+                is_monotonic, direction, monotonicity_ratio
+            ),
         }
 
     def _bootstrap_quantile_returns(
@@ -685,16 +760,22 @@ class FactorReturnAnalysisService:
         rng = np.random.default_rng(42)
 
         bootstrapped_spreads = []
-        bootstrapped_returns = {f"Q{i+1}": [] for i in range(self.config.n_quantiles)}
+        bootstrapped_returns = {f"Q{i + 1}": [] for i in range(self.config.n_quantiles)}
 
         # 判断是否为多股票面板数据（有date列且多个日期）
-        has_cross_section = "date" in df.columns and df["date"].notna().any() and df["date"].nunique() > 1
+        has_cross_section = (
+            "date" in df.columns
+            and df["date"].notna().any()
+            and df["date"].nunique() > 1
+        )
 
         for _ in range(self.config.bootstrap_n):
             if has_cross_section:
                 # Cluster bootstrap：按日期重抽样，保持横截面结构
                 unique_dates = df["date"].dropna().unique()
-                sampled_dates = rng.choice(unique_dates, size=len(unique_dates), replace=True)
+                sampled_dates = rng.choice(
+                    unique_dates, size=len(unique_dates), replace=True
+                )
                 sample_frames = []
                 for d in sampled_dates:
                     date_rows = df[df["date"] == d]
@@ -734,8 +815,8 @@ class FactorReturnAnalysisService:
             for q in range(self.config.n_quantiles):
                 group = sample_df[sample_df["quantile"] == q]
                 if len(group) > 0:
-                    iter_returns[f"Q{q+1}"] = float(group[return_col].mean())
-                    bootstrapped_returns[f"Q{q+1}"].append(iter_returns[f"Q{q+1}"])
+                    iter_returns[f"Q{q + 1}"] = float(group[return_col].mean())
+                    bootstrapped_returns[f"Q{q + 1}"].append(iter_returns[f"Q{q + 1}"])
 
             top_key = f"Q{self.config.n_quantiles}"
             if top_key in iter_returns and "Q1" in iter_returns:
@@ -744,7 +825,7 @@ class FactorReturnAnalysisService:
         result = {}
 
         for q in range(self.config.n_quantiles):
-            key = f"Q{q+1}"
+            key = f"Q{q + 1}"
             if key in bootstrapped_returns and len(bootstrapped_returns[key]) > 0:
                 values = sorted(bootstrapped_returns[key])
                 ci_lower = np.percentile(values, 2.5)
@@ -792,7 +873,9 @@ class FactorReturnAnalysisService:
         drawdown = safe_divide(wealth_index - peak, peak, default=0.0)
         return abs(float(drawdown.min())) if len(drawdown) > 0 else 0.0
 
-    def _calculate_sharpe_ratio(self, returns: pd.Series, risk_free_rate: float = 0.03) -> float:
+    def _calculate_sharpe_ratio(
+        self, returns: pd.Series, risk_free_rate: float = 0.03
+    ) -> float:
         """
         计算夏普比率（年化，扣除无风险利率），委托risk_metrics统一入口
 
@@ -855,7 +938,9 @@ class FactorReturnAnalysisService:
         else:
             return f"多空利差为负（{spread:.2%}），因子方向可能错误或需要反转"
 
-    def _interpret_monotonicity(self, is_monotonic: bool, direction: str, ratio: float) -> str:
+    def _interpret_monotonicity(
+        self, is_monotonic: bool, direction: str, ratio: float
+    ) -> str:
         """解读单调性"""
         if not is_monotonic:
             return f"分组收益单调性不明显（{ratio:.0%}），因子预测能力不稳定"
@@ -863,7 +948,9 @@ class FactorReturnAnalysisService:
         direction_text = "递增" if direction == "increasing" else "递减"
         return f"分组收益呈{direction_text}趋势（{ratio:.0%}），因子具有良好的单调性"
 
-    def _generate_stability_recommendation(self, stability_score: float, turnover: float) -> str:
+    def _generate_stability_recommendation(
+        self, stability_score: float, turnover: float
+    ) -> str:
         """生成稳定性建议"""
         if stability_score >= 0.8:
             return "因子非常稳定，适合长期持有策略"

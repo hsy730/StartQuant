@@ -15,12 +15,18 @@ class FactorVersionModel(Base):
     __tablename__ = "factor_versions"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    factor_id: Mapped[int] = mapped_column(Integer, ForeignKey("factors.id"), nullable=False, index=True)
-    version_code: Mapped[str] = mapped_column(String(50), nullable=False)  # 版本号，如 v1.0, v1.1
+    factor_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("factors.id"), nullable=False, index=True
+    )
+    version_code: Mapped[str] = mapped_column(
+        String(50), nullable=False
+    )  # 版本号，如 v1.0, v1.1
     code: Mapped[str] = mapped_column(Text, nullable=False)  # 因子计算代码
     description: Mapped[str] = mapped_column(Text, nullable=True)  # 因子描述
     change_reason: Mapped[str] = mapped_column(Text, nullable=True)  # 变更原因
-    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.now)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.now
+    )
     is_current: Mapped[bool] = mapped_column(Integer, default=False)  # 是否为当前版本
 
     def to_dict(self) -> dict:

@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 import logging
 
-from backend.constants import IR_PASS_THRESHOLD, TURNOVER_THRESHOLD, STATISTICAL_SIGNIFICANCE_ALPHA, HIGHLY_SIGNIFICANT_ALPHA
+from backend.constants import IR_PASS_THRESHOLD, TURNOVER_THRESHOLD
 
 logger = logging.getLogger(__name__)
 
@@ -122,12 +122,16 @@ class TearSheetService:
 
             if self.config.include_quantile_analysis:
                 try:
-                    from backend.services.factor_return_analysis_service import factor_return_analysis_service
+                    from backend.services.factor_return_analysis_service import (
+                        factor_return_analysis_service,
+                    )
 
-                    quantile_result = factor_return_analysis_service.calculate_quantile_returns(
-                        factor_data=factor_data,
-                        factor_name=factor_name,
-                        price_column=price_column,
+                    quantile_result = (
+                        factor_return_analysis_service.calculate_quantile_returns(
+                            factor_data=factor_data,
+                            factor_name=factor_name,
+                            price_column=price_column,
+                        )
                     )
 
                     if "error" not in quantile_result:
@@ -142,13 +146,17 @@ class TearSheetService:
 
             if self.config.include_cumulative_returns:
                 try:
-                    from backend.services.factor_return_analysis_service import factor_return_analysis_service
+                    from backend.services.factor_return_analysis_service import (
+                        factor_return_analysis_service,
+                    )
 
-                    cumulative_result = factor_return_analysis_service.calculate_cumulative_returns(
-                        factor_data=factor_data,
-                        factor_name=factor_name,
-                        price_column=price_column,
-                        long_short=True,
+                    cumulative_result = (
+                        factor_return_analysis_service.calculate_cumulative_returns(
+                            factor_data=factor_data,
+                            factor_name=factor_name,
+                            price_column=price_column,
+                            long_short=True,
+                        )
                     )
 
                     if "error" not in cumulative_result:
@@ -163,11 +171,15 @@ class TearSheetService:
 
             if self.config.include_turnover:
                 try:
-                    from backend.services.factor_return_analysis_service import factor_return_analysis_service
+                    from backend.services.factor_return_analysis_service import (
+                        factor_return_analysis_service,
+                    )
 
-                    turnover_result = factor_return_analysis_service.calculate_turnover_analysis(
-                        factor_data=factor_data,
-                        factor_name=factor_name,
+                    turnover_result = (
+                        factor_return_analysis_service.calculate_turnover_analysis(
+                            factor_data=factor_data,
+                            factor_name=factor_name,
+                        )
                     )
 
                     if "error" not in turnover_result:
@@ -189,7 +201,9 @@ class TearSheetService:
                 logger.warning(f"IC/IR摘要提取失败: {e}")
                 errors.append(f"IC/IR分析: {str(e)}")
 
-            overall_score, score_breakdown = self._calculate_overall_score(report["sections"])
+            overall_score, score_breakdown = self._calculate_overall_score(
+                report["sections"]
+            )
 
             report["summary"] = {
                 "overall_score": float(overall_score),
@@ -202,9 +216,13 @@ class TearSheetService:
             }
 
             if self.config.include_interpretation:
-                report["interpretation"] = self._generate_interpretation(report["sections"], overall_score)
+                report["interpretation"] = self._generate_interpretation(
+                    report["sections"], overall_score
+                )
 
-            report["recommendations"] = self._generate_recommendations(report["sections"], overall_score)
+            report["recommendations"] = self._generate_recommendations(
+                report["sections"], overall_score
+            )
 
             logger.info(
                 f"Tear Sheet生成完成: 因子={factor_name}, "
@@ -225,7 +243,9 @@ class TearSheetService:
     ) -> Optional[Dict[str, Any]]:
         """提取IC/IR分析的摘要信息（委托Alphalens）"""
         try:
-            from backend.services.alphalens_analysis_service import alphalens_analysis_service
+            from backend.services.alphalens_analysis_service import (
+                alphalens_analysis_service,
+            )
 
             # 构建alphalens所需的输入格式
             factor_values_dict = {}
@@ -335,7 +355,9 @@ class TearSheetService:
             spread = qr.get("spread", {})
 
             mono_ratio = _safe_val(
-                mono.get("monotonicity_ratio", 0) if isinstance(mono.get("monotonicity_ratio"), (int, float)) else 0
+                mono.get("monotonicity_ratio", 0)
+                if isinstance(mono.get("monotonicity_ratio"), (int, float))
+                else 0
             )
             mono_score = mono_ratio * 100
             scores["quantile_monotonicity"] = max(0, min(mono_score, 100))
@@ -363,7 +385,9 @@ class TearSheetService:
             scores["stability"] = 0
             scores["turnover_efficiency"] = 0
 
-        total_score = sum(scores.get(key, 0) * weight / 100 for key, weight in weights.items())
+        total_score = sum(
+            scores.get(key, 0) * weight / 100 for key, weight in weights.items()
+        )
 
         return total_score, scores
 
@@ -400,10 +424,15 @@ class TearSheetService:
             if pos_ratio is None:
                 pos_ratio = 0.5
 
-            interpretations["ic_ir"] = f"该因子的IC均值为{mean_ic:.4f}，IR为{ir:.3f}，" f"IC正方向占比{pos_ratio:.1%}。"
+            interpretations["ic_ir"] = (
+                f"该因子的IC均值为{mean_ic:.4f}，IR为{ir:.3f}，"
+                f"IC正方向占比{pos_ratio:.1%}。"
+            )
 
             if ir > 1.0:
-                interpretations["ic_ir"] += "IC表现优秀，因子具有很强的预测能力和稳定性。"
+                interpretations["ic_ir"] += (
+                    "IC表现优秀，因子具有很强的预测能力和稳定性。"
+                )
             elif ir > IR_PASS_THRESHOLD:
                 interpretations["ic_ir"] += "IC表现良好，因子具有一定的预测能力。"
             elif ir > 0:
@@ -441,7 +470,9 @@ class TearSheetService:
             mean_to = turnover_stats.get("mean_turnover", 0.5)
             is_stable = stability.get("is_stable", False)
 
-            interpretations["turnover"] = f"平均换手率为{mean_to:.2%}" f"，因子{'稳定' if is_stable else '不稳定'}。"
+            interpretations["turnover"] = (
+                f"平均换手率为{mean_to:.2%}，因子{'稳定' if is_stable else '不稳定'}。"
+            )
 
             if is_stable and mean_to < 0.3:
                 interpretations["turnover"] += "低换手率+高稳定性，交易成本低。"
@@ -450,7 +481,9 @@ class TearSheetService:
             else:
                 interpretations["turnover"] += "因子变动频繁，可能产生较高交易成本。"
 
-        interpretations["overall"] = f"综合评分为{overall_score:.1f}/100（{self._score_to_grade(overall_score)}）。"
+        interpretations["overall"] = (
+            f"综合评分为{overall_score:.1f}/100（{self._score_to_grade(overall_score)}）。"
+        )
 
         if overall_score >= 70:
             interpretations["overall"] += "该因子质量优秀，推荐用于实盘策略。"
@@ -498,7 +531,8 @@ class TearSheetService:
                         "priority": "medium",
                         "category": "方向一致性",
                         "suggestion": (
-                            f"IC正方向占比仅{positive_ratio:.1%}(接近随机)，" "建议检查因子在不同市场环境下的表现"
+                            f"IC正方向占比仅{positive_ratio:.1%}(接近随机)，"
+                            "建议检查因子在不同市场环境下的表现"
                         ),
                     }
                 )
@@ -561,7 +595,10 @@ class TearSheetService:
                     "priority": "low",
                     "category": "持续监控",
                     "suggestion": (
-                        "因子表现良好，建议定期监控：" "1) 跟踪IC衰减情况 " "2) 关注市场环境变化 " "3) 定期更新参数"
+                        "因子表现良好，建议定期监控："
+                        "1) 跟踪IC衰减情况 "
+                        "2) 关注市场环境变化 "
+                        "3) 定期更新参数"
                     ),
                 }
             )

@@ -44,14 +44,20 @@ def calculate_risk_metrics(
         mdd = float(empyrical.max_drawdown(returns_arr))
         mdd = mdd if np.isfinite(mdd) else None
         if mdd is not None and abs(mdd) > 1e-10:
-            ann_ret = float(empyrical.annual_return(returns_arr, period="daily", annualization=annual_trading_days))
+            ann_ret = float(
+                empyrical.annual_return(
+                    returns_arr, period="daily", annualization=annual_trading_days
+                )
+            )
             calmar = safe_divide(ann_ret, abs(mdd), default=None)
         else:
             calmar = None
         return {
             "total_return": float(empyrical.cum_returns_final(returns_arr)),
             "annual_return": float(
-                empyrical.annual_return(returns_arr, period="daily", annualization=annual_trading_days)
+                empyrical.annual_return(
+                    returns_arr, period="daily", annualization=annual_trading_days
+                )
             ),
             "volatility": None,
             "sharpe_ratio": None,
@@ -65,9 +71,15 @@ def calculate_risk_metrics(
 
     result = {
         "total_return": float(empyrical.cum_returns_final(returns_arr)),
-        "annual_return": float(empyrical.annual_return(returns_arr, period="daily", annualization=annual_trading_days)),
+        "annual_return": float(
+            empyrical.annual_return(
+                returns_arr, period="daily", annualization=annual_trading_days
+            )
+        ),
         "volatility": float(
-            empyrical.annual_volatility(returns_arr, period="daily", annualization=annual_trading_days)
+            empyrical.annual_volatility(
+                returns_arr, period="daily", annualization=annual_trading_days
+            )
         ),
         "sharpe_ratio": float(
             empyrical.sharpe_ratio(
@@ -86,10 +98,20 @@ def calculate_risk_metrics(
             )
         ),
         "max_drawdown": float(empyrical.max_drawdown(returns_arr)),
-        "calmar_ratio": float(empyrical.calmar_ratio(returns_arr, period="daily", annualization=annual_trading_days)),
+        "calmar_ratio": float(
+            empyrical.calmar_ratio(
+                returns_arr, period="daily", annualization=annual_trading_days
+            )
+        ),
         "win_rate": float((returns_arr > 0).mean()),
-        "var_95": float(empyrical.value_at_risk(returns_arr, cutoff=VAR_CONFIDENCE_CUTOFF)),
-        "cvar_95": float(empyrical.conditional_value_at_risk(returns_arr, cutoff=VAR_CONFIDENCE_CUTOFF)),
+        "var_95": float(
+            empyrical.value_at_risk(returns_arr, cutoff=VAR_CONFIDENCE_CUTOFF)
+        ),
+        "cvar_95": float(
+            empyrical.conditional_value_at_risk(
+                returns_arr, cutoff=VAR_CONFIDENCE_CUTOFF
+            )
+        ),
     }
 
     # empyrical 在某些边界条件下可能返回非有限值，统一转为 None（符合规则6）
@@ -136,7 +158,9 @@ def calculate_relative_metrics(
     Returns:
         包含相对风险指标的字典
     """
-    aligned = pd.DataFrame({"strategy": strategy_returns, "benchmark": benchmark_returns}).dropna()
+    aligned = pd.DataFrame(
+        {"strategy": strategy_returns, "benchmark": benchmark_returns}
+    ).dropna()
     if len(aligned) < 2:
         return _empty_relative_metrics()
 
@@ -161,8 +185,14 @@ def calculate_relative_metrics(
     except Exception as e:
         logger.debug(f"信息比率计算失败: {e}")
         # Fallback: excess_return / tracking_error
-        if tracking_error and tracking_error > 0 and result["excess_return"] is not None:
-            result["information_ratio"] = safe_divide(result["excess_return"], tracking_error, default=None)
+        if (
+            tracking_error
+            and tracking_error > 0
+            and result["excess_return"] is not None
+        ):
+            result["information_ratio"] = safe_divide(
+                result["excess_return"], tracking_error, default=None
+            )
         else:
             result["information_ratio"] = None
 
@@ -205,7 +235,9 @@ def _empty_relative_metrics() -> Dict[str, Optional[float]]:
 
 
 def calculate_sharpe(
-    returns: pd.Series, risk_free_rate: float = RISK_FREE_RATE, annual_trading_days: int = ANNUAL_TRADING_DAYS
+    returns: pd.Series,
+    risk_free_rate: float = RISK_FREE_RATE,
+    annual_trading_days: int = ANNUAL_TRADING_DAYS,
 ) -> Optional[float]:
     """
     单独计算Sharpe比率（轻量接口，用于只需Sharpe的场景）
@@ -235,7 +267,9 @@ def calculate_sharpe(
     return result if np.isfinite(result) else None
 
 
-def calculate_volatility(returns: pd.Series, annual_trading_days: int = ANNUAL_TRADING_DAYS) -> Optional[float]:
+def calculate_volatility(
+    returns: pd.Series, annual_trading_days: int = ANNUAL_TRADING_DAYS
+) -> Optional[float]:
     """
     单独计算年化波动率（轻量接口）
 
@@ -250,5 +284,9 @@ def calculate_volatility(returns: pd.Series, annual_trading_days: int = ANNUAL_T
     if len(returns_clean) < 2:
         return None
     returns_arr = returns_clean.values
-    result = float(empyrical.annual_volatility(returns_arr, period="daily", annualization=annual_trading_days))
+    result = float(
+        empyrical.annual_volatility(
+            returns_arr, period="daily", annualization=annual_trading_days
+        )
+    )
     return result if np.isfinite(result) else None

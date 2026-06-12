@@ -70,6 +70,13 @@ def safe_divide(
     """
     if isinstance(denominator, (pd.Series, np.ndarray)):
         # 向量化处理
+        if numerator is None:
+            # None 分子：语义为"缺失"，返回全 default
+            if isinstance(denominator, pd.Series):
+                return pd.Series(default, index=denominator.index)
+            else:
+                return np.full_like(denominator, np.nan if default is None else default, dtype=float)
+
         if isinstance(denominator, pd.Series):
             invalid = (denominator.abs() < min_threshold) | denominator.isna()
         else:
@@ -91,20 +98,34 @@ def safe_divide(
         # 标量处理
         # 注意：np.float64(np.nan) 在 numpy>=2.0 中不是 float 子类，
         # 必须同时检查 np.floating 类型才能捕获 NaN
+        if numerator is None:
+            return default
+        if isinstance(numerator, (float, np.floating)) and np.isnan(numerator):
+            # NaN 分子：数学上 NaN / x = NaN，不是"不可计算"
+            # 与 None（语义为"缺失"）不同，NaN 是有效的浮点值
+            return np.nan
         if denominator is None:
             return default
         if isinstance(denominator, (float, np.floating)) and np.isnan(denominator):
             return default
         if abs(denominator) < min_threshold:
             if isinstance(numerator, pd.Series):
-                return pd.Series(np.nan if default is None else default, index=numerator.index, dtype=float)
+                return pd.Series(
+                    np.nan if default is None else default,
+                    index=numerator.index,
+                    dtype=float,
+                )
             elif isinstance(numerator, np.ndarray):
-                return np.full_like(numerator, np.nan if default is None else default, dtype=float)
+                return np.full_like(
+                    numerator, np.nan if default is None else default, dtype=float
+                )
             return default
         return numerator / denominator
 
 
-def safe_ir(ic_mean: float, ic_std: float, default: Optional[float] = None) -> Optional[float]:
+def safe_ir(
+    ic_mean: float, ic_std: float, default: Optional[float] = None
+) -> Optional[float]:
     """
     安全计算信息比率 IR = IC均值 / IC标准差
 
@@ -122,9 +143,13 @@ def safe_ir(ic_mean: float, ic_std: float, default: Optional[float] = None) -> O
         IR值，或default（标准差无效时）
     """
     # 处理NaN输入（np.float64(np.nan) 在 numpy>=2.0 中不是 float 子类）
-    if ic_mean is None or (isinstance(ic_mean, (float, np.floating)) and np.isnan(ic_mean)):
+    if ic_mean is None or (
+        isinstance(ic_mean, (float, np.floating)) and np.isnan(ic_mean)
+    ):
         return default
-    if ic_std is None or (isinstance(ic_std, (float, np.floating)) and np.isnan(ic_std)):
+    if ic_std is None or (
+        isinstance(ic_std, (float, np.floating)) and np.isnan(ic_std)
+    ):
         return default
 
     # 标准差为0或极小值时，IR不可计算

@@ -39,7 +39,11 @@ class FactorNeutralizationService:
                 raise ValueError(f"数据框中缺少列: {col}")
 
     def _build_result_series(
-        self, df: pd.DataFrame, factor_name: str, valid_index: pd.Index, residuals: np.ndarray
+        self,
+        df: pd.DataFrame,
+        factor_name: str,
+        valid_index: pd.Index,
+        residuals: np.ndarray,
     ) -> pd.Series:
         """构建结果Series，保持原索引，缺失值位置填充NaN"""
         result = pd.Series(index=df.index, dtype=float)
@@ -84,7 +88,9 @@ class FactorNeutralizationService:
 
         return self._build_result_series(df, factor_name, valid_data.index, residuals)
 
-    def neutralize_industry(self, df: pd.DataFrame, factor_name: str, industry_column: str = "industry") -> pd.Series:
+    def neutralize_industry(
+        self, df: pd.DataFrame, factor_name: str, industry_column: str = "industry"
+    ) -> pd.Series:
         """
         行业中性化 - 使用行业哑变量回归残差法（JoinQuant/BigQuant标准）
 
@@ -214,7 +220,9 @@ class FactorNeutralizationService:
                     industries = industries[valid_mask]
                     unique_industries = sorted(industries.unique())
                     if len(unique_industries) < 2:
-                        logger.warning("联合中性化：过滤小行业后行业分类不足2个，跳过行业中性化部分")
+                        logger.warning(
+                            "联合中性化：过滤小行业后行业分类不足2个，跳过行业中性化部分"
+                        )
                         has_industry = False
             if has_industry:
                 merged_industries = industries
@@ -224,7 +232,9 @@ class FactorNeutralizationService:
         X_list = []
 
         if has_industry:
-            industry_dummies = pd.get_dummies(merged_industries, drop_first=True).astype(float)
+            industry_dummies = pd.get_dummies(
+                merged_industries, drop_first=True
+            ).astype(float)
             X_list.append(industry_dummies.values)
 
         if has_mc:
@@ -252,13 +262,17 @@ class FactorNeutralizationService:
             logger.warning(f"获取行业分类失败: {e}, 使用默认分类")
             return {code: "unknown" for code in stock_codes}
 
-    def add_industry_classification(self, df: pd.DataFrame, stock_codes: List[str]) -> pd.DataFrame:
+    def add_industry_classification(
+        self, df: pd.DataFrame, stock_codes: List[str]
+    ) -> pd.DataFrame:
         industry_map = self.get_industry_classification(stock_codes)
 
         result = df.copy()
 
         if "stock_code" in df.columns:
-            pure_codes = result["stock_code"].str.replace(r"\.(SH|SZ|BJ)$", "", regex=True)
+            pure_codes = result["stock_code"].str.replace(
+                r"\.(SH|SZ|BJ)$", "", regex=True
+            )
             result["industry"] = pure_codes.map(industry_map)
         else:
             result["industry"] = "unknown"

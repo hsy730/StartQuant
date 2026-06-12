@@ -3,11 +3,14 @@
 """
 
 import json
+import logging
 from typing import List, Optional, Dict
 from sqlalchemy.orm import Session
 from sqlalchemy import select
 
 from backend.models.mining_task import MiningTaskModel
+
+logger = logging.getLogger(__name__)
 
 
 class MiningTaskRepository:
@@ -18,14 +21,21 @@ class MiningTaskRepository:
 
     def create(self, task: MiningTaskModel) -> MiningTaskModel:
         """创建挖掘任务记录"""
-        self.db.add(task)
-        self.db.commit()
-        self.db.refresh(task)
+        try:
+            self.db.add(task)
+            self.db.commit()
+            self.db.refresh(task)
+        except Exception as e:
+            self.db.rollback()
+            logger.error(f"创建挖掘任务失败: {e}")
+            raise
         return task
 
     def get_by_task_id(self, task_id: str) -> Optional[MiningTaskModel]:
         """根据task_id获取挖掘任务"""
-        return self.db.scalar(select(MiningTaskModel).where(MiningTaskModel.task_id == task_id))
+        return self.db.scalar(
+            select(MiningTaskModel).where(MiningTaskModel.task_id == task_id)
+        )
 
     def get_by_id(self, id: int) -> Optional[MiningTaskModel]:
         """根据主键ID获取挖掘任务"""
@@ -45,7 +55,10 @@ class MiningTaskRepository:
         """获取挖掘历史记录（分页）"""
         return list(
             self.db.scalars(
-                select(MiningTaskModel).order_by(MiningTaskModel.created_at.desc()).limit(limit).offset(offset)
+                select(MiningTaskModel)
+                .order_by(MiningTaskModel.created_at.desc())
+                .limit(limit)
+                .offset(offset)
             ).all()
         )
 
@@ -60,11 +73,16 @@ class MiningTaskRepository:
         task = self.get_by_task_id(task_id)
         if not task:
             return None
-        for key, value in kwargs.items():
-            if hasattr(task, key):
-                setattr(task, key, value)
-        self.db.commit()
-        self.db.refresh(task)
+        try:
+            for key, value in kwargs.items():
+                if hasattr(task, key):
+                    setattr(task, key, value)
+            self.db.commit()
+            self.db.refresh(task)
+        except Exception as e:
+            self.db.rollback()
+            logger.error(f"更新任务状态失败: {e}")
+            raise
         return task
 
     def update_progress(
@@ -93,7 +111,9 @@ class MiningTaskRepository:
         self.db.refresh(task)
         return task
 
-    def complete_task(self, task_id: str, result: dict, fitness_history: dict = None) -> Optional[MiningTaskModel]:
+    def complete_task(
+        self, task_id: str, result: dict, fitness_history: dict = None
+    ) -> Optional[MiningTaskModel]:
         """标记任务完成"""
         from datetime import datetime
 
@@ -142,14 +162,16 @@ class MiningTaskRepository:
         if task.stock_codes:
             try:
                 stock_codes = json.loads(task.stock_codes)
-            except (json.JSONDecodeError, TypeError):
+            except (json.JSONDecodeError, TypeError) as e:
+                logger.warning(f"解析stock_codes失败: {e}")
                 stock_codes = []
 
         base_factors = []
         if task.base_factors:
             try:
                 base_factors = json.loads(task.base_factors)
-            except (json.JSONDecodeError, TypeError):
+            except (json.JSONDecodeError, TypeError) as e:
+                logger.warning(f"解析base_factors失败: {e}")
                 base_factors = []
 
         return {
@@ -173,7 +195,9 @@ class MiningTaskRepository:
             "error": task.error,
             "created_at": task.created_at.isoformat() if task.created_at else None,
             "started_at": task.started_at.isoformat() if task.started_at else None,
-            "completed_at": task.completed_at.isoformat() if task.completed_at else None,
+            "completed_at": task.completed_at.isoformat()
+            if task.completed_at
+            else None,
         }
 
     def to_summary_dict(self, task: MiningTaskModel) -> Dict:
@@ -182,7 +206,8 @@ class MiningTaskRepository:
         if task.stock_codes:
             try:
                 stock_codes = json.loads(task.stock_codes)
-            except (json.JSONDecodeError, TypeError):
+            except (json.JSONDecodeError, TypeError) as e:
+                logger.warning(f"解析stock_codes失败: {e}")
                 stock_codes = []
 
         factor_count = 0
@@ -204,5 +229,7 @@ class MiningTaskRepository:
             "error": task.error,
             "created_at": task.created_at.isoformat() if task.created_at else None,
             "started_at": task.started_at.isoformat() if task.started_at else None,
-            "completed_at": task.completed_at.isoformat() if task.completed_at else None,
+            "completed_at": task.completed_at.isoformat()
+            if task.completed_at
+            else None,
         }

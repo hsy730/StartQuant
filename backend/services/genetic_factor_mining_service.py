@@ -70,7 +70,9 @@ def _ensure_creator_types():
         logger.debug("Individual已注册，跳过")
     # Individual for multi-objective (NSGA-II)
     try:
-        creator.create("IndividualMulti", gp.PrimitiveTree, fitness=creator.FitnessMulti)
+        creator.create(
+            "IndividualMulti", gp.PrimitiveTree, fitness=creator.FitnessMulti
+        )
     except RuntimeError:
         logger.debug("IndividualMulti已注册，跳过")
 
@@ -198,7 +200,9 @@ class GeneticFactorMiningService(BaseMiningService):
 
             mask = ~(limit_up | limit_down)
             n_excluded = (~mask).sum()
-            logger.info(f"tradable_mask构建完成: {mask.sum()}个可交易日, {n_excluded}个涨跌停日已排除")
+            logger.info(
+                f"tradable_mask构建完成: {mask.sum()}个可交易日, {n_excluded}个涨跌停日已排除"
+            )
             return mask
         except Exception as e:
             logger.warning(f"构建tradable_mask失败: {e}")
@@ -212,12 +216,18 @@ class GeneticFactorMiningService(BaseMiningService):
         _ensure_creator_types()
 
         n_factors = max(len(self.base_factor_values), 1)
-        self.pset = create_pset(n_factors, extended=self.use_extended_primitives, tradable_mask=self.tradable_mask)
+        self.pset = create_pset(
+            n_factors,
+            extended=self.use_extended_primitives,
+            tradable_mask=self.tradable_mask,
+        )
 
         self.toolbox = base.Toolbox()
         # Phase 7: deeper initial trees when extended primitives + parsimony control bloat
         init_max_depth = 5 if self.use_extended_primitives else 3
-        self.toolbox.register("expr", gp.genHalfAndHalf, pset=self.pset, min_=1, max_=init_max_depth)
+        self.toolbox.register(
+            "expr", gp.genHalfAndHalf, pset=self.pset, min_=1, max_=init_max_depth
+        )
 
         # Choose individual class based on multi-objective flag
         if self.use_nsga2:
@@ -225,21 +235,31 @@ class GeneticFactorMiningService(BaseMiningService):
         else:
             individual_class = creator.Individual
 
-        self.toolbox.register("individual", tools.initIterate, individual_class, self.toolbox.expr)
-        self.toolbox.register("population", tools.initRepeat, list, self.toolbox.individual)
+        self.toolbox.register(
+            "individual", tools.initIterate, individual_class, self.toolbox.expr
+        )
+        self.toolbox.register(
+            "population", tools.initRepeat, list, self.toolbox.individual
+        )
 
         # GP operators
         self.toolbox.register("mate", gp.cxOnePoint)
-        self.toolbox.register("mutate", gp.mutUniform, expr=self.toolbox.expr, pset=self.pset)
+        self.toolbox.register(
+            "mutate", gp.mutUniform, expr=self.toolbox.expr, pset=self.pset
+        )
 
         # Depth limiter for crossover & mutation (prevents bloat)
         self.toolbox.decorate(
             "mate",
-            gp.staticLimit(key=operator.attrgetter("height"), max_value=self.max_tree_depth),
+            gp.staticLimit(
+                key=operator.attrgetter("height"), max_value=self.max_tree_depth
+            ),
         )
         self.toolbox.decorate(
             "mutate",
-            gp.staticLimit(key=operator.attrgetter("height"), max_value=self.max_tree_depth),
+            gp.staticLimit(
+                key=operator.attrgetter("height"), max_value=self.max_tree_depth
+            ),
         )
 
         # Selection operator: NSGA-II for multi-objective, tournament otherwise
@@ -305,7 +325,9 @@ class GeneticFactorMiningService(BaseMiningService):
             if len(self.stock_pool_data) >= 2:
                 raw_fitness = self._evaluate_cross_sectional_ic(individual)[0]
             elif len(self.stock_pool_data) == 1:
-                logger.warning("Only 1 stock in pool, falling back to time-series IC evaluation")
+                logger.warning(
+                    "Only 1 stock in pool, falling back to time-series IC evaluation"
+                )
                 raw_fitness = self._evaluate_single_stock_ic(individual)[0]
             else:
                 raw_fitness = self._evaluate_single_stock_ic(individual)[0]
@@ -318,7 +340,11 @@ class GeneticFactorMiningService(BaseMiningService):
 
         # --- Diversity Penalty (Phase 3) ---
         diversity_penalty = 0.0
-        if self.diversity_penalty_coeff > 0 and hasattr(self, "_halloffame") and self._halloffame is not None:
+        if (
+            self.diversity_penalty_coeff > 0
+            and hasattr(self, "_halloffame")
+            and self._halloffame is not None
+        ):
             ind_expr = tree_to_placeholder_expr(individual)
             for hof_ind in self._halloffame:
                 hof_expr = tree_to_placeholder_expr(hof_ind)
@@ -357,7 +383,11 @@ class GeneticFactorMiningService(BaseMiningService):
 
         # --- Diversity Penalty (Phase 3, applied to IC objective only) ---
         diversity_penalty = 0.0
-        if self.diversity_penalty_coeff > 0 and hasattr(self, "_halloffame") and self._halloffame is not None:
+        if (
+            self.diversity_penalty_coeff > 0
+            and hasattr(self, "_halloffame")
+            and self._halloffame is not None
+        ):
             ind_expr = tree_to_placeholder_expr(individual)
             for hof_ind in self._halloffame:
                 hof_expr = tree_to_placeholder_expr(hof_ind)
@@ -369,7 +399,9 @@ class GeneticFactorMiningService(BaseMiningService):
         complexity = float(len(individual))
         return (ic_fitness, complexity)
 
-    def _eval_tree_on_stock(self, tree, stock_code: str, stock_base_factors: dict) -> Optional[pd.Series]:
+    def _eval_tree_on_stock(
+        self, tree, stock_code: str, stock_base_factors: dict
+    ) -> Optional[pd.Series]:
         """Compile a tree and evaluate it using one stock's base factor values.
 
         Phase 4: Results are cached per (tree_str, stock_code) within a
@@ -458,7 +490,9 @@ class GeneticFactorMiningService(BaseMiningService):
                 return code, None
 
             with ThreadPoolExecutor(max_workers=min(len(eval_codes), 10)) as executor:
-                futures = {executor.submit(_calc_one_stock, code): code for code in eval_codes}
+                futures = {
+                    executor.submit(_calc_one_stock, code): code for code in eval_codes
+                }
                 for future in as_completed(futures):
                     code, fv = future.result()
                     if fv is not None:
@@ -680,7 +714,11 @@ class GeneticFactorMiningService(BaseMiningService):
             fitness_values = tree.fitness.values
             if self.use_nsga2:
                 primary_fitness = float(fitness_values[0])
-                complexity = float(fitness_values[1]) if len(fitness_values) > 1 else float(len(tree))
+                complexity = (
+                    float(fitness_values[1])
+                    if len(fitness_values) > 1
+                    else float(len(tree))
+                )
             else:
                 primary_fitness = float(fitness_values[0])
                 complexity = float(len(tree))
@@ -785,13 +823,17 @@ class GeneticFactorMiningService(BaseMiningService):
             elites = list(map(self.toolbox.clone, elites))
 
             # ---- Selection ----
-            offspring = self.toolbox.select(population, len(population) - self.elite_size)
+            offspring = self.toolbox.select(
+                population, len(population) - self.elite_size
+            )
             offspring = list(map(self.toolbox.clone, offspring))
 
             # ---- Crossover ----
             for i in range(1, len(offspring), 2):
                 if random.random() < self.cx_prob:
-                    offspring[i - 1], offspring[i] = self.toolbox.mate(offspring[i - 1], offspring[i])
+                    offspring[i - 1], offspring[i] = self.toolbox.mate(
+                        offspring[i - 1], offspring[i]
+                    )
                     del offspring[i - 1].fitness.values
                     del offspring[i].fitness.values
 
@@ -833,8 +875,12 @@ class GeneticFactorMiningService(BaseMiningService):
                 logbook.record(gen=gen, **record)
 
             if progress:
-                record = self.stats.compile(population) if logbook is None else logbook[-1]
-                best_fit = float(record["max"]) if record.get("max") is not None else 0.0
+                record = (
+                    self.stats.compile(population) if logbook is None else logbook[-1]
+                )
+                best_fit = (
+                    float(record["max"]) if record.get("max") is not None else 0.0
+                )
                 avg_fit = float(record["avg"]) if record.get("avg") is not None else 0.0
 
                 if self.progress_callback:
@@ -923,5 +969,8 @@ def create_genetic_mining_service(
     * ``max_tree_depth`` – hard depth limit for GP trees (default 17)
     """
     return GeneticFactorMiningService(
-        base_factors=base_factors, data=data, factor_calculator=factor_calculator, **kwargs
+        base_factors=base_factors,
+        data=data,
+        factor_calculator=factor_calculator,
+        **kwargs,
     )

@@ -15,13 +15,21 @@ class CacheMetadataModel(Base):
     __tablename__ = "cache_metadata"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    cache_key: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
-    file_path: Mapped[str] = mapped_column(String(500), nullable=False)  # 缓存文件的完整路径
+    cache_key: Mapped[str] = mapped_column(
+        String(255), unique=True, nullable=False, index=True
+    )
+    file_path: Mapped[str] = mapped_column(
+        String(500), nullable=False
+    )  # 缓存文件的完整路径
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)  # 创建时间
-    ttl: Mapped[int] = mapped_column(Integer, nullable=True)  # 生存时间（秒），None表示永不过期
+    ttl: Mapped[int] = mapped_column(
+        Integer, nullable=True
+    )  # 生存时间（秒），None表示永不过期
     size: Mapped[int] = mapped_column(Integer, nullable=False)  # 缓存文件大小（字节）
     access_count: Mapped[int] = mapped_column(Integer, default=0)  # 访问次数
-    last_accessed: Mapped[datetime] = mapped_column(DateTime, nullable=True)  # 最后访问时间
+    last_accessed: Mapped[datetime] = mapped_column(
+        DateTime, nullable=True
+    )  # 最后访问时间
     expired: Mapped[bool] = mapped_column(Boolean, default=False)  # 是否已过期
 
     def to_dict(self) -> dict:
@@ -34,7 +42,9 @@ class CacheMetadataModel(Base):
             "ttl": self.ttl,
             "size": self.size,
             "access_count": self.access_count,
-            "last_accessed": self.last_accessed.isoformat() if self.last_accessed else None,
+            "last_accessed": self.last_accessed.isoformat()
+            if self.last_accessed
+            else None,
             "expired": self.expired,
             "is_expired": self.is_expired(),
         }

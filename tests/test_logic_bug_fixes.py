@@ -299,9 +299,12 @@ class TestFisherZStandardError:
         source = inspect.getsource(FactorCorrelationService._significance_tests)
         # 主路径应使用 std(daily_z)/sqrt(n) 而非 1/sqrt(n-3)
         # Rule 1: 使用 safe_divide 替代裸除法
+        # 注意：ruff format 可能将 safe_divide 调用拆为多行，需去除空白再匹配
+        source_compact = " ".join(source.split())
         assert (
-            "safe_divide(np.std(daily_z, ddof=1), np.sqrt(len(daily_z))" in source
-            or "np.std(daily_z, ddof=1) / np.sqrt(len(daily_z))" in source
+            "safe_divide( np.std(daily_z, ddof=1), np.sqrt(len(daily_z))" in source_compact
+            or "safe_divide(np.std(daily_z, ddof=1), np.sqrt(len(daily_z))" in source_compact
+            or "np.std(daily_z, ddof=1) / np.sqrt(len(daily_z))" in source_compact
         ), "Fisher z检验主路径应使用 std(z_values)/sqrt(n) 作为标准误"
 
 

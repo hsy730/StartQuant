@@ -18,7 +18,7 @@ from typing import Dict, List, Tuple, Any
 from scipy import stats as scipy_stats
 from scipy.stats import median_abs_deviation
 from backend.utils.safe_math import safe_divide
-from backend.constants import HIGH_CORRELATION_THRESHOLD, WINSORIZE_LOWER, WINSORIZE_UPPER, STATISTICAL_SIGNIFICANCE_ALPHA, HIGHLY_SIGNIFICANT_ALPHA
+from backend.constants import HIGH_CORRELATION_THRESHOLD, STATISTICAL_SIGNIFICANCE_ALPHA
 
 logger = logging.getLogger(__name__)
 
@@ -43,10 +43,15 @@ class FactorCorrelationService:
 
     def __init__(self):
         self.mode = "standard"
-        logger.info(f"因子相关性服务初始化 (Alphalens: ✅, Phik: {'✅' if PHIK_AVAILABLE else '❌ (可选)'})")
+        logger.info(
+            f"因子相关性服务初始化 (Alphalens: ✅, Phik: {'✅' if PHIK_AVAILABLE else '❌ (可选)'})"
+        )
 
     def analyze(
-        self, factor_panel: pd.DataFrame, factor_cols: List[str], config: Dict[str, Any] = None
+        self,
+        factor_panel: pd.DataFrame,
+        factor_cols: List[str],
+        config: Dict[str, Any] = None,
     ) -> Dict[str, Any]:
         """
         完整的相关性分析
@@ -94,11 +99,18 @@ class FactorCorrelationService:
         result["time_series"] = self._time_series_corr(cleaned_df, factor_cols)
 
         # Step 4: 滚动稳定性（可选，需要足够数据）
-        if len(cleaned_df.index.get_level_values("date").unique()) > config["rolling_window"] * 2:
-            result["rolling_stability"] = self._rolling_stability(cleaned_df, factor_cols, config)
+        if (
+            len(cleaned_df.index.get_level_values("date").unique())
+            > config["rolling_window"] * 2
+        ):
+            result["rolling_stability"] = self._rolling_stability(
+                cleaned_df, factor_cols, config
+            )
 
         # Step 5: 显著性检验
-        result["significance"] = self._significance_tests(result["cross_sectional"], result["time_series"])
+        result["significance"] = self._significance_tests(
+            result["cross_sectional"], result["time_series"]
+        )
 
         # Step 6: VIF多重共线性
         result["vif_analysis"] = self._vif_analysis(cleaned_df, factor_cols)
@@ -123,7 +135,9 @@ class FactorCorrelationService:
             "max_missing_ratio": 0.3,
         }
 
-    def _preprocess(self, df: pd.DataFrame, factor_cols: List[str], config: Dict) -> Tuple[pd.DataFrame, Dict]:
+    def _preprocess(
+        self, df: pd.DataFrame, factor_cols: List[str], config: Dict
+    ) -> Tuple[pd.DataFrame, Dict]:
         """
         数据预处理（频率对齐 + 缺失值 + 极值）
         自研创新点：自动检测+验证
@@ -147,14 +161,22 @@ class FactorCorrelationService:
             if len(high_missing) > 0:
                 stats["warning"] = f"高缺失率因子: {list(high_missing.index)}"
 
-            fill_cols = [c for c in factor_cols if missing[c] <= config.get("max_missing_ratio", 0.3)]
+            fill_cols = [
+                c
+                for c in factor_cols
+                if missing[c] <= config.get("max_missing_ratio", 0.3)
+            ]
 
             if fill_cols and config.get("use_knn"):
                 from sklearn.impute import KNNImputer
 
                 orig_stats = df[fill_cols].describe()
                 imputer = KNNImputer(n_neighbors=config.get("knn_neighbors", 5))
-                df[fill_cols] = pd.DataFrame(imputer.fit_transform(df[fill_cols]), index=df.index, columns=fill_cols)
+                df[fill_cols] = pd.DataFrame(
+                    imputer.fit_transform(df[fill_cols]),
+                    index=df.index,
+                    columns=fill_cols,
+                )
 
                 new_stats = df[fill_cols].describe()
 
@@ -194,7 +216,9 @@ class FactorCorrelationService:
 
         for col in factor_cols:
             median = df[col].median()
-            mad = median_abs_deviation(df[col], scale="normal")  # scale='normal' 等价于 * 1.4826
+            mad = median_abs_deviation(
+                df[col], scale="normal"
+            )  # scale='normal' 等价于 * 1.4826
             if mad < 1e-10:
                 continue  # 近似常数列，无需去极值
             lower, upper = median - n_sigma * mad, median + n_sigma * mad
@@ -202,14 +226,22 @@ class FactorCorrelationService:
             df[col] = df[col].clip(lower, upper)
             total_clipped += int(n_clip)
 
-        stats["winsorization"] = {"method": "MAD", "n_sigma": n_sigma, "clipped": total_clipped}
+        stats["winsorization"] = {
+            "method": "MAD",
+            "n_sigma": n_sigma,
+            "clipped": total_clipped,
+        }
         stats["final_shape"] = df.shape
 
         return df, stats
 
     def _detect_frequency(self, df: pd.DataFrame) -> Dict[str, str]:
         """检测数据频率"""
-        dates = df.index.get_level_values(0) if isinstance(df.index, pd.MultiIndex) else df.index
+        dates = (
+            df.index.get_level_values(0)
+            if isinstance(df.index, pd.MultiIndex)
+            else df.index
+        )
         median_diff = pd.to_datetime(dates).diff().dropna().median()
 
         if median_diff <= pd.Timedelta(days=1):
@@ -223,7 +255,9 @@ class FactorCorrelationService:
 
     def _align_frequency(self, df, freq_info):
         """对齐到最低频率"""
-        lowest = max(freq_info.values(), key=["daily", "weekly", "monthly", "quarterly"].index)
+        lowest = max(
+            freq_info.values(), key=["daily", "weekly", "monthly", "quarterly"].index
+        )
 
         if not isinstance(df.index, pd.MultiIndex):
             return df
@@ -289,7 +323,9 @@ class FactorCorrelationService:
             "method_consistency": {
                 "mean_diff": float(np.mean(method_diffs)),
                 "recommendation": (
-                    "存在非线性关系，优先参考Spearman" if np.mean(method_diffs) > 0.15 else "线性假设成立"
+                    "存在非线性关系，优先参考Spearman"
+                    if np.mean(method_diffs) > 0.15
+                    else "线性假设成立"
                 ),
             },
         }
@@ -328,7 +364,9 @@ class FactorCorrelationService:
                 try:
                     daily = df.xs(d, level="date")[factor_cols]
                     if len(daily) >= 10:
-                        c = daily.corr(method="spearman").values[np.triu_indices_from(daily.corr(), k=1)]
+                        c = daily.corr(method="spearman").values[
+                            np.triu_indices_from(daily.corr(), k=1)
+                        ]
                         corrs.extend(c.tolist())
                 except (KeyError, ValueError):
                     continue
@@ -351,7 +389,9 @@ class FactorCorrelationService:
 
         rdf = pd.DataFrame(results)
         stability = 1.0 - safe_divide(
-            float(rdf["mean_abs_corr"].std()), float(rdf["mean_abs_corr"].mean()), default=0.0
+            float(rdf["mean_abs_corr"].std()),
+            float(rdf["mean_abs_corr"].mean()),
+            default=0.0,
         )
 
         return {
@@ -388,7 +428,11 @@ class FactorCorrelationService:
                                         continue
                                 if len(daily_z) >= 3:
                                     z_val = np.mean(daily_z)
-                                    z_se = safe_divide(np.std(daily_z, ddof=1), np.sqrt(len(daily_z)), default=None)
+                                    z_se = safe_divide(
+                                        np.std(daily_z, ddof=1),
+                                        np.sqrt(len(daily_z)),
+                                        default=None,
+                                    )
                                     if z_se is None or z_se < 1e-10:
                                         # 标准误为零/极小 → 因子相关性极其稳定，使用理论标准误
                                         z_se = 1 / np.sqrt(len(daily_z))
@@ -404,7 +448,11 @@ class FactorCorrelationService:
 
                             if p_value < 0.05:
                                 sig_pairs.append(
-                                    {"pair": f"{f1}-{f2}", "corr": round(val, 4), "p_value": round(p_value, 6)}
+                                    {
+                                        "pair": f"{f1}-{f2}",
+                                        "corr": round(val, 4),
+                                        "p_value": round(p_value, 6),
+                                    }
                                 )
 
             tests.append({"type": "t_test", "significant": sig_pairs[:20]})
@@ -429,7 +477,13 @@ class FactorCorrelationService:
                             "factor": col,
                             "vif": round(v, 2) if np.isfinite(v) else None,
                             "level": (
-                                "severe" if not np.isfinite(v) or v > 10 else ("high" if v > 5 else ("moderate" if v > 2.5 else "low"))
+                                "severe"
+                                if not np.isfinite(v) or v > 10
+                                else (
+                                    "high"
+                                    if v > 5
+                                    else ("moderate" if v > 2.5 else "low")
+                                )
                             ),
                         }
                     )
@@ -443,12 +497,16 @@ class FactorCorrelationService:
                 "max_vif": max(vs) if vs else np.nan,
                 "has_issue": max(vs) > 5 if vs else False,
                 "warnings": (
-                    [f"严重共线性(VIF>10): {[x['factor'] for x in vif_data if x['vif'] > 10]}"]
+                    [
+                        f"严重共线性(VIF>10): {[x['factor'] for x in vif_data if x['vif'] > 10]}"
+                    ]
                     if any(x["vif"] > 10 for x in vif_data)
                     else []
                 )
                 + (
-                    [f"高度共线性(5<VIF≤10): {[x['factor'] for x in vif_data if 5 < x['vif'] <= 10]}"]
+                    [
+                        f"高度共线性(5<VIF≤10): {[x['factor'] for x in vif_data if 5 < x['vif'] <= 10]}"
+                    ]
                     if any(5 < x["vif"] <= 10 for x in vif_data)
                     else []
                 ),
@@ -458,7 +516,9 @@ class FactorCorrelationService:
 
     # ==================== P2-3: RMS相关性指标 ====================
 
-    def calculate_rms_correlation(self, correlation_matrix: pd.DataFrame) -> Dict[str, Any]:
+    def calculate_rms_correlation(
+        self, correlation_matrix: pd.DataFrame
+    ) -> Dict[str, Any]:
         """
         计算RMS(均方根)相关性 — 多因子组合分散化评估指标
 
@@ -502,13 +562,21 @@ class FactorCorrelationService:
         diversification_score = max(0.0, (1.0 - rms_corr) * 100)
 
         if rms_corr < 0.1:
-            interpretation = f"极低相关性(RMS={rms_corr:.3f})，因子间高度独立，组合分散性优秀"
+            interpretation = (
+                f"极低相关性(RMS={rms_corr:.3f})，因子间高度独立，组合分散性优秀"
+            )
         elif rms_corr < 0.25:
-            interpretation = f"低相关性(RMS={rms_corr:.3f})，因子间基本独立，组合分散性良好"
+            interpretation = (
+                f"低相关性(RMS={rms_corr:.3f})，因子间基本独立，组合分散性良好"
+            )
         elif rms_corr < 0.4:
-            interpretation = f"中等相关性(RMS={rms_corr:.3f})，部分因子存在重叠，建议关注"
+            interpretation = (
+                f"中等相关性(RMS={rms_corr:.3f})，部分因子存在重叠，建议关注"
+            )
         elif rms_corr < 0.6:
-            interpretation = f"较高相关性(RMS={rms_corr:.3f})，因子重叠明显，考虑去重或降维"
+            interpretation = (
+                f"较高相关性(RMS={rms_corr:.3f})，因子重叠明显，考虑去重或降维"
+            )
         else:
             interpretation = f"高相关性(RMS={rms_corr:.3f})，因子严重重叠，强烈建议去重"
 
@@ -553,7 +621,11 @@ class FactorCorrelationService:
                             )
                         elif abs_val < 0.2:
                             interp["low_correlation_pairs"].append(
-                                {"pair": f"{f1} vs {f2}", "correlation": round(val, 4), "note": "独立性良好"}
+                                {
+                                    "pair": f"{f1} vs {f2}",
+                                    "correlation": round(val, 4),
+                                    "note": "独立性良好",
+                                }
                             )
 
             # 方法一致性检查
@@ -566,7 +638,9 @@ class FactorCorrelationService:
         # 滚动稳定性解读
         rs = result.get("rolling_stability", {})
         if rs.get("volatile"):
-            interp["nonlinear_warnings"].append("因子相关性随时间剧烈波动，静态平均值可能具有误导性")
+            interp["nonlinear_warnings"].append(
+                "因子相关性随时间剧烈波动，静态平均值可能具有误导性"
+            )
 
         # VIF解读
         vif = result.get("vif_analysis", {})
@@ -582,7 +656,9 @@ class FactorCorrelationService:
         elif n_high <= 2:
             interp["overall_assessment"] = f"⚠️ 存在{n_high}对高相关因子，需关注组合权重"
         else:
-            interp["overall_assessment"] = f"❌ 存在{n_high}对高相关因子，强烈建议正交化或筛选"
+            interp["overall_assessment"] = (
+                f"❌ 存在{n_high}对高相关因子，强烈建议正交化或筛选"
+            )
 
         return interp
 
@@ -627,7 +703,9 @@ class FactorCorrelationService:
                 "missing_pct": round(s.isna().mean(), 4),
                 "n_unique": s.nunique(),
                 "extreme_pct": (
-                    float(((s < s.quantile(0.01)) | (s > s.quantile(0.99))).mean()) if s.dtype != "object" else None
+                    float(((s < s.quantile(0.01)) | (s > s.quantile(0.99))).mean())
+                    if s.dtype != "object"
+                    else None
                 ),
             }
         return quality
@@ -645,7 +723,11 @@ class FactorCorrelationService:
             分析结果
         """
         if categorical_cols is None:
-            categorical_cols = [c for c in factor_cols if df[c].dtype == "object" or df[c].nunique() < 10]
+            categorical_cols = [
+                c
+                for c in factor_cols
+                if df[c].dtype == "object" or df[c].nunique() < 10
+            ]
 
         interval_cols = [c for c in factor_cols if c not in categorical_cols]
 
@@ -684,7 +766,11 @@ class FactorCorrelationService:
                 except (ValueError, TypeError):
                     continue
 
-        return {"method": "scipy_fallback", "results": results, "note": "Phik未安装，使用ANOVA作为替代"}
+        return {
+            "method": "scipy_fallback",
+            "results": results,
+            "note": "Phik未安装，使用ANOVA作为替代",
+        }
 
 
 # 全局实例

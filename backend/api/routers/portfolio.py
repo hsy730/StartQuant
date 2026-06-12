@@ -68,7 +68,9 @@ async def optimize_weights(request: OptimizeWeightsRequest):
         import numpy as np
 
         # 获取股票数据
-        stock_data = data_service.get_stock_data(request.stock_code, request.start_date, request.end_date)
+        stock_data = data_service.get_stock_data(
+            request.stock_code, request.start_date, request.end_date
+        )
 
         if stock_data is None or len(stock_data) == 0:
             raise HTTPException(status_code=404, detail="未获取到数据")
@@ -89,7 +91,9 @@ async def optimize_weights(request: OptimizeWeightsRequest):
         factor_values = {}
         for factor_name, factor_def in factor_defs.items():
             try:
-                values = factor_service.calculator.calculate(stock_data.copy(), factor_def.code)
+                values = factor_service.calculator.calculate(
+                    stock_data.copy(), factor_def.code
+                )
                 if values is not None and len(values.dropna()) > 0:
                     factor_values[factor_name] = values
             except Exception as e:
@@ -112,7 +116,9 @@ async def optimize_weights(request: OptimizeWeightsRequest):
         # 归一化权重
         total_weight = sum(weights.values())
         logger.debug(f"归一化前总权重: {total_weight:.4f}")
-        weights = {k: safe_divide(v, total_weight, default=0.0) for k, v in weights.items()}
+        weights = {
+            k: safe_divide(v, total_weight, default=0.0) for k, v in weights.items()
+        }
         logger.debug(f"归一化后权重: {weights}")
         logger.debug(f"最终权重总和: {sum(weights.values()):.4f}")
 
@@ -131,7 +137,9 @@ async def optimize_weights(request: OptimizeWeightsRequest):
                 valid = factor_df[factor_name].notna()
                 weighted_sum[valid] += factor_df.loc[valid, factor_name] * weight
                 weight_sum[valid] += weight
-        weighted_factor = safe_series_divide(weighted_sum, weight_sum, fill_value=np.nan)
+        weighted_factor = safe_series_divide(
+            weighted_sum, weight_sum, fill_value=np.nan
+        )
 
         weighted_factor = weighted_factor.dropna()
 
@@ -139,7 +147,10 @@ async def optimize_weights(request: OptimizeWeightsRequest):
         common_index = weighted_factor.index.intersection(returns.index)
 
         if len(common_index) < 3:
-            raise HTTPException(status_code=400, detail=f"有效数据点太少（{len(common_index)}个），无法计算组合指标")
+            raise HTTPException(
+                status_code=400,
+                detail=f"有效数据点太少（{len(common_index)}个），无法计算组合指标",
+            )
 
         aligned_factor = weighted_factor.loc[common_index]
         aligned_returns = returns.loc[common_index]
@@ -152,13 +163,19 @@ async def optimize_weights(request: OptimizeWeightsRequest):
         if len(aligned_factor) > 3:
             # 计算组合IC（使用Spearman，符合规则7.1）
             portfolio_ic_result = spearmanr(aligned_factor, aligned_returns)
-            portfolio_ic = float(portfolio_ic_result[0]) if not np.isnan(portfolio_ic_result[0]) else None
+            portfolio_ic = (
+                float(portfolio_ic_result[0])
+                if not np.isnan(portfolio_ic_result[0])
+                else None
+            )
 
             # 计算组合收益率（因子的平均收益）
             portfolio_return = aligned_returns.mean()
 
             # 计算组合IR (IC均值 / IC标准差)（使用Spearman，符合规则7.1/7.30）
-            ic_series = calculate_rolling_ic(aligned_factor, aligned_returns, window=20, method="spearman")
+            ic_series = calculate_rolling_ic(
+                aligned_factor, aligned_returns, window=20, method="spearman"
+            )
             ic_mean = ic_series.mean()
             ic_std = ic_series.std()
             portfolio_ir = safe_ir(float(ic_mean), float(ic_std), default=None)
@@ -181,8 +198,10 @@ async def optimize_weights(request: OptimizeWeightsRequest):
 
         # 计算综合得分（使用优化后的权重）
         try:
-            composite_score_result = portfolio_analysis_service.calculate_combined_factor_score(
-                factor_data=factor_values, weights=weights, normalize=True
+            composite_score_result = (
+                portfolio_analysis_service.calculate_combined_factor_score(
+                    factor_data=factor_values, weights=weights, normalize=True
+                )
             )
 
             # 转换为列表格式
@@ -241,7 +260,9 @@ async def calculate_composite_score(request: CompositeScoreRequest):
         from backend.core.database import get_db
 
         # 获取股票数据
-        stock_data = data_service.get_stock_data(request.stock_code, request.start_date, request.end_date)
+        stock_data = data_service.get_stock_data(
+            request.stock_code, request.start_date, request.end_date
+        )
 
         if stock_data is None or len(stock_data) == 0:
             raise HTTPException(status_code=404, detail="未获取到数据")
@@ -262,7 +283,9 @@ async def calculate_composite_score(request: CompositeScoreRequest):
         factor_data = {}
         for factor_name, factor_def in factor_defs.items():
             try:
-                values = factor_service.calculator.calculate(stock_data.copy(), factor_def.code)
+                values = factor_service.calculator.calculate(
+                    stock_data.copy(), factor_def.code
+                )
                 if values is not None:
                     factor_data[factor_name] = values
             except Exception as e:
@@ -282,7 +305,10 @@ async def calculate_composite_score(request: CompositeScoreRequest):
 
         # 转换为列表
         if hasattr(result, "index"):
-            score_list = {"dates": result.index.astype(str).tolist(), "values": result.values.tolist()}
+            score_list = {
+                "dates": result.index.astype(str).tolist(),
+                "values": result.values.tolist(),
+            }
         else:
             score_list = {"values": list(result)}
 
@@ -306,7 +332,9 @@ async def compare_weight_methods(request: CompareMethodsRequest):
         import numpy as np
 
         # 获取股票数据
-        stock_data = data_service.get_stock_data(request.stock_code, request.start_date, request.end_date)
+        stock_data = data_service.get_stock_data(
+            request.stock_code, request.start_date, request.end_date
+        )
 
         if stock_data is None or len(stock_data) == 0:
             raise HTTPException(status_code=404, detail="未获取到数据")
@@ -327,7 +355,9 @@ async def compare_weight_methods(request: CompareMethodsRequest):
         factor_data = {}
         for factor_name, factor_def in factor_defs.items():
             try:
-                values = factor_service.calculator.calculate(stock_data.copy(), factor_def.code)
+                values = factor_service.calculator.calculate(
+                    stock_data.copy(), factor_def.code
+                )
                 if values is not None and len(values.dropna()) > 0:
                     factor_data[factor_name] = values
             except Exception as e:
@@ -365,19 +395,28 @@ async def compare_weight_methods(request: CompareMethodsRequest):
                 for factor_name, weight in weights.items():
                     if factor_name in factor_df.columns:
                         valid = factor_df[factor_name].notna()
-                        weighted_sum[valid] += factor_df.loc[valid, factor_name] * weight
+                        weighted_sum[valid] += (
+                            factor_df.loc[valid, factor_name] * weight
+                        )
                         weight_sum[valid] += weight
-                weighted_factor = safe_series_divide(weighted_sum, weight_sum, fill_value=np.nan)
+                weighted_factor = safe_series_divide(
+                    weighted_sum, weight_sum, fill_value=np.nan
+                )
 
                 weighted_factor = weighted_factor.dropna()
 
                 # 3. 计算组合因子的IC/IR统计
-                aligned = pd.DataFrame({"factor": weighted_factor, "returns": returns}).dropna()
+                aligned = pd.DataFrame(
+                    {"factor": weighted_factor, "returns": returns}
+                ).dropna()
 
                 if len(aligned) >= 20:
                     # 计算IC时间序列（使用Spearman，符合规则7.1/7.30）
                     ic_series = calculate_rolling_ic(
-                        aligned["factor"], aligned["returns"], window=20, method="spearman"
+                        aligned["factor"],
+                        aligned["returns"],
+                        window=20,
+                        method="spearman",
                     )
 
                     # 计算统计指标
@@ -392,9 +431,15 @@ async def compare_weight_methods(request: CompareMethodsRequest):
                         "ic_mean": float(ic_mean),
                         "ic_std": float(ic_std),
                         "ir": float(ir) if ir is not None else None,
-                        "ic_annualized": float(ic_mean * np.sqrt(252)),  # 年化IC（非真实收益率）
-                        "ic_volatility_annualized": float(ic_std * np.sqrt(252)),  # 年化IC标准差（非真实波动率）
-                        "information_ratio": float(ir) if ir is not None else None,  # IR（信息比率，非夏普比率）
+                        "ic_annualized": float(
+                            ic_mean * np.sqrt(252)
+                        ),  # 年化IC（非真实收益率）
+                        "ic_volatility_annualized": float(
+                            ic_std * np.sqrt(252)
+                        ),  # 年化IC标准差（非真实波动率）
+                        "information_ratio": float(ir)
+                        if ir is not None
+                        else None,  # IR（信息比率，非夏普比率）
                     }
                 else:
                     results[method] = {

@@ -165,7 +165,9 @@ class FactorOrchestrator:
 
         try:
             # ===== Stage 0: 因子数据准备 =====
-            stage0 = self._stage_compute_factor(expression, stock_codes, start_date, end_date, _factor_name)
+            stage0 = self._stage_compute_factor(
+                expression, stock_codes, start_date, end_date, _factor_name
+            )
             result["stages"]["compute_factor"] = stage0
             if not stage0.passed:
                 result["status"] = "ERROR"
@@ -182,7 +184,10 @@ class FactorOrchestrator:
                 stage1 = self._stage_lookahead_detection(shared_data)
                 result["stages"]["lookahead_detection"] = stage1
 
-                if stage1.status == PipelineStatus.REJECTED and self.config.fail_fast_on_bias:
+                if (
+                    stage1.status == PipelineStatus.REJECTED
+                    and self.config.fail_fast_on_bias
+                ):
                     result["status"] = "REJECTED"
                     result["summary"] = {
                         "verdict": "REJECTED",
@@ -256,9 +261,15 @@ class FactorOrchestrator:
                 )
 
             # ===== 汇总判定 =====
-            result["status"], result["summary"] = self._determine_overall_status(result["stages"])
-            result["report_markdown"] = self._generate_markdown_report(result, shared_data)
-            result["report_structured"] = self._generate_structured_report(result, shared_data)
+            result["status"], result["summary"] = self._determine_overall_status(
+                result["stages"]
+            )
+            result["report_markdown"] = self._generate_markdown_report(
+                result, shared_data
+            )
+            result["report_structured"] = self._generate_structured_report(
+                result, shared_data
+            )
 
         except Exception as e:
             logger.error(f"[FactorOrchestrator] 流水线异常: {e}", exc_info=True)
@@ -315,12 +326,16 @@ class FactorOrchestrator:
                         results[factor_name] = result
                         ic_stage = result.get("stages", {}).get("ic_analysis")
                         ic_result = (
-                            ic_stage.result if isinstance(ic_stage, PipelineStageResult) and ic_stage.result else {}
+                            ic_stage.result
+                            if isinstance(ic_stage, PipelineStageResult)
+                            and ic_stage.result
+                            else {}
                         )
                         bias_stage = result.get("stages", {}).get("lookahead_detection")
                         bias_result = (
                             bias_stage.result
-                            if isinstance(bias_stage, PipelineStageResult) and bias_stage.result
+                            if isinstance(bias_stage, PipelineStageResult)
+                            and bias_stage.result
                             else {}
                         )
                         summary_rows.append(
@@ -328,12 +343,16 @@ class FactorOrchestrator:
                                 "factor_name": factor_name,
                                 "expression": expr[:50],
                                 "status": result["status"],
-                                "score": result.get("summary", {}).get("overall_score", 0),
-                                "ic_mean": ic_result.get("ic_mean") if ic_result.get("ic_mean") is not None else 0,
+                                "score": result.get("summary", {}).get(
+                                    "overall_score", 0
+                                ),
+                                "ic_mean": ic_result.get("ic_mean")
+                                if ic_result.get("ic_mean") is not None
+                                else 0,
                                 "ir": ic_result.get("ir"),
                                 "risk_level": bias_result.get("risk_level", "N/A"),
-                        }
-                    )
+                            }
+                        )
                     except Exception as e:
                         logger.warning(f"并行验证失败: {expr}, 错误: {e}")
                         results[factor_name] = {"status": "ERROR", "error": str(e)}
@@ -346,8 +365,8 @@ class FactorOrchestrator:
                                 "ic_mean": 0,
                                 "ir": 0,
                                 "risk_level": "ERROR",
-                        }
-                    )
+                            }
+                        )
         else:
             # 顺序执行
             for expr in expressions:
@@ -362,10 +381,17 @@ class FactorOrchestrator:
                     )
                     results[factor_name] = result
                     ic_stage = result.get("stages", {}).get("ic_analysis")
-                    ic_result = ic_stage.result if isinstance(ic_stage, PipelineStageResult) and ic_stage.result else {}
+                    ic_result = (
+                        ic_stage.result
+                        if isinstance(ic_stage, PipelineStageResult) and ic_stage.result
+                        else {}
+                    )
                     bias_stage = result.get("stages", {}).get("lookahead_detection")
                     bias_result = (
-                        bias_stage.result if isinstance(bias_stage, PipelineStageResult) and bias_stage.result else {}
+                        bias_stage.result
+                        if isinstance(bias_stage, PipelineStageResult)
+                        and bias_stage.result
+                        else {}
                     )
                     summary_rows.append(
                         {
@@ -373,7 +399,9 @@ class FactorOrchestrator:
                             "expression": expr[:50],
                             "status": result["status"],
                             "score": result.get("summary", {}).get("overall_score", 0),
-                            "ic_mean": ic_result.get("ic_mean") if ic_result.get("ic_mean") is not None else 0,
+                            "ic_mean": ic_result.get("ic_mean")
+                            if ic_result.get("ic_mean") is not None
+                            else 0,
                             "ir": ic_result.get("ir"),
                             "risk_level": bias_result.get("risk_level", "N/A"),
                         }
@@ -513,7 +541,11 @@ class FactorOrchestrator:
                         stage_name="lookahead_detection",
                         status=PipelineStatus.WARNING,
                         duration_seconds=time.time() - t0,
-                        result={"has_bias": False, "risk_level": "unknown", "reason": "横截面数据不足"},
+                        result={
+                            "has_bias": False,
+                            "risk_level": "unknown",
+                            "reason": "横截面数据不足",
+                        },
                         warnings=["横截面数据不足50条，无法可靠检测未来函数"],
                     )
 
@@ -543,7 +575,11 @@ class FactorOrchestrator:
                         stage_name="lookahead_detection",
                         status=PipelineStatus.WARNING,
                         duration_seconds=time.time() - t0,
-                        result={"has_bias": False, "risk_level": "unknown", "reason": "样本不足"},
+                        result={
+                            "has_bias": False,
+                            "risk_level": "unknown",
+                            "reason": "样本不足",
+                        },
                         warnings=["样本数不足30，无法可靠检测未来函数"],
                     )
 
@@ -574,9 +610,13 @@ class FactorOrchestrator:
                     "summary": detection_result.summary,
                     "recommendations": detection_result.recommendations,
                     "checks_count": len(detection_result.checks),
-                    "failed_checks": sum(1 for c in detection_result.checks if not c.passed),
+                    "failed_checks": sum(
+                        1 for c in detection_result.checks if not c.passed
+                    ),
                 },
-                warnings=detection_result.recommendations if not detection_result.has_bias else [],
+                warnings=detection_result.recommendations
+                if not detection_result.has_bias
+                else [],
             )
         except Exception as e:
             logger.warning(f"未来函数检测阶段异常: {e}")
@@ -588,7 +628,9 @@ class FactorOrchestrator:
                 warnings=[f"检测异常: {e}"],
             )
 
-    def _stage_ic_analysis(self, shared_data: Dict, existing_factors: Optional[Dict]) -> PipelineStageResult:
+    def _stage_ic_analysis(
+        self, shared_data: Dict, existing_factors: Optional[Dict]
+    ) -> PipelineStageResult:
         """Stage 2: IC/IR 分析"""
         t0 = time.time()
         try:
@@ -598,7 +640,9 @@ class FactorOrchestrator:
             factor_name = shared_data["factor_name"]
             stock_codes = list(factor_data.keys())
 
-            ic_ir_result = analysis_service.calculate_ic_ir(factor_data, [factor_name], stock_codes)
+            ic_ir_result = analysis_service.calculate_ic_ir(
+                factor_data, [factor_name], stock_codes
+            )
 
             # calculate_ic_ir 返回 {"ic_stats": {factor_key: {...}}, "monthly_ic": ..., "rolling_ir": ...}
             # 多股票模式下 key 格式为 {factor_name}_{ic_type}_{period}，单股票模式为 factor_name
@@ -617,15 +661,23 @@ class FactorOrchestrator:
 
             # 判定是否通过
             if ic_mean is not None:
-                status = PipelineStatus.PASSED if abs(ic_mean) >= self.config.ic_threshold else PipelineStatus.WARNING
+                status = (
+                    PipelineStatus.PASSED
+                    if abs(ic_mean) >= self.config.ic_threshold
+                    else PipelineStatus.WARNING
+                )
             else:
                 status = PipelineStatus.WARNING  # IC不可计算时标记为警告
 
             warnings = []
             if ic_mean is not None and abs(ic_mean) < self.config.ic_threshold:
-                warnings.append(f"IC均值({ic_mean:.4f})低于阈值({self.config.ic_threshold})")
+                warnings.append(
+                    f"IC均值({ic_mean:.4f})低于阈值({self.config.ic_threshold})"
+                )
             if ic_mean is not None and abs(ic_mean) > 0.15:
-                warnings.append(f"IC均值({ic_mean:.4f})异常偏高，请核查是否存在未来函数")
+                warnings.append(
+                    f"IC均值({ic_mean:.4f})异常偏高，请核查是否存在未来函数"
+                )
 
             return PipelineStageResult(
                 stage_name="ic_analysis",
@@ -634,8 +686,12 @@ class FactorOrchestrator:
                 result={
                     "ic_mean": ic_mean,
                     "ir": ir,
-                    "rank_ic": float(factor_ic.get("Rank_IC均值")) if factor_ic.get("Rank_IC均值") is not None else None,
-                    "full_result": ic_ir_result if self.config.include_intermediate_results else None,
+                    "rank_ic": float(factor_ic.get("Rank_IC均值"))
+                    if factor_ic.get("Rank_IC均值") is not None
+                    else None,
+                    "full_result": ic_ir_result
+                    if self.config.include_intermediate_results
+                    else None,
                 },
                 warnings=warnings,
             )
@@ -681,7 +737,9 @@ class FactorOrchestrator:
                     stage_name="alphalens_analysis",
                     status=PipelineStatus.WARNING,
                     duration_seconds=time.time() - t0,
-                    warnings=[f"有效股票数({len(factor_values_dict)})不足，横截面分析可能不可靠"],
+                    warnings=[
+                        f"有效股票数({len(factor_values_dict)})不足，横截面分析可能不可靠"
+                    ],
                     result=None,
                 )
 
@@ -697,7 +755,9 @@ class FactorOrchestrator:
                 status=PipelineStatus.PASSED,
                 duration_seconds=time.time() - t0,
                 result=(
-                    alpha_result if self.config.include_intermediate_results else self._summarize_alpha(alpha_result)
+                    alpha_result
+                    if self.config.include_intermediate_results
+                    else self._summarize_alpha(alpha_result)
                 ),
             )
         except Exception as e:
@@ -713,7 +773,9 @@ class FactorOrchestrator:
         """Stage 4: 分组回测"""
         t0 = time.time()
         try:
-            from backend.services.factor_return_analysis_service import factor_return_analysis_service
+            from backend.services.factor_return_analysis_service import (
+                factor_return_analysis_service,
+            )
 
             factor_data = shared_data["factor_data"]
             factor_name = shared_data["factor_name"]
@@ -733,11 +795,13 @@ class FactorOrchestrator:
                 )
 
             # 同时获取累计收益
-            cumulative_result = factor_return_analysis_service.calculate_cumulative_returns(
-                factor_data=factor_data,
-                factor_name=factor_name,
-                price_column="close",
-                long_short=True,
+            cumulative_result = (
+                factor_return_analysis_service.calculate_cumulative_returns(
+                    factor_data=factor_data,
+                    factor_name=factor_name,
+                    price_column="close",
+                    long_short=True,
+                )
             )
 
             return PipelineStageResult(
@@ -746,7 +810,9 @@ class FactorOrchestrator:
                 duration_seconds=time.time() - t0,
                 result={
                     "quantile_returns": quantile_result,
-                    "cumulative_returns": cumulative_result if "error" not in cumulative_result else None,
+                    "cumulative_returns": cumulative_result
+                    if "error" not in cumulative_result
+                    else None,
                 },
             )
         except Exception as e:
@@ -823,7 +889,9 @@ class FactorOrchestrator:
 
     # ==================== 汇总 & 报告 ====================
 
-    def _determine_overall_status(self, stages: Dict[str, PipelineStageResult]) -> Tuple[str, Dict]:
+    def _determine_overall_status(
+        self, stages: Dict[str, PipelineStageResult]
+    ) -> Tuple[str, Dict]:
         """根据各阶段结果确定总体状态"""
         has_rejected = any(s.status == PipelineStatus.REJECTED for s in stages.values())
         has_failed = any(s.status == PipelineStatus.FAILED for s in stages.values())
@@ -939,8 +1007,20 @@ class FactorOrchestrator:
                     lines.append(f"- :warning: {w}")
             if stage.result and isinstance(stage.result, dict):
                 # 显示关键指标
-                keys_to_show = ["has_bias", "risk_level", "risk_score", "ic_mean", "ir", "rank_ic", "n_stocks"]
-                shown = [f"{k}={v}" for k, v in stage.result.items() if k in keys_to_show and v is not None]
+                keys_to_show = [
+                    "has_bias",
+                    "risk_level",
+                    "risk_score",
+                    "ic_mean",
+                    "ir",
+                    "rank_ic",
+                    "n_stocks",
+                ]
+                shown = [
+                    f"{k}={v}"
+                    for k, v in stage.result.items()
+                    if k in keys_to_show and v is not None
+                ]
                 if shown:
                     lines.append(f"- 关键指标: {', '.join(shown)}")
             lines.append("")
@@ -981,9 +1061,18 @@ class FactorOrchestrator:
             }
             # 提取关键数值供前端图表使用
             if stage.result and isinstance(stage.result, dict):
-                numeric_keys = ["ic_mean", "ir", "rank_ic", "risk_score", "has_bias", "n_stocks"]
+                numeric_keys = [
+                    "ic_mean",
+                    "ir",
+                    "rank_ic",
+                    "risk_score",
+                    "has_bias",
+                    "n_stocks",
+                ]
                 structured["stages"][name]["metrics"] = {
-                    k: v for k, v in stage.result.items() if k in numeric_keys and isinstance(v, (int, float, bool))
+                    k: v
+                    for k, v in stage.result.items()
+                    if k in numeric_keys and isinstance(v, (int, float, bool))
                 }
 
         return structured
@@ -1000,7 +1089,12 @@ class FactorOrchestrator:
     def _derive_factor_name(expression: str) -> str:
         """从表达式派生因子名称"""
         # 取前40字符，替换特殊字符
-        name = expression.replace("*", "_x_").replace("/", "_div_").replace("(", "").replace(")", "")[:40]
+        name = (
+            expression.replace("*", "_x_")
+            .replace("/", "_div_")
+            .replace("(", "")
+            .replace(")", "")[:40]
+        )
         name = "".join(c if c.isalnum() or c == "_" else "_" for c in name)
         return name.strip("_") or "unnamed_factor"
 
@@ -1017,7 +1111,15 @@ class FactorOrchestrator:
                     summary[key] = {
                         k: v
                         for k, v in section.items()
-                        if k in ("mean_ic", "std_ic", "ir", "mean_return_q1", "mean_return_q5") or "ic_" in k.lower()
+                        if k
+                        in (
+                            "mean_ic",
+                            "std_ic",
+                            "ir",
+                            "mean_return_q1",
+                            "mean_return_q5",
+                        )
+                        or "ic_" in k.lower()
                     }
         return summary
 

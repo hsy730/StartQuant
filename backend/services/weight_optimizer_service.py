@@ -19,7 +19,14 @@ class WeightOptimizer:
     """投资组合权重优化器"""
 
     # 支持的权重计算方法
-    METHODS = ["equal_weight", "ic_weight", "ir_weight", "max_sharpe", "min_variance", "risk_parity"]
+    METHODS = [
+        "equal_weight",
+        "ic_weight",
+        "ir_weight",
+        "max_sharpe",
+        "min_variance",
+        "risk_parity",
+    ]
 
     def calculate_weights(
         self,
@@ -53,9 +60,13 @@ class WeightOptimizer:
         if method == "equal_weight":
             return self._equal_weight(factor_names)
         elif method == "ic_weight":
-            return self._ic_weight(factor_values, factor_names, returns, factor_data_dict)
+            return self._ic_weight(
+                factor_values, factor_names, returns, factor_data_dict
+            )
         elif method == "ir_weight":
-            return self._ir_weight(factor_values, factor_names, returns, factor_data_dict)
+            return self._ir_weight(
+                factor_values, factor_names, returns, factor_data_dict
+            )
         elif method == "max_sharpe":
             return self._max_sharpe(factor_values, factor_names, returns)
         elif method == "min_variance":
@@ -72,7 +83,9 @@ class WeightOptimizer:
         weights = {name: weight for name in factor_names}
         return {"weights": weights, "method": "equal_weight"}
 
-    def _ic_weight(self, factor_values, factor_names, returns, factor_data_dict=None) -> Dict:
+    def _ic_weight(
+        self, factor_values, factor_names, returns, factor_data_dict=None
+    ) -> Dict:
         """IC加权 — 优先使用alphalens横截面Spearman IC，回退到自实现（规则7.1/7.13）"""
         if returns is None or len(returns.dropna()) < 20:
             logger.debug("IC加权数据不足，回退到等权")
@@ -89,7 +102,9 @@ class WeightOptimizer:
                     continue
 
                 # 回退：自实现IC计算
-                aligned_data = pd.DataFrame({"factor": values, "returns": returns}).dropna()
+                aligned_data = pd.DataFrame(
+                    {"factor": values, "returns": returns}
+                ).dropna()
 
                 if len(aligned_data) > 10:
                     if isinstance(aligned_data.index, pd.MultiIndex):
@@ -104,9 +119,16 @@ class WeightOptimizer:
                         from backend.utils.ic_calculator import calculate_rolling_ic
 
                         rolling_ic = calculate_rolling_ic(
-                            aligned_data["factor"], aligned_data["returns"], window=20, method="spearman"
+                            aligned_data["factor"],
+                            aligned_data["returns"],
+                            window=20,
+                            method="spearman",
                         )
-                        ic = float(rolling_ic.dropna().mean()) if len(rolling_ic.dropna()) > 0 else 0.0
+                        ic = (
+                            float(rolling_ic.dropna().mean())
+                            if len(rolling_ic.dropna()) > 0
+                            else 0.0
+                        )
 
                     ic_values[factor_name] = abs(ic) if not np.isnan(ic) else 0.0
                 else:
@@ -118,10 +140,15 @@ class WeightOptimizer:
         if total_ic < 1e-10:
             return self._equal_weight(factor_names)
 
-        weights = {k: safe_divide(v, total_ic, default=1.0 / len(factor_names)) for k, v in ic_values.items()}
+        weights = {
+            k: safe_divide(v, total_ic, default=1.0 / len(factor_names))
+            for k, v in ic_values.items()
+        }
         return {"weights": weights, "method": "ic_weight"}
 
-    def _ir_weight(self, factor_values, factor_names, returns, factor_data_dict=None) -> Dict:
+    def _ir_weight(
+        self, factor_values, factor_names, returns, factor_data_dict=None
+    ) -> Dict:
         """IR加权 — 优先使用alphalens横截面IC序列计算IR，回退到自实现"""
         from backend.utils.safe_math import safe_ir
 
@@ -140,13 +167,18 @@ class WeightOptimizer:
                     continue
 
                 # 回退：自实现滚动Spearman IC → IR
-                aligned_data = pd.DataFrame({"factor": values, "returns": returns}).dropna()
+                aligned_data = pd.DataFrame(
+                    {"factor": values, "returns": returns}
+                ).dropna()
 
                 if len(aligned_data) > 20:
                     from backend.utils.ic_calculator import calculate_rolling_ic
 
                     rolling_ic = calculate_rolling_ic(
-                        aligned_data["factor"], aligned_data["returns"], window=20, method="spearman"
+                        aligned_data["factor"],
+                        aligned_data["returns"],
+                        window=20,
+                        method="spearman",
                     )
                     ic_mean = rolling_ic.mean()
                     ic_std = rolling_ic.std()
@@ -156,7 +188,9 @@ class WeightOptimizer:
                     elif abs(float(ic_mean)) > 1e-10:
                         # IR不可计算但IC_mean非零 → 因子极稳定，用IC绝对值作为权重代理
                         ir_values[factor_name] = abs(float(ic_mean)) * 10
-                        logger.info(f"因子{factor_name} IR不可计算(IC_std≈0)，使用IC代理权重")
+                        logger.info(
+                            f"因子{factor_name} IR不可计算(IC_std≈0)，使用IC代理权重"
+                        )
                     else:
                         ir_values[factor_name] = 0.0
                 else:
@@ -168,11 +202,16 @@ class WeightOptimizer:
         if total_ir < 1e-10:
             return self._equal_weight(factor_names)
 
-        weights = {k: safe_divide(v, total_ir, default=1.0 / len(factor_names)) for k, v in ir_values.items()}
+        weights = {
+            k: safe_divide(v, total_ir, default=1.0 / len(factor_names))
+            for k, v in ir_values.items()
+        }
         return {"weights": weights, "method": "ir_weight"}
 
     @staticmethod
-    def _get_alphalens_ic(factor_name: str, factor_data_dict: Optional[Dict] = None) -> Optional[float]:
+    def _get_alphalens_ic(
+        factor_name: str, factor_data_dict: Optional[Dict] = None
+    ) -> Optional[float]:
         """从alphalens factor_data中获取横截面Spearman IC均值"""
         if factor_data_dict is None:
             return None
@@ -190,7 +229,9 @@ class WeightOptimizer:
 
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
-                ic_df = alphalens.performance.factor_information_coefficient(factor_data)
+                ic_df = alphalens.performance.factor_information_coefficient(
+                    factor_data
+                )
             ic_col = [c for c in ic_df.columns if "1" in str(c)]
             if ic_col:
                 ic_series = ic_df[ic_col[0]].dropna()
@@ -203,7 +244,9 @@ class WeightOptimizer:
         return None
 
     @staticmethod
-    def _get_alphalens_ir(factor_name: str, factor_data_dict: Optional[Dict] = None) -> Optional[float]:
+    def _get_alphalens_ir(
+        factor_name: str, factor_data_dict: Optional[Dict] = None
+    ) -> Optional[float]:
         """从alphalens factor_data中获取横截面IC序列的IR"""
         if factor_data_dict is None:
             return None
@@ -222,7 +265,9 @@ class WeightOptimizer:
 
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
-                ic_df = alphalens.performance.factor_information_coefficient(factor_data)
+                ic_df = alphalens.performance.factor_information_coefficient(
+                    factor_data
+                )
             ic_col = [c for c in ic_df.columns if "1" in str(c)]
             if ic_col:
                 ic_series = ic_df[ic_col[0]].dropna()
@@ -280,7 +325,9 @@ class WeightOptimizer:
             if len(factor_returns) < 20:
                 return self._equal_weight(factor_names)
 
-            mu = expected_returns.mean_historical_return(factor_returns, returns_data=True)
+            mu = expected_returns.mean_historical_return(
+                factor_returns, returns_data=True
+            )
             S = risk_models.sample_cov(factor_returns, returns_data=True)
             ef = EfficientFrontier(mu, S)
             _raw_weights = ef.max_sharpe()  # noqa: F841

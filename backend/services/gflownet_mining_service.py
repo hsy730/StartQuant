@@ -37,7 +37,9 @@ try:
     GFLOWNET_AVAILABLE = True
 except ImportError:
     GFLOWNET_AVAILABLE = False
-    logger.warning("PyTorch库未安装，GFlowNet因子挖掘功能将不可用。请运行: pip install torch")
+    logger.warning(
+        "PyTorch库未安装，GFlowNet因子挖掘功能将不可用。请运行: pip install torch"
+    )
 
 from backend.services.base_mining_service import BaseMiningService  # noqa: E402
 from backend.utils.safe_math import safe_divide  # noqa: E402
@@ -206,7 +208,9 @@ class ExpressionState:
         if self.root is None:
             return None  # 空树，需要在根节点放置算子
 
-        def _dfs(node: ExprNode, path: List[int]) -> Optional[Tuple[ExprNode, List[int]]]:
+        def _dfs(
+            node: ExprNode, path: List[int]
+        ) -> Optional[Tuple[ExprNode, List[int]]]:
             if not node.is_complete and not node.is_empty:
                 return (node, path)
             for i, child in enumerate(node.children):
@@ -356,7 +360,6 @@ class ExpressionState:
 # ===========================================================================
 
 if GFLOWNET_AVAILABLE:
-
     # -------------------------------------------------------------------
     # GFlowNet 策略网络
     # -------------------------------------------------------------------
@@ -368,7 +371,13 @@ if GFLOWNET_AVAILABLE:
         输出: 各动作的概率分布
         """
 
-        def __init__(self, state_dim: int, n_actions: int, hidden_dim: int = 128, n_layers: int = 3):
+        def __init__(
+            self,
+            state_dim: int,
+            n_actions: int,
+            hidden_dim: int = 128,
+            n_layers: int = 3,
+        ):
             super().__init__()
             self.n_actions = n_actions
 
@@ -385,7 +394,9 @@ if GFLOWNET_AVAILABLE:
             # 可学习的基础流 Z
             self.log_z = nn.Parameter(torch.zeros(1))
 
-        def forward(self, state: torch.Tensor, valid_actions_mask: torch.Tensor) -> torch.Tensor:
+        def forward(
+            self, state: torch.Tensor, valid_actions_mask: torch.Tensor
+        ) -> torch.Tensor:
             """
             Args:
                 state: (batch, state_dim) 状态编码
@@ -542,17 +553,22 @@ if GFLOWNET_AVAILABLE:
                 n_actions=n_actions,
                 hidden_dim=self.hidden_dim,
             )
-            self.optimizer = optim.Adam(self.policy_net.parameters(), lr=self.learning_rate)
+            self.optimizer = optim.Adam(
+                self.policy_net.parameters(), lr=self.learning_rate
+            )
 
             logger.info(
-                f"策略网络初始化: state_dim={state_dim}, n_actions={n_actions}, " f"hidden_dim={self.hidden_dim}"
+                f"策略网络初始化: state_dim={state_dim}, n_actions={n_actions}, "
+                f"hidden_dim={self.hidden_dim}"
             )
 
         # ---------------------------------------------------------------
         # 表达式采样
         # ---------------------------------------------------------------
 
-        def _sample_trajectory(self) -> Tuple[ExpressionState, List[Tuple[np.ndarray, int, List[int]]], float]:
+        def _sample_trajectory(
+            self,
+        ) -> Tuple[ExpressionState, List[Tuple[np.ndarray, int, List[int]]], float]:
             """使用当前策略采样一条公式构建轨迹
 
             Returns:
@@ -610,7 +626,9 @@ if GFLOWNET_AVAILABLE:
 
             return state, trajectory_info, total_log_prob
 
-        def _sample_batch_trajectories(self, n: int) -> List[Tuple[ExpressionState, List, float]]:
+        def _sample_batch_trajectories(
+            self, n: int
+        ) -> List[Tuple[ExpressionState, List, float]]:
             """批量采样多条轨迹"""
             trajectories = []
             for _ in range(n):
@@ -658,7 +676,9 @@ if GFLOWNET_AVAILABLE:
             diversity_penalty = 0.0
             if self.diversity_penalty_coeff > 0 and self._halloffame:
                 for hof_entry in self._halloffame:
-                    sim = expression_similarity(expr_str, hof_entry.get("placeholder_expression", ""))
+                    sim = expression_similarity(
+                        expr_str, hof_entry.get("placeholder_expression", "")
+                    )
                     if sim > 0.7:
                         diversity_penalty += self.diversity_penalty_coeff * sim
 
@@ -779,7 +799,9 @@ if GFLOWNET_AVAILABLE:
 
             return result
 
-        def _evaluate_cross_sectional_ic_from_values(self, fv: pd.Series, expr_str: str) -> float:
+        def _evaluate_cross_sectional_ic_from_values(
+            self, fv: pd.Series, expr_str: str
+        ) -> float:
             """截面IC评估（多股票）"""
             factor_values_dict: Dict[str, pd.Series] = {}
 
@@ -836,7 +858,9 @@ if GFLOWNET_AVAILABLE:
                 logger.warning(f"GFlowNet截面IC评估失败: {e}")
                 return self._evaluate_single_stock_ic_from_values(fv)
 
-        def _eval_expression_on_stock(self, expr_str: str, stock_base_factors: dict) -> Optional[pd.Series]:
+        def _eval_expression_on_stock(
+            self, expr_str: str, stock_base_factors: dict
+        ) -> Optional[pd.Series]:
             """在单只股票上计算表达式"""
             try:
                 from deap import gp as deap_gp
@@ -882,7 +906,9 @@ if GFLOWNET_AVAILABLE:
                 fitness = validation["score"] / 100.0
             else:
                 # 无收益率数据时，使用变异系数(CV)作为代理适应度
-                cv_value = safe_divide(float(fv.std()), abs(float(fv.mean())), default=None)
+                cv_value = safe_divide(
+                    float(fv.std()), abs(float(fv.mean())), default=None
+                )
                 if np.isfinite(cv_value) and abs(fv.mean()) > 1e-8:
                     fitness = cv_value
                 else:
@@ -960,7 +986,9 @@ if GFLOWNET_AVAILABLE:
                 expr = candidate.get("placeholder_expression", "")
                 is_duplicate = False
                 for hof_entry in self._halloffame:
-                    sim = expression_similarity(expr, hof_entry.get("placeholder_expression", ""))
+                    sim = expression_similarity(
+                        expr, hof_entry.get("placeholder_expression", "")
+                    )
                     if sim > 0.9:
                         # 如果新表达式更好，替换旧的
                         if candidate["fitness"] > hof_entry["fitness"]:
@@ -996,7 +1024,11 @@ if GFLOWNET_AVAILABLE:
                 dict with keys: success, best_factors, fitness_history, policy_loss_history
             """
             if not GFLOWNET_AVAILABLE:
-                return {"success": False, "message": "PyTorch库未安装", "best_factors": []}
+                return {
+                    "success": False,
+                    "message": "PyTorch库未安装",
+                    "best_factors": [],
+                }
 
             logger.info("开始GFlowNet因子挖掘...")
             logger.info(
@@ -1079,7 +1111,9 @@ if GFLOWNET_AVAILABLE:
                 for t in trajectory_data:
                     self.replay_buffer.add(t)
 
-                replay_samples = self.replay_buffer.sample(min(32, len(self.replay_buffer)))
+                replay_samples = self.replay_buffer.sample(
+                    min(32, len(self.replay_buffer))
+                )
                 training_data = trajectory_data + replay_samples
 
                 # ---- Step 5: 计算TB Loss并更新策略 ----
@@ -1087,7 +1121,9 @@ if GFLOWNET_AVAILABLE:
                 loss = self._compute_tb_loss(training_data)
                 loss.backward()
                 # 梯度裁剪
-                torch.nn.utils.clip_grad_norm_(self.policy_net.parameters(), max_norm=1.0)
+                torch.nn.utils.clip_grad_norm_(
+                    self.policy_net.parameters(), max_norm=1.0
+                )
                 self.optimizer.step()
 
                 loss_val = loss.item()
@@ -1099,7 +1135,9 @@ if GFLOWNET_AVAILABLE:
 
                 # ---- Step 6: 进度报告 ----
                 if self.progress_callback:
-                    self.progress_callback(iteration, self.n_iterations, best_fitness_iter, avg_fitness)
+                    self.progress_callback(
+                        iteration, self.n_iterations, best_fitness_iter, avg_fitness
+                    )
 
                 logger.info(
                     f"Iteration {iteration}/{self.n_iterations} - "
@@ -1121,15 +1159,21 @@ if GFLOWNET_AVAILABLE:
                 factor_info = {
                     "rank": i + 1,
                     "expression": hof_entry["expression"],
-                    "placeholder_expression": hof_entry.get("placeholder_expression", ""),
+                    "placeholder_expression": hof_entry.get(
+                        "placeholder_expression", ""
+                    ),
                     "fitness": hof_entry["fitness"],
-                    "complexity": self._estimate_complexity(hof_entry.get("placeholder_expression", "")),
+                    "complexity": self._estimate_complexity(
+                        hof_entry.get("placeholder_expression", "")
+                    ),
                     "source": "gflownet",
                 }
 
                 # 尝试获取详细验证结果
                 try:
-                    fv = self._compute_factor_from_string(hof_entry.get("placeholder_expression", ""))
+                    fv = self._compute_factor_from_string(
+                        hof_entry.get("placeholder_expression", "")
+                    )
                     if fv is not None and self.return_values is not None:
                         validation = factor_validation_service.validate_factor(
                             factor_values=fv,
@@ -1184,7 +1228,11 @@ if GFLOWNET_AVAILABLE:
             if not expr_str:
                 return 0.0
             # 简单启发式：统计算子和因子数量
-            op_count = sum(1 for op in ALL_OPS + EXTENDED_UNARY_OPS + EXTENDED_BINARY_OPS if op in expr_str)
+            op_count = sum(
+                1
+                for op in ALL_OPS + EXTENDED_UNARY_OPS + EXTENDED_BINARY_OPS
+                if op in expr_str
+            )
             factor_count = expr_str.count("factor_")
             return float(op_count + factor_count)
 
@@ -1214,5 +1262,8 @@ if GFLOWNET_AVAILABLE:
         * ``cv_folds`` – 交叉验证折数 (默认 0)
         """
         return GFlowNetMiningService(
-            base_factors=base_factors, data=data, factor_calculator=factor_calculator, **kwargs
+            base_factors=base_factors,
+            data=data,
+            factor_calculator=factor_calculator,
+            **kwargs,
         )

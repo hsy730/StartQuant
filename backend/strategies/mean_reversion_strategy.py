@@ -58,9 +58,15 @@ class MeanReversionStrategy(BaseStrategy):
         # MultiIndex 下必须按资产分组计算，否则跨资产混合统计量
         if isinstance(df.index, pd.MultiIndex):
             rolling_mean = (
-                df["close"].groupby(level=1).transform(lambda s: s.rolling(window=self.lookback_window).mean())
+                df["close"]
+                .groupby(level=1)
+                .transform(lambda s: s.rolling(window=self.lookback_window).mean())
             )
-            rolling_std = df["close"].groupby(level=1).transform(lambda s: s.rolling(window=self.lookback_window).std())
+            rolling_std = (
+                df["close"]
+                .groupby(level=1)
+                .transform(lambda s: s.rolling(window=self.lookback_window).std())
+            )
         else:
             rolling_mean = df["close"].rolling(window=self.lookback_window).mean()
             rolling_std = df["close"].rolling(window=self.lookback_window).std()
@@ -133,7 +139,9 @@ class MeanReversionStrategy(BaseStrategy):
             n_per_date_buy = buy_mask.groupby(level=0).transform("sum")
             n_per_date_sell = sell_mask.groupby(level=0).transform("sum")
             weights[buy_mask] = safe_divide(1.0, n_per_date_buy[buy_mask], default=0.0)
-            weights[sell_mask] = -safe_divide(1.0, n_per_date_sell[sell_mask], default=0.0)
+            weights[sell_mask] = -safe_divide(
+                1.0, n_per_date_sell[sell_mask], default=0.0
+            )
         else:
             # 单股票场景：满仓做多/做空
             weights[buy_mask] = 1.0

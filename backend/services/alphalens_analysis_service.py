@@ -147,12 +147,16 @@ class AlphalensAnalysisService:
         try:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
-                ic_spearman = alphalens.performance.factor_information_coefficient(factor_data, by_group=by_group)
+                ic_spearman = alphalens.performance.factor_information_coefficient(
+                    factor_data, by_group=by_group
+                )
                 _mean_ic_spearman = alphalens.performance.mean_information_coefficient(  # noqa: F841
                     factor_data, by_group=by_group
                 )
 
-            results["spearman_ic"] = self._compute_ic_stats(ic_spearman, "Spearman Rank IC")
+            results["spearman_ic"] = self._compute_ic_stats(
+                ic_spearman, "Spearman Rank IC"
+            )
 
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
@@ -161,8 +165,12 @@ class AlphalensAnalysisService:
             results["pearson_ic"] = self._compute_ic_stats(ic_pearson, "Pearson IC")
 
             if by_group and "group" in factor_data.columns:
-                results["by_group_spearman"] = self._compute_ic_stats_by_group(ic_spearman)
-                results["by_group_pearson"] = self._compute_ic_stats_by_group(ic_pearson)
+                results["by_group_spearman"] = self._compute_ic_stats_by_group(
+                    ic_spearman
+                )
+                results["by_group_pearson"] = self._compute_ic_stats_by_group(
+                    ic_pearson
+                )
 
             logger.info("IC分析完成")
             return results
@@ -174,7 +182,11 @@ class AlphalensAnalysisService:
     def _compute_pearson_ic(self, factor_data: pd.DataFrame) -> pd.DataFrame:
         """手动计算Pearson IC（alphalens默认只提供Spearman Rank IC）"""
         ic_results = {}
-        return_cols = [c for c in factor_data.columns if c not in ["factor", "factor_quantile", "group"]]
+        return_cols = [
+            c
+            for c in factor_data.columns
+            if c not in ["factor", "factor_quantile", "group"]
+        ]
         dates = factor_data.index.get_level_values(0)
         for period_col in return_cols:
             merged = pd.DataFrame(
@@ -189,7 +201,13 @@ class AlphalensAnalysisService:
                 continue
             daily_ic = (
                 merged.groupby(merged.index)
-                .apply(lambda g: g["factor"].corr(g["return"], method="pearson") if len(g) >= 2 else np.nan)
+                .apply(
+                    lambda g: (
+                        g["factor"].corr(g["return"], method="pearson")
+                        if len(g) >= 2
+                        else np.nan
+                    )
+                )
                 .dropna()
             )
             if len(daily_ic) > 0:
@@ -216,7 +234,9 @@ class AlphalensAnalysisService:
         stats_result: Dict[str, Any] = {}
 
         for period_col in ic_df.columns:
-            period_label = f"{period_col}D" if isinstance(period_col, int) else str(period_col)
+            period_label = (
+                f"{period_col}D" if isinstance(period_col, int) else str(period_col)
+            )
             ic_series = ic_df[period_col].dropna()
 
             if len(ic_series) == 0:
@@ -279,7 +299,9 @@ class AlphalensAnalysisService:
             for group_name in ic_df.index.get_level_values(0).unique():
                 group_ic = ic_df.loc[group_name]
                 group_stats[str(group_name)] = self._compute_ic_stats(
-                    group_ic if isinstance(group_ic, pd.DataFrame) else group_ic.to_frame().T,
+                    group_ic
+                    if isinstance(group_ic, pd.DataFrame)
+                    else group_ic.to_frame().T,
                     "",
                 )
         else:
@@ -316,7 +338,9 @@ class AlphalensAnalysisService:
                     factor_data, by_group=by_group, demeaned=True
                 )
 
-                factor_ret = alphalens.performance.factor_returns(factor_data, demeaned=True)
+                factor_ret = alphalens.performance.factor_returns(
+                    factor_data, demeaned=True
+                )
 
                 alpha_beta = alphalens.performance.factor_alpha_beta(factor_data)
 
@@ -335,7 +359,9 @@ class AlphalensAnalysisService:
 
             if by_group and "group" in factor_data.columns:
                 if isinstance(mean_ret_by_q, tuple) and len(mean_ret_by_q) > 1:
-                    results["quantile_returns_by_group"] = self._extract_quantile_returns(mean_ret_by_q[1])
+                    results["quantile_returns_by_group"] = (
+                        self._extract_quantile_returns(mean_ret_by_q[1])
+                    )
 
             logger.info("收益分析完成")
             return results
@@ -360,7 +386,9 @@ class AlphalensAnalysisService:
         quantile_returns: Dict[str, Any] = {}
 
         for period_col in mean_ret_df.columns:
-            period_label = f"{period_col}D" if isinstance(period_col, int) else str(period_col)
+            period_label = (
+                f"{period_col}D" if isinstance(period_col, int) else str(period_col)
+            )
             period_data: Dict[str, Any] = {}
 
             for quantile in mean_ret_df.index:
@@ -388,7 +416,9 @@ class AlphalensAnalysisService:
         factor_returns: Dict[str, Any] = {}
 
         for period_col in factor_ret.columns:
-            period_label = f"{period_col}D" if isinstance(period_col, int) else str(period_col)
+            period_label = (
+                f"{period_col}D" if isinstance(period_col, int) else str(period_col)
+            )
             ret_series = factor_ret[period_col].dropna()
 
             factor_returns[period_label] = {
@@ -419,11 +449,15 @@ class AlphalensAnalysisService:
         result: Dict[str, Any] = {}
 
         for period_col in alpha_beta.columns:
-            period_label = f"{period_col}D" if isinstance(period_col, int) else str(period_col)
+            period_label = (
+                f"{period_col}D" if isinstance(period_col, int) else str(period_col)
+            )
             period_data: Dict[str, Any] = {}
 
             for stat_name in alpha_beta.index:
-                period_data[str(stat_name)] = _to_python_float(alpha_beta.loc[stat_name, period_col])
+                period_data[str(stat_name)] = _to_python_float(
+                    alpha_beta.loc[stat_name, period_col]
+                )
 
             result[period_label] = period_data
 
@@ -453,7 +487,9 @@ class AlphalensAnalysisService:
         bottom_q = quantiles[0]
 
         for period_col in mean_ret_df.columns:
-            period_label = f"{period_col}D" if isinstance(period_col, int) else str(period_col)
+            period_label = (
+                f"{period_col}D" if isinstance(period_col, int) else str(period_col)
+            )
             top_ret = mean_ret_df.loc[top_q, period_col]
             bottom_ret = mean_ret_df.loc[bottom_q, period_col]
             spread_val = top_ret - bottom_ret
@@ -492,17 +528,24 @@ class AlphalensAnalysisService:
                 warnings.simplefilter("ignore")
 
                 turnover = alphalens.performance.quantile_turnover(
-                    factor_data["factor_quantile"], quantile=factor_data["factor_quantile"].max()
+                    factor_data["factor_quantile"],
+                    quantile=factor_data["factor_quantile"].max(),
                 )
 
-                autocorr = alphalens.performance.factor_rank_autocorrelation(factor_data)
+                autocorr = alphalens.performance.factor_rank_autocorrelation(
+                    factor_data
+                )
 
             results["quantile_turnover"] = (
-                self._extract_turnover(turnover) if turnover is not None else {"error": "换手率数据为空"}
+                self._extract_turnover(turnover)
+                if turnover is not None
+                else {"error": "换手率数据为空"}
             )
 
             results["factor_autocorrelation"] = (
-                self._extract_autocorrelation(autocorr) if autocorr is not None else {"error": "自相关数据为空"}
+                self._extract_autocorrelation(autocorr)
+                if autocorr is not None
+                else {"error": "自相关数据为空"}
             )
 
             logger.info("换手率分析完成")
@@ -531,7 +574,9 @@ class AlphalensAnalysisService:
         if isinstance(turnover_data, pd.Series):
             return {
                 "mean_turnover": _to_python_float(turnover_data.mean()),
-                "std_turnover": _to_python_float(turnover_data.std()) if len(turnover_data) > 1 else 0.0,
+                "std_turnover": _to_python_float(turnover_data.std())
+                if len(turnover_data) > 1
+                else 0.0,
                 "series": {
                     "dates": _index_to_str_list(turnover_data.index),
                     "values": _series_to_list(turnover_data),
@@ -543,7 +588,9 @@ class AlphalensAnalysisService:
 
         if isinstance(turnover_data.index, pd.MultiIndex):
             for period_col in turnover_data.columns:
-                period_label = f"{period_col}D" if isinstance(period_col, int) else str(period_col)
+                period_label = (
+                    f"{period_col}D" if isinstance(period_col, int) else str(period_col)
+                )
                 period_data: Dict[str, Any] = {}
 
                 for quantile in turnover_data.index.get_level_values(0).unique():
@@ -566,7 +613,9 @@ class AlphalensAnalysisService:
                 turnover_result[period_label] = period_data
         else:
             for period_col in turnover_data.columns:
-                period_label = f"{period_col}D" if isinstance(period_col, int) else str(period_col)
+                period_label = (
+                    f"{period_col}D" if isinstance(period_col, int) else str(period_col)
+                )
                 period_data: Dict[str, Any] = {}
 
                 for quantile in turnover_data.index:
@@ -608,7 +657,9 @@ class AlphalensAnalysisService:
         if isinstance(autocorr_df, pd.Series):
             return {
                 "mean_autocorrelation": _to_python_float(autocorr_df.mean()),
-                "std_autocorrelation": _to_python_float(autocorr_df.std()) if len(autocorr_df) > 1 else 0.0,
+                "std_autocorrelation": _to_python_float(autocorr_df.std())
+                if len(autocorr_df) > 1
+                else 0.0,
                 "series": {
                     "dates": _index_to_str_list(autocorr_df.index),
                     "values": _series_to_list(autocorr_df),
@@ -619,12 +670,16 @@ class AlphalensAnalysisService:
             return {"error": "自相关数据为空或格式不正确"}
 
         for period_col in autocorr_df.columns:
-            period_label = f"{period_col}D" if isinstance(period_col, int) else str(period_col)
+            period_label = (
+                f"{period_col}D" if isinstance(period_col, int) else str(period_col)
+            )
             ac_series = autocorr_df[period_col].dropna()
 
             autocorr_result[period_label] = {
                 "mean_autocorrelation": _to_python_float(ac_series.mean()),
-                "std_autocorrelation": _to_python_float(ac_series.std()) if len(ac_series) > 1 else 0.0,
+                "std_autocorrelation": _to_python_float(ac_series.std())
+                if len(ac_series) > 1
+                else 0.0,
                 "series": {
                     "dates": _index_to_str_list(ac_series.index),
                     "values": _series_to_list(ac_series),
@@ -679,10 +734,14 @@ class AlphalensAnalysisService:
             "start": str(factor_data.index.get_level_values("date").min()),
             "end": str(factor_data.index.get_level_values("date").max()),
         }
-        results["metadata"]["num_assets"] = factor_data.index.get_level_values("asset").nunique()
+        results["metadata"]["num_assets"] = factor_data.index.get_level_values(
+            "asset"
+        ).nunique()
 
         if len(factor_values_dict) == 1:
-            results["metadata"]["warning"] = "仅包含单只股票，横截面IC分析结果可能不可靠"
+            results["metadata"]["warning"] = (
+                "仅包含单只股票，横截面IC分析结果可能不可靠"
+            )
 
         by_group = groupby_dict is not None
 

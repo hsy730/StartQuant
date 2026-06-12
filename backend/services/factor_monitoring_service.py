@@ -9,7 +9,9 @@ from typing import Dict, Any
 from scipy.fft import fft, fftfreq
 from scipy.signal import find_peaks
 
-from backend.utils.factor_data_utils import find_longest_stock as _find_longest_stock_util
+from backend.utils.factor_data_utils import (
+    find_longest_stock as _find_longest_stock_util,
+)
 from backend.utils.safe_math import safe_divide
 
 logger = logging.getLogger(__name__)
@@ -21,12 +23,18 @@ class FactorMonitoringService:
     def __init__(self):
         pass
 
-    def _find_longest_stock(self, factor_data: Dict[str, pd.DataFrame], factor_name: str) -> tuple:
+    def _find_longest_stock(
+        self, factor_data: Dict[str, pd.DataFrame], factor_name: str
+    ) -> tuple:
         """找到数据最长的股票（代码和数据），委托公共工具"""
         code, df = _find_longest_stock_util(factor_data, factor_name)
-        return code, len(df[factor_name].dropna()) if factor_name in df.columns else len(df)
+        return code, len(
+            df[factor_name].dropna()
+        ) if factor_name in df.columns else len(df)
 
-    def monitor_dynamics(self, factor_data: Dict[str, pd.DataFrame], factor_name: str) -> Dict[str, Any]:
+    def monitor_dynamics(
+        self, factor_data: Dict[str, pd.DataFrame], factor_name: str
+    ) -> Dict[str, Any]:
         """
         时间序列动态监测
 
@@ -45,13 +53,19 @@ class FactorMonitoringService:
         results = {}
 
         # 1. 滚动窗口图（折线图 + 滚动均值/标准差带）
-        results["rolling_chart"] = self._calculate_rolling_bands(factor_data, factor_name)
+        results["rolling_chart"] = self._calculate_rolling_bands(
+            factor_data, factor_name
+        )
 
         # 2. 暴露度转移矩阵（分位数迁移概率）
-        results["transition_matrix"] = self._calculate_transition_matrix(factor_data, factor_name)
+        results["transition_matrix"] = self._calculate_transition_matrix(
+            factor_data, factor_name
+        )
 
         # 3. 结构断点检测
-        results["structural_break"] = self._detect_structural_breaks(factor_data, factor_name)
+        results["structural_break"] = self._detect_structural_breaks(
+            factor_data, factor_name
+        )
 
         # 4. 周期性分析
         results["seasonality"] = self._analyze_seasonality(factor_data, factor_name)
@@ -59,7 +73,11 @@ class FactorMonitoringService:
         return results
 
     def _calculate_rolling_bands(
-        self, factor_data: Dict[str, pd.DataFrame], factor_name: str, window: int = 20, std_multiplier: float = 2.0
+        self,
+        factor_data: Dict[str, pd.DataFrame],
+        factor_name: str,
+        window: int = 20,
+        std_multiplier: float = 2.0,
     ) -> Dict[str, Any]:
         """
         计算滚动窗口带状图
@@ -92,10 +110,18 @@ class FactorMonitoringService:
         return {
             "dates": [str(date) for date in time_series.index],
             "values": [float(v) for v in time_series.values],
-            "rolling_mean": [float(v) if pd.notna(v) else None for v in rolling_mean.values],
-            "rolling_std": [float(v) if pd.notna(v) else None for v in rolling_std.values],
-            "upper_band": [float(v) if pd.notna(v) else None for v in upper_band.values],
-            "lower_band": [float(v) if pd.notna(v) else None for v in lower_band.values],
+            "rolling_mean": [
+                float(v) if pd.notna(v) else None for v in rolling_mean.values
+            ],
+            "rolling_std": [
+                float(v) if pd.notna(v) else None for v in rolling_std.values
+            ],
+            "upper_band": [
+                float(v) if pd.notna(v) else None for v in upper_band.values
+            ],
+            "lower_band": [
+                float(v) if pd.notna(v) else None for v in lower_band.values
+            ],
             "window": window,
             "std_multiplier": std_multiplier,
         }
@@ -124,11 +150,17 @@ class FactorMonitoringService:
         # 计算分位数 bins
         quantiles = np.linspace(0, 1, n_bins + 1)
         bin_edges = [time_series.quantile(q) for q in quantiles]
-        bin_labels = [f"Q{i+1}" for i in range(n_bins)]
+        bin_labels = [f"Q{i + 1}" for i in range(n_bins)]
 
         # 将时间序列离散化为 bin 索引
         # 使用 duplicates='drop' 处理重复的边界值（当因子有大量重复值时）
-        binned = pd.cut(time_series, bins=bin_edges, labels=False, include_lowest=True, duplicates="drop")
+        binned = pd.cut(
+            time_series,
+            bins=bin_edges,
+            labels=False,
+            include_lowest=True,
+            duplicates="drop",
+        )
 
         # 获取实际的 bin 数量（可能少于 n_bins，因为有重复值被丢弃）
         actual_bins = binned.nunique() if binned is not None else 1
@@ -165,10 +197,16 @@ class FactorMonitoringService:
         for i in range(effective_bins):
             row_sum = transition_counts[i].sum()
             if row_sum > 1e-10:
-                transition_matrix[i] = safe_divide(transition_counts[i], row_sum, default=0.0)
+                transition_matrix[i] = safe_divide(
+                    transition_counts[i], row_sum, default=0.0
+                )
 
         # 调整标签数量以匹配实际 bin 数量
-        actual_labels = bin_labels[:effective_bins] if effective_bins <= len(bin_labels) else bin_labels
+        actual_labels = (
+            bin_labels[:effective_bins]
+            if effective_bins <= len(bin_labels)
+            else bin_labels
+        )
 
         return {
             "matrix": transition_matrix.tolist(),
@@ -178,7 +216,9 @@ class FactorMonitoringService:
             "interpretation": f"基于{effective_bins}个分位数的暴露度转移概率矩阵（原计划{n_bins}个，因有重复值调整为{effective_bins}个）",
         }
 
-    def _detect_structural_breaks(self, factor_data: Dict[str, pd.DataFrame], factor_name: str) -> Dict[str, Any]:
+    def _detect_structural_breaks(
+        self, factor_data: Dict[str, pd.DataFrame], factor_name: str
+    ) -> Dict[str, Any]:
         """
         结构断点检测 - 使用简单的滚动均值变化检测
 
@@ -209,9 +249,13 @@ class FactorMonitoringService:
         threshold = mean_change.mean() + 3 * mean_change.std()
 
         # 找峰值
-        peaks, _ = find_peaks(mean_change.values, height=threshold, distance=window // 2)
+        peaks, _ = find_peaks(
+            mean_change.values, height=threshold, distance=window // 2
+        )
 
-        breakpoint_dates = [str(time_series.index[i]) for i in peaks if i < len(time_series)]
+        breakpoint_dates = [
+            str(time_series.index[i]) for i in peaks if i < len(time_series)
+        ]
 
         return {
             "breakpoints": breakpoint_dates,
@@ -222,7 +266,9 @@ class FactorMonitoringService:
             "interpretation": f"检测到 {len(breakpoint_dates)} 个结构性断点（基于滚动均值变化）",
         }
 
-    def _analyze_seasonality(self, factor_data: Dict[str, pd.DataFrame], factor_name: str) -> Dict[str, Any]:
+    def _analyze_seasonality(
+        self, factor_data: Dict[str, pd.DataFrame], factor_name: str
+    ) -> Dict[str, Any]:
         """
         周期性分析 - 傅里叶变换检测周期
 
@@ -287,7 +333,11 @@ class FactorMonitoringService:
                 if period_days is None:
                     continue
                 dominant_periods.append(
-                    {"period_days": float(period_days), "frequency": float(freq), "power": float(positive_power[peak])}
+                    {
+                        "period_days": float(period_days),
+                        "frequency": float(freq),
+                        "power": float(positive_power[peak]),
+                    }
                 )
 
         return {

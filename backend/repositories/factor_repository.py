@@ -2,11 +2,14 @@
 因子数据访问层
 """
 
+import logging
 from typing import List, Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import select, delete, func
 
 from backend.models.factor import FactorModel, AnalysisCacheModel
+
+logger = logging.getLogger(__name__)
 
 
 class FactorRepository:
@@ -15,7 +18,9 @@ class FactorRepository:
     def __init__(self, db: Session):
         self.db = db
 
-    def get_all(self, source: Optional[str] = None, active_only: bool = False) -> List[FactorModel]:
+    def get_all(
+        self, source: Optional[str] = None, active_only: bool = False
+    ) -> List[FactorModel]:
         """获取所有因子"""
         query = select(FactorModel)
         if source:
@@ -29,7 +34,9 @@ class FactorRepository:
         """根据ID获取因子"""
         return self.db.get(FactorModel, factor_id)
 
-    def get_by_name(self, name: str, include_inactive: bool = False) -> Optional[FactorModel]:
+    def get_by_name(
+        self, name: str, include_inactive: bool = False
+    ) -> Optional[FactorModel]:
         """根据名称获取因子
 
         Args:
@@ -43,19 +50,33 @@ class FactorRepository:
 
     def get_active_by_name(self, name: str) -> Optional[FactorModel]:
         """根据名称获取活跃因子（仅返回 is_active=1 的记录）"""
-        return self.db.scalar(select(FactorModel).where(FactorModel.name == name).where(FactorModel.is_active == 1))
+        return self.db.scalar(
+            select(FactorModel)
+            .where(FactorModel.name == name)
+            .where(FactorModel.is_active == 1)
+        )
 
     def create(self, factor: FactorModel) -> FactorModel:
         """创建因子"""
-        self.db.add(factor)
-        self.db.commit()
-        self.db.refresh(factor)
+        try:
+            self.db.add(factor)
+            self.db.commit()
+            self.db.refresh(factor)
+        except Exception as e:
+            self.db.rollback()
+            logger.error(f"创建因子失败: {e}")
+            raise
         return factor
 
     def update(self, factor: FactorModel) -> FactorModel:
         """更新因子"""
-        self.db.commit()
-        self.db.refresh(factor)
+        try:
+            self.db.commit()
+            self.db.refresh(factor)
+        except Exception as e:
+            self.db.rollback()
+            logger.error(f"更新因子失败: {e}")
+            raise
         return factor
 
     def delete(self, factor_id: int) -> bool:
@@ -67,9 +88,13 @@ class FactorRepository:
         if factor.source == "preset":
             raise ValueError("预置因子不能删除")
 
-        # 硬删除：直接从数据库中移除记录
-        self.db.delete(factor)
-        self.db.commit()
+        try:
+            self.db.delete(factor)
+            self.db.commit()
+        except Exception as e:
+            self.db.rollback()
+            logger.error(f"删除因子失败: {e}")
+            raise
 
         return True
 
@@ -88,7 +113,9 @@ class FactorRepository:
         """获取用户自定义因子数量（仅统计启用的）"""
         return (
             self.db.scalar(
-                select(func.count(FactorModel.id)).where(FactorModel.source == "user").where(FactorModel.is_active == 1)
+                select(func.count(FactorModel.id))
+                .where(FactorModel.source == "user")
+                .where(FactorModel.is_active == 1)
             )
             or 0
         )
@@ -102,7 +129,9 @@ class AnalysisCacheRepository:
 
     def get_by_key(self, cache_key: str) -> Optional[AnalysisCacheModel]:
         """根据缓存键获取缓存"""
-        return self.db.scalar(select(AnalysisCacheModel).where(AnalysisCacheModel.cache_key == cache_key))
+        return self.db.scalar(
+            select(AnalysisCacheModel).where(AnalysisCacheModel.cache_key == cache_key)
+        )
 
     def create(self, cache: AnalysisCacheModel) -> AnalysisCacheModel:
         """创建缓存"""
@@ -131,7 +160,9 @@ class AnalysisCacheRepository:
         from datetime import datetime, timedelta
 
         cutoff_date = datetime.now() - timedelta(days=days)
-        stmt = delete(AnalysisCacheModel).where(AnalysisCacheModel.created_at < cutoff_date)
+        stmt = delete(AnalysisCacheModel).where(
+            AnalysisCacheModel.created_at < cutoff_date
+        )
         result = self.db.execute(stmt)
         self.db.commit()
         return result.rowcount

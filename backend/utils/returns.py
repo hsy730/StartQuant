@@ -45,7 +45,9 @@ def calculate_future_returns(
                 ret = asset_df[price_col].pct_change(p).shift(-p)
                 # 将结果按日期索引对齐赋值
                 for date in ret.index:
-                    new_col.loc[(date, asset_code)] = ret.loc[date] if not pd.isna(ret.loc[date]) else np.nan
+                    new_col.loc[(date, asset_code)] = (
+                        ret.loc[date] if not pd.isna(ret.loc[date]) else np.nan
+                    )
             result[col_name] = new_col
     else:
         for p in periods:

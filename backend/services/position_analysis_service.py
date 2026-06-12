@@ -12,7 +12,9 @@ class PositionAnalysisService:
     def __init__(self):
         pass
 
-    def analyze_positions(self, positions: pd.Series, initial_capital: float = 1000000) -> Dict:
+    def analyze_positions(
+        self, positions: pd.Series, initial_capital: float = 1000000
+    ) -> Dict:
         """
         分析持仓统计信息
 
@@ -35,7 +37,9 @@ class PositionAnalysisService:
 
         # 2. 持仓分布
         position_zero_ratio = (positions_clean == 0).sum() / len(positions_clean)
-        position_full_ratio = (positions_clean.abs() >= 0.9).sum() / len(positions_clean)
+        position_full_ratio = (positions_clean.abs() >= 0.9).sum() / len(
+            positions_clean
+        )
 
         # 3. 持仓变化
         position_changes = positions_clean.diff().abs()
@@ -62,7 +66,9 @@ class PositionAnalysisService:
             if current_period > 0:
                 invested_periods += 1
 
-        avg_holding_period = total_invested_days / invested_periods if invested_periods > 0 else 0
+        avg_holding_period = (
+            total_invested_days / invested_periods if invested_periods > 0 else 0
+        )
 
         # 5. 换手率（权重变化绝对值之和除以2，买入和卖出是同一笔交易的两面）
         turnover = position_changes.sum() / 2
@@ -96,7 +102,9 @@ class PositionAnalysisService:
             },
         }
 
-    def analyze_position_history(self, positions: pd.Series, window: int = 20) -> pd.DataFrame:
+    def analyze_position_history(
+        self, positions: pd.Series, window: int = 20
+    ) -> pd.DataFrame:
         """
         分析持仓历史（滚动窗口）
 

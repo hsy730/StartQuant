@@ -73,7 +73,8 @@ class FactorImportService:
                 factor = FactorModel(
                     name=factor_name,
                     code=factor_code,
-                    description=description or f"从CSV文件导入: {Path(csv_file_path).name}",
+                    description=description
+                    or f"从CSV文件导入: {Path(csv_file_path).name}",
                     source="user",
                     category=category,
                     is_active=1,

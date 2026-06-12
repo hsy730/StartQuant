@@ -132,7 +132,17 @@ class FormulaCompilerService:
             compiled_args = [self._compile_node(arg) for arg in args]
 
             # 特殊处理技术指标
-            if func_name in ["SMA", "EMA", "RSI", "MACD", "ADX", "CCI", "ATR", "BBANDS", "OBV"]:
+            if func_name in [
+                "SMA",
+                "EMA",
+                "RSI",
+                "MACD",
+                "ADX",
+                "CCI",
+                "ATR",
+                "BBANDS",
+                "OBV",
+            ]:
                 if func_name == "SMA":
                     return f"SMA({compiled_args[0]}, timeperiod={compiled_args[1]})"
                 elif func_name == "EMA":
@@ -147,7 +157,9 @@ class FormulaCompilerService:
                         try:
                             idx = int(compiled_args[1].strip().strip('"').strip("'"))
                             if idx not in (0, 1, 2):
-                                raise ValueError(f"MACD索引必须为0(macd), 1(signal), 2(hist)，当前为{idx}")
+                                raise ValueError(
+                                    f"MACD索引必须为0(macd), 1(signal), 2(hist)，当前为{idx}"
+                                )
                             macd_idx = str(idx)
                         except ValueError as e:
                             if "MACD索引" in str(e):
@@ -161,7 +173,9 @@ class FormulaCompilerService:
                     if len(compiled_args) > 1:
                         idx = int(compiled_args[1].strip().strip('"').strip("'"))
                         if idx not in (0, 1, 2):
-                            raise ValueError(f"BBANDS索引必须为0(upper), 1(middle), 2(lower)，当前为{idx}")
+                            raise ValueError(
+                                f"BBANDS索引必须为0(upper), 1(middle), 2(lower)，当前为{idx}"
+                            )
                     else:
                         idx = 1  # default to middle band
                     return f"BBANDS({compiled_args[0]}, timeperiod=20)[{idx}]"
@@ -265,42 +279,54 @@ class FormulaCompilerService:
                         func_name = node.func.id
                         if func_name in self._FORBIDDEN_FUNCTIONS:
                             return False, f"禁止调用的函数: {func_name}"
-                        if func_name not in self.ALLOWED_FUNCTIONS and func_name not in (
-                            # 函数模式允许的额外安全名称
-                            "abs",
-                            "min",
-                            "max",
-                            "len",
-                            "sum",
-                            "range",
-                            "float",
-                            "int",
-                            "bool",
-                            "str",
-                            "list",
-                            "tuple",
-                            "dict",
-                            "set",
-                            "enumerate",
-                            "zip",
-                            "round",
-                            "pow",
-                            "sorted",
-                            "reversed",
-                            "map",
-                            "filter",
-                            "any",
-                            "all",
-                            "isinstance",
+                        if (
+                            func_name not in self.ALLOWED_FUNCTIONS
+                            and func_name
+                            not in (
+                                # 函数模式允许的额外安全名称
+                                "abs",
+                                "min",
+                                "max",
+                                "len",
+                                "sum",
+                                "range",
+                                "float",
+                                "int",
+                                "bool",
+                                "str",
+                                "list",
+                                "tuple",
+                                "dict",
+                                "set",
+                                "enumerate",
+                                "zip",
+                                "round",
+                                "pow",
+                                "sorted",
+                                "reversed",
+                                "map",
+                                "filter",
+                                "any",
+                                "all",
+                                "isinstance",
+                            )
                         ):
-                            return False, f"不允许的函数: {func_name}，仅支持: {sorted(self.ALLOWED_FUNCTIONS)}"
+                            return (
+                                False,
+                                f"不允许的函数: {func_name}，仅支持: {sorted(self.ALLOWED_FUNCTIONS)}",
+                            )
                     # 检查属性访问是否安全
                     if isinstance(node, ast.Attribute):
-                        if node.attr in self._FORBIDDEN_ATTRS or node.attr.startswith("_"):
+                        if node.attr in self._FORBIDDEN_ATTRS or node.attr.startswith(
+                            "_"
+                        ):
                             return False, f"禁止访问的属性: {node.attr}"
                     # 检查变量名是否安全
                     if isinstance(node, ast.Name):
-                        if node.id in self._FORBIDDEN_FUNCTIONS or node.id in self._FORBIDDEN_ATTRS:
+                        if (
+                            node.id in self._FORBIDDEN_FUNCTIONS
+                            or node.id in self._FORBIDDEN_ATTRS
+                        ):
                             return False, f"禁止访问: {node.id}"
             else:
                 # 表达式形式
@@ -311,14 +337,22 @@ class FormulaCompilerService:
                     if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
                         func_name = node.func.id
                         if func_name not in self.ALLOWED_FUNCTIONS:
-                            return False, f"不允许的函数: {func_name}，仅支持: {sorted(self.ALLOWED_FUNCTIONS)}"
+                            return (
+                                False,
+                                f"不允许的函数: {func_name}，仅支持: {sorted(self.ALLOWED_FUNCTIONS)}",
+                            )
                     # 检查属性访问是否安全
                     if isinstance(node, ast.Attribute):
-                        if node.attr in self._FORBIDDEN_ATTRS or node.attr.startswith("_"):
+                        if node.attr in self._FORBIDDEN_ATTRS or node.attr.startswith(
+                            "_"
+                        ):
                             return False, f"禁止访问的属性: {node.attr}"
                     # 检查变量名是否安全
                     if isinstance(node, ast.Name):
-                        if node.id in self._FORBIDDEN_FUNCTIONS or node.id in self._FORBIDDEN_ATTRS:
+                        if (
+                            node.id in self._FORBIDDEN_FUNCTIONS
+                            or node.id in self._FORBIDDEN_ATTRS
+                        ):
                             return False, f"禁止访问: {node.id}"
 
             return True, "公式验证通过"
@@ -367,7 +401,9 @@ class FormulaCompilerService:
 
         elif isinstance(node, ast.Call):
             # 函数调用
-            func_name = node.func.id if isinstance(node.func, ast.Name) else str(node.func)
+            func_name = (
+                node.func.id if isinstance(node.func, ast.Name) else str(node.func)
+            )
             args = [self._ast_to_formula_tree(arg) for arg in node.args]
 
             return {

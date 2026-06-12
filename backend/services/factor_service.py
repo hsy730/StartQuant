@@ -146,22 +146,36 @@ class FactorCalculator:
         for node in ast.walk(tree):
             # 检查是否包含不允许的 AST 节点类型
             if type(node) not in self._SAFE_AST_NODES:
-                raise ValueError(f"因子代码包含不安全的操作: {type(node).__name__}，" f"仅允许数学运算和数据处理操作")
+                raise ValueError(
+                    f"因子代码包含不安全的操作: {type(node).__name__}，"
+                    f"仅允许数学运算和数据处理操作"
+                )
 
             # 检查属性访问是否安全
             if isinstance(node, ast.Attribute):
                 if node.attr in self._FORBIDDEN_ATTRS:
-                    raise ValueError(f"因子代码禁止访问属性: {node.attr}，" f"不允许使用反射和系统调用")
+                    raise ValueError(
+                        f"因子代码禁止访问属性: {node.attr}，不允许使用反射和系统调用"
+                    )
 
             # 检查变量名是否安全（如直接引用 __builtins__）
             if isinstance(node, ast.Name):
                 if node.id in self._FORBIDDEN_ATTRS:
-                    raise ValueError(f"因子代码禁止访问: {node.id}，" f"不允许使用反射和系统调用")
+                    raise ValueError(
+                        f"因子代码禁止访问: {node.id}，不允许使用反射和系统调用"
+                    )
 
             # 检查函数名是否安全
             if isinstance(node, ast.Call):
                 if isinstance(node.func, ast.Name):
-                    if node.func.id in ("exec", "eval", "compile", "open", "__import__", "input"):
+                    if node.func.id in (
+                        "exec",
+                        "eval",
+                        "compile",
+                        "open",
+                        "__import__",
+                        "input",
+                    ):
                         raise ValueError(f"因子代码禁止调用函数: {node.func.id}")
 
     def __init__(self):
@@ -250,14 +264,26 @@ class FactorCalculator:
         def EVERY(condition, n=5):
             """n日内是否一直满足条件"""
             if isinstance(condition, pd.Series):
-                return condition.rolling(window=n, min_periods=1).apply(lambda x: x.all(), raw=False)
-            return pd.Series(condition).rolling(window=n, min_periods=1).apply(lambda x: x.all())
+                return condition.rolling(window=n, min_periods=1).apply(
+                    lambda x: x.all(), raw=False
+                )
+            return (
+                pd.Series(condition)
+                .rolling(window=n, min_periods=1)
+                .apply(lambda x: x.all())
+            )
 
         def EXIST(condition, n=5):
             """n日内是否存在满足条件"""
             if isinstance(condition, pd.Series):
-                return condition.rolling(window=n, min_periods=1).apply(lambda x: x.any(), raw=False)
-            return pd.Series(condition).rolling(window=n, min_periods=1).apply(lambda x: x.any())
+                return condition.rolling(window=n, min_periods=1).apply(
+                    lambda x: x.any(), raw=False
+                )
+            return (
+                pd.Series(condition)
+                .rolling(window=n, min_periods=1)
+                .apply(lambda x: x.any())
+            )
 
         def CROSS(x, y):
             """金叉：x上穿y"""
@@ -271,7 +297,9 @@ class FactorCalculator:
             """n日内金叉"""
             if isinstance(x, pd.Series) and isinstance(y, pd.Series):
                 cross = (x > y) & (x.shift(1) <= y.shift(1))
-                return cross.rolling(window=n, min_periods=1).apply(lambda z: z.any(), raw=False)
+                return cross.rolling(window=n, min_periods=1).apply(
+                    lambda z: z.any(), raw=False
+                )
             x_series = pd.Series(x)
             y_series = pd.Series(y)
             cross = (x_series > y_series) & (x_series.shift(1) <= y_series.shift(1))
@@ -292,7 +320,9 @@ class FactorCalculator:
         def IF(condition, true_value, false_value=0):
             """条件选择函数"""
             if isinstance(condition, pd.Series):
-                result = pd.Series(np.where(condition, true_value, false_value), index=condition.index)
+                result = pd.Series(
+                    np.where(condition, true_value, false_value), index=condition.index
+                )
                 return result
             return np.where(condition, true_value, false_value)
 
@@ -334,7 +364,9 @@ class FactorCalculator:
 
             result = np.full(n, float(n), dtype=float)
             has_prior = insert_points > 0
-            result[has_prior] = positions[has_prior] - true_indices[insert_points[has_prior] - 1]
+            result[has_prior] = (
+                positions[has_prior] - true_indices[insert_points[has_prior] - 1]
+            )
 
             return pd.Series(result, index=condition.index, dtype=float)
 
@@ -358,6 +390,7 @@ class FactorCalculator:
         def CORR(x, y, n=10):
             """滚动Spearman秩相关（规则7.1：因子分析必须使用Spearman）"""
             from scipy.stats import spearmanr
+
             if not isinstance(x, pd.Series):
                 x = pd.Series(x)
             if not isinstance(y, pd.Series):
@@ -371,7 +404,11 @@ class FactorCalculator:
                     return np.nan
                 return spearmanr(window_x[valid], window_y[valid])[0]
 
-            return x.rolling(window=n, min_periods=2).apply(_spearman_corr, raw=False).replace([np.inf, -np.inf], np.nan)
+            return (
+                x.rolling(window=n, min_periods=2)
+                .apply(_spearman_corr, raw=False)
+                .replace([np.inf, -np.inf], np.nan)
+            )
 
         def COV(x, y, n=10):
             if isinstance(x, pd.Series) and isinstance(y, pd.Series):
@@ -401,17 +438,33 @@ class FactorCalculator:
         def TS_PRODUCT(series, n=5):
             if isinstance(series, pd.Series):
                 return series.rolling(window=n, min_periods=1).apply(np.prod, raw=True)
-            return pd.Series(series).rolling(window=n, min_periods=1).apply(np.prod, raw=True)
+            return (
+                pd.Series(series)
+                .rolling(window=n, min_periods=1)
+                .apply(np.prod, raw=True)
+            )
 
         def TS_ARGMAX(series, n=5):
             if isinstance(series, pd.Series):
-                return series.rolling(window=n, min_periods=1).apply(np.argmax, raw=True)
-            return pd.Series(series).rolling(window=n, min_periods=1).apply(np.argmax, raw=True)
+                return series.rolling(window=n, min_periods=1).apply(
+                    np.argmax, raw=True
+                )
+            return (
+                pd.Series(series)
+                .rolling(window=n, min_periods=1)
+                .apply(np.argmax, raw=True)
+            )
 
         def TS_ARGMIN(series, n=5):
             if isinstance(series, pd.Series):
-                return series.rolling(window=n, min_periods=1).apply(np.argmin, raw=True)
-            return pd.Series(series).rolling(window=n, min_periods=1).apply(np.argmin, raw=True)
+                return series.rolling(window=n, min_periods=1).apply(
+                    np.argmin, raw=True
+                )
+            return (
+                pd.Series(series)
+                .rolling(window=n, min_periods=1)
+                .apply(np.argmin, raw=True)
+            )
 
         def SCALE(series, n=None):
             if not isinstance(series, pd.Series):
@@ -492,7 +545,9 @@ class FactorCalculator:
 
         # 检测是否是函数形式（去除注释和空行后再检查）
         lines = factor_code.strip().split("\n")
-        code_lines = [line for line in lines if line.strip() and not line.strip().startswith("#")]
+        code_lines = [
+            line for line in lines if line.strip() and not line.strip().startswith("#")
+        ]
         is_function = len(code_lines) > 0 and code_lines[0].strip().startswith("def ")
 
         if is_function:
@@ -548,7 +603,9 @@ class FactorCalculator:
                 exec(factor_code, global_vars, local_vars)
 
                 # 调用函数（函数可能在 global_vars 或 local_vars 中）
-                calc_func = local_vars.get("calculate_factor") or global_vars.get("calculate_factor")
+                calc_func = local_vars.get("calculate_factor") or global_vars.get(
+                    "calculate_factor"
+                )
                 if calc_func is None:
                     raise ValueError("函数代码中未找到 'calculate_factor' 函数定义")
 
@@ -558,7 +615,9 @@ class FactorCalculator:
                     # 如果返回DataFrame，取第一列
                     result = result.iloc[:, 0]
                 elif not isinstance(result, pd.Series):
-                    raise ValueError(f"函数必须返回 pd.Series，实际返回了 {type(result)}")
+                    raise ValueError(
+                        f"函数必须返回 pd.Series，实际返回了 {type(result)}"
+                    )
 
                 return result
             except Exception as e:
@@ -644,7 +703,9 @@ class FactorCalculator:
                 logger.error(f"因子表达式计算失败: {factor_code}", exc_info=True)
                 raise ValueError(f"因子表达式计算失败: {e}")
 
-    def calculate_multiple(self, df: pd.DataFrame, factors: List[FactorModel]) -> pd.DataFrame:
+    def calculate_multiple(
+        self, df: pd.DataFrame, factors: List[FactorModel]
+    ) -> pd.DataFrame:
         """
         计算多个因子
 
@@ -1261,7 +1322,10 @@ class FactorService:
 
                 # 使用用户指定的接口验证连接
                 _stock_zh_a_daily_qfq_df = ak.stock_zh_a_daily(  # noqa: F841
-                    symbol="sz000001", start_date="20230903", end_date="20231027", adjust="qfq"
+                    symbol="sz000001",
+                    start_date="20230903",
+                    end_date="20231027",
+                    adjust="qfq",
                 )
             except Exception as e:
                 logger.warning(f"akshare健康检查失败: {e}")
@@ -1303,12 +1367,16 @@ class FactorService:
 
             # 验证门控：挖掘因子必须通过验证才能入库
             if not skip_validation and generated_factor_id is not None:
-                from backend.repositories.generated_factor_repository import GeneratedFactorRepository
+                from backend.repositories.generated_factor_repository import (
+                    GeneratedFactorRepository,
+                )
 
                 gen_repo = GeneratedFactorRepository(db)
                 gen_factor = gen_repo.get_by_id(generated_factor_id)
                 if gen_factor is None:
-                    raise ValueError(f"生成的因子记录 ID={generated_factor_id} 不存在，无法保存")
+                    raise ValueError(
+                        f"生成的因子记录 ID={generated_factor_id} 不存在，无法保存"
+                    )
                 if not gen_factor.is_valid:
                     raise ValueError(
                         f"因子未通过验证（验证得分: {gen_factor.validation_score:.1f}），"
@@ -1316,9 +1384,15 @@ class FactorService:
                     )
                 # 标记为已保存
                 gen_repo.mark_saved(generated_factor_id, name)
-            elif not skip_validation and generated_factor_id is None and category in ("遗传挖掘", "因子挖掘"):
+            elif (
+                not skip_validation
+                and generated_factor_id is None
+                and category in ("遗传挖掘", "因子挖掘")
+            ):
                 # 挖掘类因子但没有关联 generated_factor_id，给出警告但不阻止（兼容旧流程）
-                logger.warning(f"挖掘因子 '{name}' 未关联 generated_factor_id，跳过验证门控")
+                logger.warning(
+                    f"挖掘因子 '{name}' 未关联 generated_factor_id，跳过验证门控"
+                )
 
             # 检查名称是否已存在
             existing_factor = repo.get_by_name(name, include_inactive=True)
@@ -1333,7 +1407,9 @@ class FactorService:
                     logger.info(f"因子 '{name}' 已存在但已删除，将替换为新记录")
                     from sqlalchemy import delete
 
-                    stmt = delete(FactorModel).where(FactorModel.id == existing_factor.id)
+                    stmt = delete(FactorModel).where(
+                        FactorModel.id == existing_factor.id
+                    )
                     db.execute(stmt)
                     db.commit()
 
@@ -1463,7 +1539,9 @@ class FactorService:
             valid_result = result.dropna()
             if len(valid_result) > 0 and valid_result.nunique() == 1:
                 # 对于常量值，我们只警告但仍然允许通过
-                logger.warning(f"Factor result has only one unique value: {valid_result.iloc[0]}")
+                logger.warning(
+                    f"Factor result has only one unique value: {valid_result.iloc[0]}"
+                )
                 # 不返回错误，只记录警告，因为有些有效的因子可能确实是常量
 
             return True, "验证通过"
@@ -1492,7 +1570,10 @@ class FactorService:
                     # 检查是否是常见变量名的拼写错误
                     common_vars = {"close", "open", "high", "low", "volume", "np"}
                     for var in common_vars:
-                        if undefined_name.lower() == var.lower() or undefined_name.lower() in var:
+                        if (
+                            undefined_name.lower() == var.lower()
+                            or undefined_name.lower() in var
+                        ):
                             suggestions.append(f"变量名：{var}")
 
                     # 检查是否是常见函数的拼写错误
@@ -1541,11 +1622,17 @@ class FactorService:
                     }
 
                     for func, desc in common_funcs.items():
-                        if undefined_name.upper() == func or func in undefined_name.upper():
+                        if (
+                            undefined_name.upper() == func
+                            or func in undefined_name.upper()
+                        ):
                             suggestions.append(f"函数：{desc}")
 
                     if suggestions:
-                        return False, f"未定义的名称 '{undefined_name}'。您是否想使用：{', '.join(suggestions)}？"
+                        return (
+                            False,
+                            f"未定义的名称 '{undefined_name}'。您是否想使用：{', '.join(suggestions)}？",
+                        )
 
                     return (
                         False,
@@ -1625,7 +1712,9 @@ class FactorService:
 
         def _calc_one(code):
             try:
-                return code, self.calculate_factors_for_stock(code, factor_names, start_date, end_date, rolling_window)
+                return code, self.calculate_factors_for_stock(
+                    code, factor_names, start_date, end_date, rolling_window
+                )
             except Exception as e:
                 logger.warning(f"为股票 {code} 计算因子失败: {e}")
                 return code, None

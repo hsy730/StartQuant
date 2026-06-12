@@ -86,16 +86,24 @@ class FactorValidationService:
         }
 
         # IC验证：优先使用alphalens（多股票场景），回退到自实现（单股票场景）
-        results["ic_validation"] = self._validate_ic(factor_values, return_values, factor_data=factor_data)
+        results["ic_validation"] = self._validate_ic(
+            factor_values, return_values, factor_data=factor_data
+        )
 
-        results["rank_ic_validation"] = self._validate_rank_ic(factor_values, return_values)
+        results["rank_ic_validation"] = self._validate_rank_ic(
+            factor_values, return_values
+        )
 
         # IR验证：优先使用alphalens IC序列
-        results["ir_validation"] = self._validate_ir(factor_values, return_values, factor_data=factor_data)
+        results["ir_validation"] = self._validate_ir(
+            factor_values, return_values, factor_data=factor_data
+        )
 
         # 换手率验证：优先使用alphalens，回退到自实现
         results["turnover_validation"] = self._validate_turnover(
-            factor_values, cross_sectional_panel=cross_sectional_panel, factor_data=factor_data
+            factor_values,
+            cross_sectional_panel=cross_sectional_panel,
+            factor_data=factor_data,
         )
 
         # 4. 稳定性验证
@@ -103,12 +111,16 @@ class FactorValidationService:
 
         # 5. 相关性验证
         if existing_factors:
-            results["correlation_validation"] = self._validate_correlation(factor_values, existing_factors)
+            results["correlation_validation"] = self._validate_correlation(
+                factor_values, existing_factors
+            )
         else:
             results["correlation_validation"] = {"passed": True, "max_correlation": 0.0}
 
         # 6. 未来函数检测（Look-ahead Bias Detection）
-        results["lookahead_bias"] = self.detect_lookahead_bias(factor_values, return_values)
+        results["lookahead_bias"] = self.detect_lookahead_bias(
+            factor_values, return_values
+        )
 
         # overall_passed: 原有验证项全部通过 且 无高风险/严重未来函数
         base_checks_passed = all(
@@ -166,7 +178,9 @@ class FactorValidationService:
 
                     with warnings.catch_warnings():
                         warnings.simplefilter("ignore")
-                        ic_df = alphalens.performance.factor_information_coefficient(factor_data)
+                        ic_df = alphalens.performance.factor_information_coefficient(
+                            factor_data
+                        )
                     # 取1D周期的IC序列
                     ic_col = [c for c in ic_df.columns if "1" in str(c)]
                     if ic_col:
@@ -175,7 +189,11 @@ class FactorValidationService:
                         ic_series = ic_df.iloc[:, 0].dropna()
 
                     if len(ic_series) == 0:
-                        return {"passed": False, "ic": None, "message": "alphalens IC序列为空"}
+                        return {
+                            "passed": False,
+                            "ic": None,
+                            "message": "alphalens IC序列为空",
+                        }
 
                     ic = float(ic_series.mean())
                     n = len(ic_series)
@@ -183,7 +201,9 @@ class FactorValidationService:
 
                     # 基于IC序列的t检验（比单期Fisher z更可靠）
                     if n > 1 and ic_std > 1e-10:
-                        t_stat = float(ic) / float(ic_std / np.sqrt(n))  # se guaranteed positive (Rule 7.34)
+                        t_stat = float(ic) / float(
+                            ic_std / np.sqrt(n)
+                        )  # se guaranteed positive (Rule 7.34)
                         p_value = float(2 * (1 - stats.t.cdf(abs(t_stat), df=n - 1)))
                     else:
                         # 规则7.15：ic_std≈0 且 ic_mean≠0 → t_stat=inf
@@ -216,7 +236,9 @@ class FactorValidationService:
                     logger.warning(f"alphalens IC计算失败，回退到自实现: {e}")
 
         # 单股票回退：使用scipy.stats.spearmanr（符合规则7.12）
-        aligned_data = pd.DataFrame({"factor": factor_values, "return": return_values}).dropna()
+        aligned_data = pd.DataFrame(
+            {"factor": factor_values, "return": return_values}
+        ).dropna()
 
         if len(aligned_data) < 10:
             return {
@@ -255,8 +277,12 @@ class FactorValidationService:
             ),
         }
 
-    def _validate_rank_ic(self, factor_values: pd.Series, return_values: pd.Series) -> Dict:
-        aligned_data = pd.DataFrame({"factor": factor_values, "return": return_values}).dropna()
+    def _validate_rank_ic(
+        self, factor_values: pd.Series, return_values: pd.Series
+    ) -> Dict:
+        aligned_data = pd.DataFrame(
+            {"factor": factor_values, "return": return_values}
+        ).dropna()
 
         if len(aligned_data) < 10:
             return {
@@ -322,7 +348,9 @@ class FactorValidationService:
 
                     with warnings.catch_warnings():
                         warnings.simplefilter("ignore")
-                        ic_df = alphalens.performance.factor_information_coefficient(factor_data)
+                        ic_df = alphalens.performance.factor_information_coefficient(
+                            factor_data
+                        )
                     ic_col = [c for c in ic_df.columns if "1" in str(c)]
                     if ic_col:
                         ic_series = ic_df[ic_col[0]].dropna()
@@ -343,8 +371,12 @@ class FactorValidationService:
                         # t检验
                         n = len(ic_series)
                         if n > 1 and ic_std > 1e-10:
-                            t_stat = float(ic_mean) / float(ic_std / np.sqrt(n))  # se guaranteed positive (Rule 7.34)
-                            p_value = float(2 * (1 - stats.t.cdf(abs(t_stat), df=n - 1)))
+                            t_stat = float(ic_mean) / float(
+                                ic_std / np.sqrt(n)
+                            )  # se guaranteed positive (Rule 7.34)
+                            p_value = float(
+                                2 * (1 - stats.t.cdf(abs(t_stat), df=n - 1))
+                            )
                         else:
                             # 规则7.15：ic_std≈0 且 ic_mean≠0 → t_stat=inf
                             if abs(ic_mean) > 1e-10:
@@ -375,7 +407,9 @@ class FactorValidationService:
                     logger.warning(f"alphalens IR计算失败，回退到自实现: {e}")
 
         # 单股票回退：滚动Spearman IC
-        aligned_data = pd.DataFrame({"factor": factor_values, "return": return_values}).dropna()
+        aligned_data = pd.DataFrame(
+            {"factor": factor_values, "return": return_values}
+        ).dropna()
 
         if len(aligned_data) < 20:
             return {
@@ -385,13 +419,14 @@ class FactorValidationService:
             }
 
         window = 20
-        min_periods = 10
 
         from backend.utils.ic_calculator import calculate_rolling_ic
 
         rolling_ic = calculate_rolling_ic(
-            aligned_data["factor"], aligned_data["return"],
-            window=window, method="spearman"
+            aligned_data["factor"],
+            aligned_data["return"],
+            window=window,
+            method="spearman",
         )
 
         ic_mean = rolling_ic.mean()
@@ -451,10 +486,13 @@ class FactorValidationService:
                         warnings.simplefilter("ignore")
                         # alphalens分位数换手率：基于横截面分位数桶变化
                         turnover_df = alphalens.performance.quantile_turnover(
-                            factor_data["factor_quantile"], quantile=factor_data["factor_quantile"].max()
+                            factor_data["factor_quantile"],
+                            quantile=factor_data["factor_quantile"].max(),
                         )
                         # 因子排名自相关（换手率的互补指标）
-                        autocorr_df = alphalens.performance.factor_rank_autocorrelation(factor_data)
+                        autocorr_df = alphalens.performance.factor_rank_autocorrelation(
+                            factor_data
+                        )
 
                     # 提取1D周期的换手率均值
                     if isinstance(turnover_df, pd.DataFrame):
@@ -468,7 +506,11 @@ class FactorValidationService:
                     else:
                         turnover_series = pd.Series(dtype=float)
 
-                    turnover = float(turnover_series.mean()) if len(turnover_series) > 0 else 0.0
+                    turnover = (
+                        float(turnover_series.mean())
+                        if len(turnover_series) > 0
+                        else 0.0
+                    )
 
                     # 自相关
                     if isinstance(autocorr_df, pd.DataFrame):
@@ -482,7 +524,11 @@ class FactorValidationService:
                     else:
                         autocorr_series = pd.Series(dtype=float)
 
-                    autocorr = float(autocorr_series.mean()) if len(autocorr_series) > 0 else None
+                    autocorr = (
+                        float(autocorr_series.mean())
+                        if len(autocorr_series) > 0
+                        else None
+                    )
 
                     passed = turnover <= self.turnover_threshold
 
@@ -502,14 +548,18 @@ class FactorValidationService:
 
         # 回退方案1：自实现横截面分位数换手率
         n_bins = 5
-        if cross_sectional_panel is not None and isinstance(cross_sectional_panel.index, pd.MultiIndex):
+        if cross_sectional_panel is not None and isinstance(
+            cross_sectional_panel.index, pd.MultiIndex
+        ):
             factor_name = factor_values.name or "factor"
             if factor_name in cross_sectional_panel.columns:
                 panel = cross_sectional_panel[[factor_name]].dropna()
                 factor_bins = panel.groupby(level=0)[factor_name].transform(
                     lambda x: pd.cut(x.rank(pct=True), bins=n_bins, labels=False)
                 )
-                rank_change = (factor_bins != factor_bins.groupby(level=1).shift(1)).astype(float)
+                rank_change = (
+                    factor_bins != factor_bins.groupby(level=1).shift(1)
+                ).astype(float)
                 turnover = rank_change.dropna().mean()
             else:
                 turnover = self._time_series_turnover(factor_values, n_bins)
@@ -591,7 +641,9 @@ class FactorValidationService:
             "message": f"稳定性得分={stable_ratio:.2f} {'通过' if passed else '未通过'}",
         }
 
-    def _validate_correlation(self, factor_values: pd.Series, existing_factors: Dict[str, pd.Series]) -> Dict:
+    def _validate_correlation(
+        self, factor_values: pd.Series, existing_factors: Dict[str, pd.Series]
+    ) -> Dict:
         """
         验证因子相关性
 
@@ -606,10 +658,14 @@ class FactorValidationService:
 
         for factor_name, factor_data in existing_factors.items():
             # 对齐索引
-            aligned_data = pd.DataFrame({"new_factor": factor_values, "existing_factor": factor_data}).dropna()
+            aligned_data = pd.DataFrame(
+                {"new_factor": factor_values, "existing_factor": factor_data}
+            ).dropna()
 
             if len(aligned_data) >= 10:
-                corr = aligned_data["new_factor"].corr(aligned_data["existing_factor"], method="spearman")
+                corr = aligned_data["new_factor"].corr(
+                    aligned_data["existing_factor"], method="spearman"
+                )
                 correlations.append(corr)
 
         if not correlations:
@@ -621,7 +677,11 @@ class FactorValidationService:
 
         valid_correlations = [c for c in correlations if pd.notna(c)]
         if not valid_correlations:
-            return {"passed": True, "max_correlation": 0.0, "message": "无有效相关性可计算"}
+            return {
+                "passed": True,
+                "max_correlation": 0.0,
+                "message": "无有效相关性可计算",
+            }
         max_corr = max(abs(c) for c in valid_correlations)
         passed = max_corr <= self.max_correlation
 

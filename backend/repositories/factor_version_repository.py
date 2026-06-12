@@ -2,11 +2,14 @@
 因子版本数据仓储
 """
 
+import logging
 from typing import List, Optional
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from backend.models.factor_version import FactorVersionModel
+
+logger = logging.getLogger(__name__)
 
 
 class FactorVersionRepository:
@@ -36,9 +39,14 @@ class FactorVersionRepository:
         # 将该因子的其他版本标记为非当前
         self._set_current_false(factor_id)
 
-        self.db.add(version)
-        self.db.commit()
-        self.db.refresh(version)
+        try:
+            self.db.add(version)
+            self.db.commit()
+            self.db.refresh(version)
+        except Exception as e:
+            self.db.rollback()
+            logger.error(f"创建因子版本失败: {e}")
+            raise
         return version
 
     def get_by_id(self, version_id: int) -> Optional[FactorVersionModel]:
@@ -62,7 +70,9 @@ class FactorVersionRepository:
         )
         return self.db.scalar(stmt)
 
-    def get_by_version_code(self, factor_id: int, version_code: str) -> Optional[FactorVersionModel]:
+    def get_by_version_code(
+        self, factor_id: int, version_code: str
+    ) -> Optional[FactorVersionModel]:
         """根据版本号获取版本"""
         stmt = select(FactorVersionModel).where(
             FactorVersionModel.factor_id == factor_id,
@@ -84,7 +94,9 @@ class FactorVersionRepository:
         """删除因子的所有版本"""
         from sqlalchemy import delete
 
-        stmt = delete(FactorVersionModel).where(FactorVersionModel.factor_id == factor_id)
+        stmt = delete(FactorVersionModel).where(
+            FactorVersionModel.factor_id == factor_id
+        )
         result = self.db.execute(stmt)
         self.db.commit()
         return result.rowcount
@@ -99,13 +111,22 @@ class FactorVersionRepository:
         self._set_current_false(version.factor_id)
 
         # 设置该版本为当前
-        version.is_current = True
-        self.db.commit()
+        try:
+            version.is_current = True
+            self.db.commit()
+        except Exception as e:
+            self.db.rollback()
+            logger.error(f"设置当前版本失败: {e}")
+            raise
         return True
 
     def _set_current_false(self, factor_id: int) -> None:
         """将因子的所有版本设置为非当前"""
-        stmt = update(FactorVersionModel).where(FactorVersionModel.factor_id == factor_id).values(is_current=False)
+        stmt = (
+            update(FactorVersionModel)
+            .where(FactorVersionModel.factor_id == factor_id)
+            .values(is_current=False)
+        )
         self.db.execute(stmt)
 
     def get_version_count(self, factor_id: int) -> int:
@@ -113,6 +134,10 @@ class FactorVersionRepository:
         from sqlalchemy import func
 
         return (
-            self.db.scalar(select(func.count(FactorVersionModel.id)).where(FactorVersionModel.factor_id == factor_id))
+            self.db.scalar(
+                select(func.count(FactorVersionModel.id)).where(
+                    FactorVersionModel.factor_id == factor_id
+                )
+            )
             or 0
         )

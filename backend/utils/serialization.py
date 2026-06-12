@@ -67,6 +67,10 @@ def sanitize_dict(d: Any) -> Any:
         return None if (np.isnan(d) or np.isinf(d)) else d
     elif isinstance(d, np.ndarray):
         return sanitize_dict(d.tolist())
+    elif isinstance(d, pd.Series):
+        return sanitize_dict(d.tolist())
+    elif isinstance(d, tuple):
+        return sanitize_dict(list(d))
     elif isinstance(d, pd.Timestamp):
         return str(d)
     elif isinstance(d, (pd.Timedelta,)):

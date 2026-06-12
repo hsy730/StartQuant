@@ -15,7 +15,11 @@ class ExportService:
         pass
 
     def export_backtest_to_excel(
-        self, backtest_result: Dict, output_path: str, metrics: Dict = None, strategy_name: str = "策略"
+        self,
+        backtest_result: Dict,
+        output_path: str,
+        metrics: Dict = None,
+        strategy_name: str = "策略",
     ):
         """
         导出回测结果到Excel（多Sheet）
@@ -42,7 +46,13 @@ class ExportService:
             # Sheet 5: 收益率分析
             self._write_returns_sheet(writer, backtest_result)
 
-    def _write_summary_sheet(self, writer: pd.ExcelWriter, backtest_result: Dict, metrics: Dict, strategy_name: str):
+    def _write_summary_sheet(
+        self,
+        writer: pd.ExcelWriter,
+        backtest_result: Dict,
+        metrics: Dict,
+        strategy_name: str,
+    ):
         """写入摘要Sheet"""
         summary_data = []
 
@@ -56,7 +66,9 @@ class ExportService:
         capital = backtest_result.get("initial_capital")
         capital_str = f"{capital:,.0f}" if capital is not None else "N/A"
         summary_data.append(["初始资金", f"{capital_str} 元"])
-        summary_data.append(["交易次数", f"{backtest_result.get('trades_count', 0)} 次"])
+        summary_data.append(
+            ["交易次数", f"{backtest_result.get('trades_count', 0)} 次"]
+        )
         summary_data.append([])
 
         # 性能指标
@@ -66,14 +78,26 @@ class ExportService:
                 return f"{val:{fmt}}" if val is not None else default
 
             summary_data.append(["性能指标"])
-            summary_data.append(["总收益率", _fmt(metrics.get("total_return"), ".2%", 0)])
-            summary_data.append(["年化收益率", _fmt(metrics.get("annual_return"), ".2%", 0)])
+            summary_data.append(
+                ["总收益率", _fmt(metrics.get("total_return"), ".2%", 0)]
+            )
+            summary_data.append(
+                ["年化收益率", _fmt(metrics.get("annual_return"), ".2%", 0)]
+            )
             summary_data.append(["波动率", _fmt(metrics.get("volatility"), ".2%", 0)])
-            summary_data.append(["夏普比率", _fmt(metrics.get("sharpe_ratio"), ".2f", 0)])
-            summary_data.append(["最大回撤", _fmt(metrics.get("max_drawdown"), ".2%", 0)])
-            summary_data.append(["卡玛比率", _fmt(metrics.get("calmar_ratio"), ".2f", 0)])
+            summary_data.append(
+                ["夏普比率", _fmt(metrics.get("sharpe_ratio"), ".2f", 0)]
+            )
+            summary_data.append(
+                ["最大回撤", _fmt(metrics.get("max_drawdown"), ".2%", 0)]
+            )
+            summary_data.append(
+                ["卡玛比率", _fmt(metrics.get("calmar_ratio"), ".2f", 0)]
+            )
             summary_data.append(["胜率", _fmt(metrics.get("win_rate"), ".2%", 0)])
-            summary_data.append(["索提诺比率", _fmt(metrics.get("sortino_ratio"), ".2f", 0)])
+            summary_data.append(
+                ["索提诺比率", _fmt(metrics.get("sortino_ratio"), ".2f", 0)]
+            )
 
         # 创建DataFrame
         df_summary = pd.DataFrame(summary_data, columns=["项目", "值"])
@@ -131,7 +155,11 @@ class ExportService:
                 trades_list = []
 
                 for i, date in enumerate(trade_dates):
-                    prev_weight = weights.iloc[weight_changes.index.get_loc(date) - 1] if i > 0 else 0
+                    prev_weight = (
+                        weights.iloc[weight_changes.index.get_loc(date) - 1]
+                        if i > 0
+                        else 0
+                    )
                     curr_weight = weights.loc[date]
 
                     trades_list.append(
@@ -148,7 +176,9 @@ class ExportService:
                 df_trades.to_excel(writer, sheet_name="交易记录", index=False)
             else:
                 # 无交易记录
-                pd.DataFrame({"消息": ["无交易记录"]}).to_excel(writer, sheet_name="交易记录", index=False)
+                pd.DataFrame({"消息": ["无交易记录"]}).to_excel(
+                    writer, sheet_name="交易记录", index=False
+                )
 
     def _write_returns_sheet(self, writer: pd.ExcelWriter, backtest_result: Dict):
         """写入收益率分析Sheet"""
@@ -184,7 +214,9 @@ class ExportService:
             df_returns.to_excel(writer, sheet_name="收益率分析")
 
             # 将统计信息写入同一个Sheet
-            df_stats.to_excel(writer, sheet_name="收益率分析", startrow=len(df_returns) + 3)
+            df_stats.to_excel(
+                writer, sheet_name="收益率分析", startrow=len(df_returns) + 3
+            )
 
     def export_comparison_to_excel(self, comparison_result: Dict, output_path: str):
         """
@@ -219,11 +251,21 @@ class ExportService:
                     tests_list.append(
                         {
                             "对比": test_key,
-                            "独立T检验p值": f"{test_result['independent_t_test']['p_value']:.4f}" if test_result['independent_t_test']['p_value'] is not None else "N/A",
-                            "显著性": "是" if test_result["independent_t_test"]["significant"] else "否",
-                            "配对T检验p值": f"{test_result['paired_t_test']['p_value']:.4f}" if test_result['paired_t_test']['p_value'] is not None else "N/A",
-                            "显著性(配对)": "是" if test_result["paired_t_test"]["significant"] else "否",
-                            "相关系数": f"{test_result['correlation']:.4f}" if test_result['correlation'] is not None else "N/A",
+                            "独立T检验p值": f"{test_result['independent_t_test']['p_value']:.4f}"
+                            if test_result["independent_t_test"]["p_value"] is not None
+                            else "N/A",
+                            "显著性": "是"
+                            if test_result["independent_t_test"]["significant"]
+                            else "否",
+                            "配对T检验p值": f"{test_result['paired_t_test']['p_value']:.4f}"
+                            if test_result["paired_t_test"]["p_value"] is not None
+                            else "N/A",
+                            "显著性(配对)": "是"
+                            if test_result["paired_t_test"]["significant"]
+                            else "否",
+                            "相关系数": f"{test_result['correlation']:.4f}"
+                            if test_result["correlation"] is not None
+                            else "N/A",
                         }
                     )
 

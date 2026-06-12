@@ -156,7 +156,9 @@ class FactorVersionService:
 
             return version_repo.delete(version_id)
 
-    def compare_versions(self, factor_id: int, version_code1: str, version_code2: str) -> Dict:
+    def compare_versions(
+        self, factor_id: int, version_code1: str, version_code2: str
+    ) -> Dict:
         """
         比较两个版本的差异
 

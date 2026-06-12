@@ -92,7 +92,9 @@ async def calculate_factor(request: CalculateRequest):
             factor = repo.get_by_name(request.factor_name)
 
         if not factor:
-            raise HTTPException(status_code=404, detail=f"因子 '{request.factor_name}' 不存在")
+            raise HTTPException(
+                status_code=404, detail=f"因子 '{request.factor_name}' 不存在"
+            )
 
         logger.info(f"开始计算因子: {request.factor_name}, 代码: {factor.code}")
 
@@ -102,9 +104,16 @@ async def calculate_factor(request: CalculateRequest):
 
         for stock_code in request.stock_codes:
             try:
-                logger.info(f"获取股票数据: {stock_code}, 时间范围: {request.start_date} - {request.end_date}")
+                logger.info(
+                    f"获取股票数据: {stock_code}, 时间范围: {request.start_date} - {request.end_date}"
+                )
                 if request.freq.upper() != "D":
-                    minute_period = (request.period or request.freq).lower().replace("min", "").replace("t", "")
+                    minute_period = (
+                        (request.period or request.freq)
+                        .lower()
+                        .replace("min", "")
+                        .replace("t", "")
+                    )
                     data = data_service.get_stock_minute_data(
                         stock_code,
                         request.start_date,
@@ -112,7 +121,9 @@ async def calculate_factor(request: CalculateRequest):
                         period=minute_period if minute_period.isdigit() else "5",
                     )
                 else:
-                    data = data_service.get_stock_data(stock_code, request.start_date, request.end_date)
+                    data = data_service.get_stock_data(
+                        stock_code, request.start_date, request.end_date
+                    )
 
                 if data is None or len(data) == 0:
                     logger.warning(f"股票 {stock_code} 未获取到数据")
@@ -130,7 +141,9 @@ async def calculate_factor(request: CalculateRequest):
                     errors.append(f"股票 {stock_code} 因子计算失败")
                     continue
 
-                logger.info(f"因子计算完成，有效值数量: {factor_series.notna().sum()}/{len(factor_series)}")
+                logger.info(
+                    f"因子计算完成，有效值数量: {factor_series.notna().sum()}/{len(factor_series)}"
+                )
 
                 # 将因子值添加到数据中（先复制避免污染缓存）
                 data = data.copy()
@@ -142,7 +155,9 @@ async def calculate_factor(request: CalculateRequest):
                 valid_factor_values = valid_data[request.factor_name].tolist()
 
                 # 额外检查：确保所有值都是有效的数字，转换 NaN 和 inf 为 None
-                valid_factor_values = [safe_numeric_value(v) for v in valid_factor_values]
+                valid_factor_values = [
+                    safe_numeric_value(v) for v in valid_factor_values
+                ]
 
                 # 移除值为 None 的项
                 filtered_dates = []
@@ -163,7 +178,9 @@ async def calculate_factor(request: CalculateRequest):
 
                 # 验证数据完整性
                 if len(valid_dates) != len(valid_factor_values):
-                    logger.error(f"数据长度不一致! dates={len(valid_dates)}, values={len(valid_factor_values)}")
+                    logger.error(
+                        f"数据长度不一致! dates={len(valid_dates)}, values={len(valid_factor_values)}"
+                    )
                     errors.append(f"股票 {stock_code} 数据长度不一致")
                     continue
 
@@ -172,17 +189,27 @@ async def calculate_factor(request: CalculateRequest):
                     "dates": valid_dates,
                     "factor_values": valid_factor_values,
                     "statistics": {
-                        "mean": safe_numeric_value(factor_series.mean()) if len(factor_series) > 0 else None,
-                        "std": safe_numeric_value(factor_series.std()) if len(factor_series) > 0 else None,
-                        "min": safe_numeric_value(factor_series.min()) if len(factor_series) > 0 else None,
-                        "max": safe_numeric_value(factor_series.max()) if len(factor_series) > 0 else None,
+                        "mean": safe_numeric_value(factor_series.mean())
+                        if len(factor_series) > 0
+                        else None,
+                        "std": safe_numeric_value(factor_series.std())
+                        if len(factor_series) > 0
+                        else None,
+                        "min": safe_numeric_value(factor_series.min())
+                        if len(factor_series) > 0
+                        else None,
+                        "max": safe_numeric_value(factor_series.max())
+                        if len(factor_series) > 0
+                        else None,
                         "count": int(factor_series.count()),
                     },
                 }
                 logger.info(f"股票 {stock_code} 因子计算成功")
 
             except Exception as e:
-                logger.error(f"股票 {stock_code} 因子计算失败: {str(e)}\n{traceback.format_exc()}")
+                logger.error(
+                    f"股票 {stock_code} 因子计算失败: {str(e)}\n{traceback.format_exc()}"
+                )
                 errors.append(f"股票 {stock_code} 计算失败: {str(e)}")
                 continue
 
@@ -194,7 +221,11 @@ async def calculate_factor(request: CalculateRequest):
         if errors:
             logger.warning(f"因子计算完成，但有部分错误: {'; '.join(errors)}")
 
-        return {"success": True, "data": result_data, "warnings": errors if errors else None}
+        return {
+            "success": True,
+            "data": result_data,
+            "warnings": errors if errors else None,
+        }
     except HTTPException:
         raise
     except Exception as e:
@@ -222,7 +253,9 @@ async def calculate_ic(request: ICAnalysisRequest):
         )
 
         logger.info(f"IC分析原始结果 keys: {result.keys() if result else 'None'}")
-        logger.info(f"IC分析原始 ic_ir: {result.get('ic_ir', {}).get('ic_stats', {}) if result else 'None'}")
+        logger.info(
+            f"IC分析原始 ic_ir: {result.get('ic_ir', {}).get('ic_stats', {}) if result else 'None'}"
+        )
 
         # 提取 IC/IR 相关数据并简化返回格式
         ic_ir_data = result.get("ic_ir", {})
@@ -317,7 +350,9 @@ async def decay_analysis(request: ICAnalysisRequest):
             factor = repo.get_by_name(request.factor_name)
 
         if not factor:
-            raise HTTPException(status_code=404, detail=f"因子 '{request.factor_name}' 不存在")
+            raise HTTPException(
+                status_code=404, detail=f"因子 '{request.factor_name}' 不存在"
+            )
 
         # 计算因子在不同周期的IC（衰减分析）
         decay_periods = [1, 3, 5, 10, 20]  # 1日, 3日, 5日, 10日, 20日
@@ -327,7 +362,12 @@ async def decay_analysis(request: ICAnalysisRequest):
         stock_data_cache = {}
         for stock_code in request.stock_codes:
             if request.freq.upper() != "D":
-                minute_period = (request.period or request.freq).lower().replace("min", "").replace("t", "")
+                minute_period = (
+                    (request.period or request.freq)
+                    .lower()
+                    .replace("min", "")
+                    .replace("t", "")
+                )
                 data = data_service.get_stock_minute_data(
                     stock_code,
                     request.start_date,
@@ -335,7 +375,9 @@ async def decay_analysis(request: ICAnalysisRequest):
                     period=minute_period if minute_period.isdigit() else "5",
                 )
             else:
-                data = data_service.get_stock_data(stock_code, request.start_date, request.end_date)
+                data = data_service.get_stock_data(
+                    stock_code, request.start_date, request.end_date
+                )
             if data is not None and len(data) > 0:
                 data = data.copy()
                 # 预计算因子值（同一因子只需计算一次）
@@ -351,13 +393,21 @@ async def decay_analysis(request: ICAnalysisRequest):
                 # 计算未来收益率
                 future_returns = data["close"].pct_change(period).shift(-period)
                 # 计算IC（使用Spearman，符合规则7.1）
-                ic = calculate_rolling_ic(factor_series, future_returns, window=20, method="spearman")
+                ic = calculate_rolling_ic(
+                    factor_series, future_returns, window=20, method="spearman"
+                )
                 if not ic.empty and ic.dropna().count() > 0:
                     all_ics.append(ic.dropna().mean())
 
             if all_ics:
                 mean_ic = np.mean(all_ics)
-                decay_results.append({"period": f"{period}日", "ic_mean": float(mean_ic), "period_days": period})
+                decay_results.append(
+                    {
+                        "period": f"{period}日",
+                        "ic_mean": float(mean_ic),
+                        "period_days": period,
+                    }
+                )
 
         result = {"factor_name": request.factor_name, "decay_analysis": decay_results}
 
@@ -375,7 +425,9 @@ async def exposure_analysis(request: CalculateRequest):
         from backend.repositories.factor_repository import FactorRepository
         from backend.core.database import get_db
 
-        logger.info(f"开始因子暴露度分析: {request.factor_name}, 股票: {request.stock_codes}")
+        logger.info(
+            f"开始因子暴露度分析: {request.factor_name}, 股票: {request.stock_codes}"
+        )
 
         # 获取因子定义
         with get_db() as db:
@@ -383,11 +435,16 @@ async def exposure_analysis(request: CalculateRequest):
             factor = repo.get_by_name(request.factor_name)
 
         if not factor:
-            raise HTTPException(status_code=404, detail=f"因子 '{request.factor_name}' 不存在")
+            raise HTTPException(
+                status_code=404, detail=f"因子 '{request.factor_name}' 不存在"
+            )
 
         # 获取因子数据
         factor_data = factor_service.calculate_factors_for_stocks(
-            request.stock_codes, [request.factor_name], request.start_date, request.end_date
+            request.stock_codes,
+            [request.factor_name],
+            request.start_date,
+            request.end_date,
         )
 
         if not factor_data:
@@ -415,7 +472,9 @@ async def effectiveness_analysis(request: ICAnalysisRequest):
         from backend.repositories.factor_repository import FactorRepository
         from backend.core.database import get_db
 
-        logger.info(f"开始因子有效性分析: {request.factor_name}, 股票: {request.stock_codes}")
+        logger.info(
+            f"开始因子有效性分析: {request.factor_name}, 股票: {request.stock_codes}"
+        )
 
         # 获取因子定义
         with get_db() as db:
@@ -423,11 +482,16 @@ async def effectiveness_analysis(request: ICAnalysisRequest):
             factor = repo.get_by_name(request.factor_name)
 
         if not factor:
-            raise HTTPException(status_code=404, detail=f"因子 '{request.factor_name}' 不存在")
+            raise HTTPException(
+                status_code=404, detail=f"因子 '{request.factor_name}' 不存在"
+            )
 
         # 获取因子数据
         factor_data = factor_service.calculate_factors_for_stocks(
-            request.stock_codes, [request.factor_name], request.start_date, request.end_date
+            request.stock_codes,
+            [request.factor_name],
+            request.start_date,
+            request.end_date,
         )
 
         if not factor_data:
@@ -435,7 +499,9 @@ async def effectiveness_analysis(request: ICAnalysisRequest):
 
         # 调用有效性分析服务
         result = factor_effectiveness_service.analyze_effectiveness(
-            factor_data=factor_data, factor_name=request.factor_name, future_periods=[1, 5, 10, 20]
+            factor_data=factor_data,
+            factor_name=request.factor_name,
+            future_periods=[1, 5, 10, 20],
         )
 
         return sanitize_dict({"success": True, "data": result})
@@ -455,7 +521,9 @@ async def attribution_analysis(request: ICAnalysisRequest):
         from backend.repositories.factor_repository import FactorRepository
         from backend.core.database import get_db
 
-        logger.info(f"开始因子贡献度分解: {request.factor_name}, 股票: {request.stock_codes}")
+        logger.info(
+            f"开始因子贡献度分解: {request.factor_name}, 股票: {request.stock_codes}"
+        )
 
         # 获取因子定义
         with get_db() as db:
@@ -463,11 +531,16 @@ async def attribution_analysis(request: ICAnalysisRequest):
             factor = repo.get_by_name(request.factor_name)
 
         if not factor:
-            raise HTTPException(status_code=404, detail=f"因子 '{request.factor_name}' 不存在")
+            raise HTTPException(
+                status_code=404, detail=f"因子 '{request.factor_name}' 不存在"
+            )
 
         # 获取因子数据
         factor_data = factor_service.calculate_factors_for_stocks(
-            request.stock_codes, [request.factor_name], request.start_date, request.end_date
+            request.stock_codes,
+            [request.factor_name],
+            request.start_date,
+            request.end_date,
         )
 
         if not factor_data:
@@ -475,7 +548,9 @@ async def attribution_analysis(request: ICAnalysisRequest):
 
         # 调用贡献度分解服务
         result = factor_attribution_service.analyze_attribution(
-            factor_data=factor_data, factor_name=request.factor_name, benchmark_data=None
+            factor_data=factor_data,
+            factor_name=request.factor_name,
+            benchmark_data=None,
         )
 
         return sanitize_dict({"success": True, "data": result})
@@ -495,7 +570,9 @@ async def monitoring_analysis(request: ICAnalysisRequest):
         from backend.repositories.factor_repository import FactorRepository
         from backend.core.database import get_db
 
-        logger.info(f"开始时间序列动态监测: {request.factor_name}, 股票: {request.stock_codes}")
+        logger.info(
+            f"开始时间序列动态监测: {request.factor_name}, 股票: {request.stock_codes}"
+        )
 
         # 获取因子定义
         with get_db() as db:
@@ -503,18 +580,25 @@ async def monitoring_analysis(request: ICAnalysisRequest):
             factor = repo.get_by_name(request.factor_name)
 
         if not factor:
-            raise HTTPException(status_code=404, detail=f"因子 '{request.factor_name}' 不存在")
+            raise HTTPException(
+                status_code=404, detail=f"因子 '{request.factor_name}' 不存在"
+            )
 
         # 获取因子数据
         factor_data = factor_service.calculate_factors_for_stocks(
-            request.stock_codes, [request.factor_name], request.start_date, request.end_date
+            request.stock_codes,
+            [request.factor_name],
+            request.start_date,
+            request.end_date,
         )
 
         if not factor_data:
             raise HTTPException(status_code=500, detail="未能获取有效的因子数据")
 
         # 调用动态监测服务
-        result = factor_monitoring_service.monitor_dynamics(factor_data=factor_data, factor_name=request.factor_name)
+        result = factor_monitoring_service.monitor_dynamics(
+            factor_data=factor_data, factor_name=request.factor_name
+        )
 
         return sanitize_dict({"success": True, "data": result})
     except HTTPException:
@@ -568,7 +652,10 @@ async def enhanced_correlation_analysis(request: CorrelationAnalysisRequest):
         for factor_name in request.factor_names:
             try:
                 factor_data = factor_service.calculate_factors_for_stocks(
-                    request.stock_codes, [factor_name], request.start_date, request.end_date
+                    request.stock_codes,
+                    [factor_name],
+                    request.start_date,
+                    request.end_date,
                 )
                 if factor_data:
                     all_factor_data[factor_name] = factor_data
@@ -591,7 +678,13 @@ async def enhanced_correlation_analysis(request: CorrelationAnalysisRequest):
                 for date_idx, row in stock_df.iterrows():
                     value = row[factor_name]
                     if pd.notna(value):
-                        records.append({"date": pd.Timestamp(date_idx), "asset": stock_code, factor_name: value})
+                        records.append(
+                            {
+                                "date": pd.Timestamp(date_idx),
+                                "asset": stock_code,
+                                factor_name: value,
+                            }
+                        )
 
             if records:
                 factor_df = pd.DataFrame(records)
@@ -604,14 +697,18 @@ async def enhanced_correlation_analysis(request: CorrelationAnalysisRequest):
         # 合并所有因子数据
         from functools import reduce
 
-        factor_panel = reduce(lambda left, right: left.join(right, how="outer"), factor_panel_list)
+        factor_panel = reduce(
+            lambda left, right: left.join(right, how="outer"), factor_panel_list
+        )
         factor_panel = factor_panel.dropna(how="all")
 
         if len(factor_panel) == 0:
             raise HTTPException(status_code=500, detail="合并后无有效数据")
 
         # 调用因子相关性分析服务（精简版，零冗余依赖）
-        from backend.services.factor_correlation_service import factor_correlation_service
+        from backend.services.factor_correlation_service import (
+            factor_correlation_service,
+        )
 
         config = request.config or {
             "rolling_window": 120,
@@ -626,7 +723,9 @@ async def enhanced_correlation_analysis(request: CorrelationAnalysisRequest):
             factor_panel=factor_panel, factor_cols=request.factor_names, config=config
         )
 
-        logger.info(f"增强版相关性分析完成，生成{len(result.get('warnings', []))}个警告")
+        logger.info(
+            f"增强版相关性分析完成，生成{len(result.get('warnings', []))}个警告"
+        )
 
         return sanitize_dict(
             {
@@ -665,7 +764,6 @@ async def correlation_interpretation(request: CorrelationAnalysisRequest):
     """
 
     try:
-
         return {
             "success": True,
             "data": {
@@ -724,7 +822,11 @@ async def mixed_type_correlation_analysis(request: CorrelationAnalysisRequest):
             "data": {
                 "status": status,
                 "capabilities": capabilities,
-                "install_hint": (None if status == "phik_available" else "运行: pip install phik 获得完整功能"),
+                "install_hint": (
+                    None
+                    if status == "phik_available"
+                    else "运行: pip install phik 获得完整功能"
+                ),
             },
         }
 
@@ -770,23 +872,33 @@ async def quantile_returns_analysis(request: QuantileReturnsRequest):
         from backend.repositories.factor_repository import FactorRepository
         from backend.core.database import get_db
 
-        logger.info(f"开始因子分组收益分析: {request.factor_name}, " f"股票数={len(request.stock_codes)}")
+        logger.info(
+            f"开始因子分组收益分析: {request.factor_name}, "
+            f"股票数={len(request.stock_codes)}"
+        )
 
         with get_db() as db:
             repo = FactorRepository(db)
             factor = repo.get_by_name(request.factor_name)
 
         if not factor:
-            raise HTTPException(status_code=404, detail=f"因子 '{request.factor_name}' 不存在")
+            raise HTTPException(
+                status_code=404, detail=f"因子 '{request.factor_name}' 不存在"
+            )
 
         factor_data = factor_service.calculate_factors_for_stocks(
-            request.stock_codes, [request.factor_name], request.start_date, request.end_date
+            request.stock_codes,
+            [request.factor_name],
+            request.start_date,
+            request.end_date,
         )
 
         if not factor_data:
             raise HTTPException(status_code=500, detail="未能获取有效的因子数据")
 
-        from backend.services.factor_return_analysis_service import factor_return_analysis_service
+        from backend.services.factor_return_analysis_service import (
+            factor_return_analysis_service,
+        )
 
         _config = {  # noqa: F841
             "n_quantiles": request.n_quantiles,
@@ -849,16 +961,23 @@ async def cumulative_returns_analysis(request: QuantileReturnsRequest):
             factor = repo.get_by_name(request.factor_name)
 
         if not factor:
-            raise HTTPException(status_code=404, detail=f"因子 '{request.factor_name}' 不存在")
+            raise HTTPException(
+                status_code=404, detail=f"因子 '{request.factor_name}' 不存在"
+            )
 
         factor_data = factor_service.calculate_factors_for_stocks(
-            request.stock_codes, [request.factor_name], request.start_date, request.end_date
+            request.stock_codes,
+            [request.factor_name],
+            request.start_date,
+            request.end_date,
         )
 
         if not factor_data:
             raise HTTPException(status_code=500, detail="未能获取有效的因子数据")
 
-        from backend.services.factor_return_analysis_service import factor_return_analysis_service
+        from backend.services.factor_return_analysis_service import (
+            factor_return_analysis_service,
+        )
 
         result = factor_return_analysis_service.calculate_cumulative_returns(
             factor_data=factor_data,
@@ -918,16 +1037,23 @@ async def turnover_analysis(request: ICAnalysisRequest):
             factor = repo.get_by_name(request.factor_name)
 
         if not factor:
-            raise HTTPException(status_code=404, detail=f"因子 '{request.factor_name}' 不存在")
+            raise HTTPException(
+                status_code=404, detail=f"因子 '{request.factor_name}' 不存在"
+            )
 
         factor_data = factor_service.calculate_factors_for_stocks(
-            request.stock_codes, [request.factor_name], request.start_date, request.end_date
+            request.stock_codes,
+            [request.factor_name],
+            request.start_date,
+            request.end_date,
         )
 
         if not factor_data:
             raise HTTPException(status_code=500, detail="未能获取有效的因子数据")
 
-        from backend.services.factor_return_analysis_service import factor_return_analysis_service
+        from backend.services.factor_return_analysis_service import (
+            factor_return_analysis_service,
+        )
 
         result = factor_return_analysis_service.calculate_turnover_analysis(
             factor_data=factor_data,
@@ -989,10 +1115,15 @@ async def full_tear_sheet(request: QuantileReturnsRequest):
             factor = repo.get_by_name(request.factor_name)
 
         if not factor:
-            raise HTTPException(status_code=404, detail=f"因子 '{request.factor_name}' 不存在")
+            raise HTTPException(
+                status_code=404, detail=f"因子 '{request.factor_name}' 不存在"
+            )
 
         factor_data = factor_service.calculate_factors_for_stocks(
-            request.stock_codes, [request.factor_name], request.start_date, request.end_date
+            request.stock_codes,
+            [request.factor_name],
+            request.start_date,
+            request.end_date,
         )
 
         if not factor_data:
@@ -1006,7 +1137,9 @@ async def full_tear_sheet(request: QuantileReturnsRequest):
         )
 
         if not result.get("success"):
-            raise HTTPException(status_code=500, detail=result.get("error", "Tear Sheet生成失败"))
+            raise HTTPException(
+                status_code=500, detail=result.get("error", "Tear Sheet生成失败")
+            )
 
         tear_sheet = result["tear_sheet"]
         score = tear_sheet.get("summary", {}).get("overall_score")
@@ -1044,7 +1177,9 @@ class WeightedICRequest(BaseModel):
     stock_codes: List[str]
     start_date: str
     end_date: str
-    weighting_method: str = "ir_weight"  # equal_weight / ir_weight / abs_ic_weight / decay_weight
+    weighting_method: str = (
+        "ir_weight"  # equal_weight / ir_weight / abs_ic_weight / decay_weight
+    )
 
 
 @router.post("/weighted-ic")
@@ -1066,13 +1201,19 @@ async def weighted_ic_analysis(request: WeightedICRequest):
     try:
         from backend.services.factor_service import factor_service
 
-        logger.info(f"开始加权IC分析: 因子={request.factor_names}, " f"方法={request.weighting_method}")
+        logger.info(
+            f"开始加权IC分析: 因子={request.factor_names}, "
+            f"方法={request.weighting_method}"
+        )
 
         all_factor_data = {}
         for factor_name in request.factor_names:
             try:
                 factor_data = factor_service.calculate_factors_for_stocks(
-                    request.stock_codes, [factor_name], request.start_date, request.end_date
+                    request.stock_codes,
+                    [factor_name],
+                    request.start_date,
+                    request.end_date,
                 )
                 if factor_data:
                     all_factor_data[factor_name] = factor_data
@@ -1140,7 +1281,10 @@ def _extract_all_ics(
 
                 if valid_mask.sum() > 20:
                     ic_series = calculate_rolling_ic(
-                        df.loc[valid_mask, factor_name], future_ret.loc[valid_mask], window=20, method="spearman"
+                        df.loc[valid_mask, factor_name],
+                        future_ret.loc[valid_mask],
+                        window=20,
+                        method="spearman",
                     )
                     valid_ic = ic_series.dropna()
 
@@ -1178,7 +1322,10 @@ async def factor_importance_analysis(request: WeightedICRequest):
         for factor_name in request.factor_names:
             try:
                 factor_data = factor_service.calculate_factors_for_stocks(
-                    request.stock_codes, [factor_name], request.start_date, request.end_date
+                    request.stock_codes,
+                    [factor_name],
+                    request.start_date,
+                    request.end_date,
                 )
                 if factor_data:
                     all_factor_data[factor_name] = factor_data
@@ -1205,7 +1352,11 @@ async def factor_importance_analysis(request: WeightedICRequest):
 
         logger.info("因子重要性排名完成")
 
-        top_factor = result.get("ranking", [{}])[0].get("factor_name", "N/A") if result.get("ranking") else "N/A"
+        top_factor = (
+            result.get("ranking", [{}])[0].get("factor_name", "N/A")
+            if result.get("ranking")
+            else "N/A"
+        )
 
         return sanitize_dict(
             {
@@ -1275,7 +1426,11 @@ async def detect_lookahead_bias(request: LookaheadBiasRequest):
         )
 
         # 选择检测器
-        detector = strict_lookahead_bias_detector if request.strict_mode else lookahead_bias_detector
+        detector = (
+            strict_lookahead_bias_detector
+            if request.strict_mode
+            else lookahead_bias_detector
+        )
 
         # 获取多因子数据
         all_factor_data = {}
@@ -1322,8 +1477,14 @@ async def detect_lookahead_bias(request: LookaheadBiasRequest):
                         fv = df[factor_name]
                         ret = df["close"].pct_change(1).shift(-1)
                         for date_idx in fv.index:
-                            f_val = fv.loc[date_idx] if pd.notna(fv.loc[date_idx]) else None
-                            r_val = ret.loc[date_idx] if date_idx in ret.index and pd.notna(ret.loc[date_idx]) else None
+                            f_val = (
+                                fv.loc[date_idx] if pd.notna(fv.loc[date_idx]) else None
+                            )
+                            r_val = (
+                                ret.loc[date_idx]
+                                if date_idx in ret.index and pd.notna(ret.loc[date_idx])
+                                else None
+                            )
                             if f_val is not None and r_val is not None:
                                 rows.append(
                                     {
@@ -1412,11 +1573,20 @@ async def detect_lookahead_bias(request: LookaheadBiasRequest):
         # 汇总统计
         risk_levels = [r["risk_level"] for r in per_factor_results.values()]
         level_order = ["safe", "low", "medium", "high", "critical", "error", "unknown"]
-        overall_risk = max(risk_levels, key=lambda x: level_order.index(x)) if risk_levels else "safe"
-        n_high_risk = sum(1 for r in per_factor_results.values() if r["risk_level"] in ("high", "critical"))
+        overall_risk = (
+            max(risk_levels, key=lambda x: level_order.index(x))
+            if risk_levels
+            else "safe"
+        )
+        n_high_risk = sum(
+            1
+            for r in per_factor_results.values()
+            if r["risk_level"] in ("high", "critical")
+        )
 
         logger.info(
-            f"[未来函数检测] 完成: {len(per_factor_results)}个因子, " f"综合风险={overall_risk}, 高风险={n_high_risk}"
+            f"[未来函数检测] 完成: {len(per_factor_results)}个因子, "
+            f"综合风险={overall_risk}, 高风险={n_high_risk}"
         )
 
         return sanitize_dict(

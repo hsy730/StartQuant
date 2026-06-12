@@ -28,7 +28,7 @@ except ImportError:
     logger.warning("PySR库未安装，符号回归功能将不可用。请运行: pip install pysr")
 
 from backend.services.base_mining_service import BaseMiningService  # noqa: E402
-from backend.utils.safe_math import safe_divide  # noqa: E402
+from backend.utils.safe_math import safe_divide, safe_float as _safe_float  # noqa: E402
 from backend.services.factor_validation_service import factor_validation_service  # noqa: E402
 from backend.services.alphalens_analysis_service import alphalens_analysis_service  # noqa: E402
 
@@ -42,9 +42,6 @@ _PYSR_OPERATOR_MAP = {
     "log": "log",
     "sqrt": "sqrt",
 }
-
-
-from backend.utils.safe_math import safe_float as _safe_float
 
 
 class PySRFactorMiningService(BaseMiningService):
@@ -121,7 +118,12 @@ class PySRFactorMiningService(BaseMiningService):
         feature_names = []
         series_list = []
 
-        for var_name in sorted(self.base_factor_values.keys(), key=lambda k: int(k.replace("x", "")) if k.startswith("x") and k[1:].isdigit() else k):
+        for var_name in sorted(
+            self.base_factor_values.keys(),
+            key=lambda k: (
+                int(k.replace("x", "")) if k.startswith("x") and k[1:].isdigit() else k
+            ),
+        ):
             info = self.base_factor_values[var_name]
             feature_names.append(var_name)
             series_list.append(info["values"])
@@ -129,7 +131,9 @@ class PySRFactorMiningService(BaseMiningService):
         if not series_list:
             raise ValueError("No valid base factors to build feature matrix")
 
-        combined = pd.DataFrame({name: s for name, s in zip(feature_names, series_list)})
+        combined = pd.DataFrame(
+            {name: s for name, s in zip(feature_names, series_list)}
+        )
 
         if self.return_values is not None:
             combined["__target__"] = self.return_values
@@ -138,21 +142,34 @@ class PySRFactorMiningService(BaseMiningService):
 
         combined = combined.dropna()
         if len(combined) < 50:
-            raise ValueError(f"Not enough valid data points ({len(combined)}), need at least 50")
+            raise ValueError(
+                f"Not enough valid data points ({len(combined)}), need at least 50"
+            )
 
         X = combined[feature_names].values
         y = combined["__target__"].values
 
         return X, y, feature_names
 
-    def _build_cross_sectional_matrix(self) -> Tuple[np.ndarray, np.ndarray, List[str], Dict]:
+    def _build_cross_sectional_matrix(
+        self,
+    ) -> Tuple[np.ndarray, np.ndarray, List[str], Dict]:
         """Build feature matrix from cross-sectional (multi-stock) data.
 
         Returns (X, y, feature_names, stock_factor_map) where
         stock_factor_map maps stock_code -> {var_name: pd.Series}.
         """
         feature_names = (
-            sorted(self.stock_pool_base_factor_values.get(self._sampled_stock_codes[0], {}).keys(), key=lambda k: int(k.replace("x", "")) if k.startswith("x") and k[1:].isdigit() else k)
+            sorted(
+                self.stock_pool_base_factor_values.get(
+                    self._sampled_stock_codes[0], {}
+                ).keys(),
+                key=lambda k: (
+                    int(k.replace("x", ""))
+                    if k.startswith("x") and k[1:].isdigit()
+                    else k
+                ),
+            )
             if self._sampled_stock_codes
             else []
         )
@@ -210,14 +227,20 @@ class PySRFactorMiningService(BaseMiningService):
 
         for var_name in feature_names:
             _idx = int(var_name.replace("x", ""))  # noqa: F841
-            factor_code = self.base_factor_values.get(var_name, {}).get("code", var_name)
-            result = re.sub(r'\b' + re.escape(var_name) + r'\b', f"({factor_code})", result)
+            factor_code = self.base_factor_values.get(var_name, {}).get(
+                "code", var_name
+            )
+            result = re.sub(
+                r"\b" + re.escape(var_name) + r"\b", f"({factor_code})", result
+            )
 
         result = result.replace("np.", "")
 
         return result
 
-    def _evaluate_pysr_factor(self, expr_callable, stock_factor_map: Dict) -> Tuple[float, dict]:
+    def _evaluate_pysr_factor(
+        self, expr_callable, stock_factor_map: Dict
+    ) -> Tuple[float, dict]:
         """Evaluate a PySR-discovered factor across stocks using IC.
 
         Returns (fitness, validation_dict) where validation uses the same
@@ -232,7 +255,14 @@ class PySRFactorMiningService(BaseMiningService):
         for code, stock_data in stock_factor_map.items():
             try:
                 ordered_values = []
-                for var_name in sorted(stock_data.keys(), key=lambda k: int(k.replace("x", "")) if k.startswith("x") and k[1:].isdigit() else k):
+                for var_name in sorted(
+                    stock_data.keys(),
+                    key=lambda k: (
+                        int(k.replace("x", ""))
+                        if k.startswith("x") and k[1:].isdigit()
+                        else k
+                    ),
+                ):
                     ordered_values.append(stock_data[var_name].values)
 
                 X_stock = np.column_stack(ordered_values)
@@ -252,7 +282,9 @@ class PySRFactorMiningService(BaseMiningService):
                 logger.debug(f"PySR factor eval failed for {code}: {e}")
                 continue
 
-        logger.info(f"[PySR Eval] Built factor_values_dict with {len(factor_values_dict)} stocks")
+        logger.info(
+            f"[PySR Eval] Built factor_values_dict with {len(factor_values_dict)} stocks"
+        )
 
         if len(factor_values_dict) < 2:
             return 0.0, {}
@@ -303,7 +335,9 @@ class PySRFactorMiningService(BaseMiningService):
                     for ic_type in ["spearman_ic", "pearson_ic"]:
                         ic_type_data = ic_results.get(ic_type, {})
                         if ic_type_data:
-                            first_period = list(ic_type_data.keys())[0] if ic_type_data else None
+                            first_period = (
+                                list(ic_type_data.keys())[0] if ic_type_data else None
+                            )
                             if first_period:
                                 period_stats = ic_type_data[first_period]
                                 ic_mean_val = (
@@ -316,7 +350,9 @@ class PySRFactorMiningService(BaseMiningService):
                                 break
 
                     _stability = (  # noqa: F841
-                        float(ic_results.get("stability")) if ic_results.get("stability") is not None else 0.0
+                        float(ic_results.get("stability"))
+                        if ic_results.get("stability") is not None
+                        else 0.0
                     )
 
                     ir_capped = min(ir_val, 5.0) if ir_val is not None else None
@@ -324,15 +360,21 @@ class PySRFactorMiningService(BaseMiningService):
                     validation = {
                         "ic_validation": {
                             "ic": abs(ic_mean_val) if ic_mean_val is not None else None,
-                            "passed": abs(ic_mean_val) >= 0.02 if ic_mean_val is not None else False,
+                            "passed": abs(ic_mean_val) >= 0.02
+                            if ic_mean_val is not None
+                            else False,
                         },
                         "ir_validation": {
                             "ir": ir_capped,
-                            "passed": ir_capped >= 0.3 if ir_capped is not None else False,
+                            "passed": ir_capped >= 0.3
+                            if ir_capped is not None
+                            else False,
                         },
                         "score": max(0.0, min(fitness * 100, 100.0)),
                         "_raw_ic_mean": ic_mean_val,
-                        "_raw_ir": ir_val if (ir_val is not None and np.isfinite(ir_val)) else None,
+                        "_raw_ir": ir_val
+                        if (ir_val is not None and np.isfinite(ir_val))
+                        else None,
                         "_alphalens": True,
                     }
                     alphalens_success = True
@@ -352,25 +394,35 @@ class PySRFactorMiningService(BaseMiningService):
                 f"best_ret={'available' if best_ret is not None else 'None'}"
             )
 
-            if best_fv is not None and best_ret is not None and self.return_values is not None:
+            if (
+                best_fv is not None
+                and best_ret is not None
+                and self.return_values is not None
+            ):
                 try:
                     validation = factor_validation_service.validate_factor(
                         factor_values=best_fv,
                         return_values=best_ret,
                         existing_factors=None,
                     )
-                    logger.info(f"[PySR Eval] ✅ Fallback validation SUCCESS: {list(validation.keys())}")
+                    logger.info(
+                        f"[PySR Eval] ✅ Fallback validation SUCCESS: {list(validation.keys())}"
+                    )
                 except Exception as e:
                     logger.debug(f"PySR validation failed: {e}")
                     validation = {}
             else:
-                logger.warning("[PySR Eval] ⚠️ No fallback possible: best_fv or best_ret is None")
+                logger.warning(
+                    "[PySR Eval] ⚠️ No fallback possible: best_fv or best_ret is None"
+                )
 
         if fitness is not None and np.isnan(fitness):
             logger.warning("[PySR Eval] fitness is NaN, resetting to 0.0")
             fitness = 0.0
 
-        logger.info(f"[PySR Eval] Returning: fitness={fitness:.4f}, validation_keys={list(validation.keys())}")
+        logger.info(
+            f"[PySR Eval] Returning: fitness={fitness:.4f}, validation_keys={list(validation.keys())}"
+        )
         return fitness, validation
 
     def _evaluate_pysr_factor_single(self, expr_callable) -> Tuple[float, dict]:
@@ -378,7 +430,12 @@ class PySRFactorMiningService(BaseMiningService):
 
         Returns (fitness, validation_dict).
         """
-        feature_names = sorted(self.base_factor_values.keys(), key=lambda k: int(k.replace("x", "")) if k.startswith("x") and k[1:].isdigit() else k)
+        feature_names = sorted(
+            self.base_factor_values.keys(),
+            key=lambda k: (
+                int(k.replace("x", "")) if k.startswith("x") and k[1:].isdigit() else k
+            ),
+        )
         ordered_values = []
         for var_name in feature_names:
             info = self.base_factor_values[var_name]
@@ -469,7 +526,9 @@ class PySRFactorMiningService(BaseMiningService):
             use_cross_sectional = len(self.stock_pool_data) >= 2
 
             if use_cross_sectional:
-                X, y, feature_names, stock_factor_map = self._build_cross_sectional_matrix()
+                X, y, feature_names, stock_factor_map = (
+                    self._build_cross_sectional_matrix()
+                )
             else:
                 X, y, feature_names = self._build_feature_matrix()
                 stock_factor_map = None
@@ -500,7 +559,13 @@ class PySRFactorMiningService(BaseMiningService):
             # 取消检查（PySR的fit无法中断，但可以在后处理前停止）
             if self._cancel_flag:
                 logger.info("PySR fit完成后，用户已取消，跳过结果处理")
-                return {"success": True, "best_factors": [], "equations": None, "source": "pysr", "cancelled": True}
+                return {
+                    "success": True,
+                    "best_factors": [],
+                    "equations": None,
+                    "source": "pysr",
+                    "cancelled": True,
+                }
 
             if self.progress_callback:
                 self.progress_callback(self.niterations, self.niterations, 0.0, 0.0)
@@ -508,7 +573,12 @@ class PySRFactorMiningService(BaseMiningService):
             equations_df = self._pysr_model.equations_
             if equations_df is None or len(equations_df) == 0:
                 logger.warning("PySR未发现有效方程")
-                return {"success": True, "best_factors": [], "equations": None, "source": "pysr"}
+                return {
+                    "success": True,
+                    "best_factors": [],
+                    "equations": None,
+                    "source": "pysr",
+                }
 
             best_factors = []
             for idx, row in equations_df.iterrows():
@@ -526,12 +596,20 @@ class PySRFactorMiningService(BaseMiningService):
                     expr_callable = row.get("lambda_format")
                     if expr_callable is not None:
                         if use_cross_sectional and stock_factor_map:
-                            fitness, validation = self._evaluate_pysr_factor(expr_callable, stock_factor_map)
+                            fitness, validation = self._evaluate_pysr_factor(
+                                expr_callable, stock_factor_map
+                            )
                         else:
-                            fitness, validation = self._evaluate_pysr_factor_single(expr_callable)
+                            fitness, validation = self._evaluate_pysr_factor_single(
+                                expr_callable
+                            )
                 except Exception as e:
-                    logger.warning(f"[Mine Factors] ❌ Equation {idx} evaluation FAILED: {e}")
-                    logger.warning(f"[Mine Factors] Traceback: {traceback.format_exc()}")
+                    logger.warning(
+                        f"[Mine Factors] ❌ Equation {idx} evaluation FAILED: {e}"
+                    )
+                    logger.warning(
+                        f"[Mine Factors] Traceback: {traceback.format_exc()}"
+                    )
 
                 factor_info = {
                     "rank": idx + 1,
@@ -609,4 +687,9 @@ def create_pysr_mining_service(
     * ``fitness_objective`` – ic_mean / ir_ratio / sharpe / combined (default ic_mean)
     * ``cv_folds`` – cross-validation folds (default 0)
     """
-    return PySRFactorMiningService(base_factors=base_factors, data=data, factor_calculator=factor_calculator, **kwargs)
+    return PySRFactorMiningService(
+        base_factors=base_factors,
+        data=data,
+        factor_calculator=factor_calculator,
+        **kwargs,
+    )

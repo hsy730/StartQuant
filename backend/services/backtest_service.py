@@ -32,7 +32,9 @@ logger = logging.getLogger(__name__)
 class BacktestService:
     """回测服务 — 薄编排层（委托VectorBT金标准）"""
 
-    def __init__(self, initial_capital: float = 1000000, commission_rate: float = 0.0003):
+    def __init__(
+        self, initial_capital: float = 1000000, commission_rate: float = 0.0003
+    ):
         self.initial_capital = initial_capital
         self.commission_rate = commission_rate
         self._vbt = None
@@ -75,10 +77,19 @@ class BacktestService:
     # ==================== 横截面回测 (委托VectorBT) ====================
 
     def cross_sectional_backtest(
-        self, df: pd.DataFrame, factor_name: str, top_percentile: float = 0.2, direction: str = "long", freq: str = "D"
+        self,
+        df: pd.DataFrame,
+        factor_name: str,
+        top_percentile: float = 0.2,
+        direction: str = "long",
+        freq: str = "D",
     ) -> Dict:
         result = self._get_vbt().cross_sectional_backtest(
-            df=df, factor_name=factor_name, top_percentile=top_percentile, direction=direction, freq=freq
+            df=df,
+            factor_name=factor_name,
+            top_percentile=top_percentile,
+            direction=direction,
+            freq=freq,
         )
         result["engine"] = "vectorbt"
         return result
@@ -112,12 +123,17 @@ class BacktestService:
     # ==================== 性能指标计算 (委托risk_metrics + empyrical) ====================
 
     def calculate_metrics(
-        self, returns: pd.Series, annual_trading_days: int = ANNUAL_TRADING_DAYS, risk_free_rate: float = RISK_FREE_RATE
+        self,
+        returns: pd.Series,
+        annual_trading_days: int = ANNUAL_TRADING_DAYS,
+        risk_free_rate: float = RISK_FREE_RATE,
     ) -> Dict:
         returns_clean = returns.dropna()
         if len(returns_clean) == 0:
             return self._empty_metrics()
-        return calculate_risk_metrics(returns_clean, risk_free_rate, annual_trading_days)
+        return calculate_risk_metrics(
+            returns_clean, risk_free_rate, annual_trading_days
+        )
 
     def _empty_metrics(self) -> Dict:
         return _risk_empty_metrics()
@@ -143,7 +159,11 @@ class BacktestService:
     ) -> pd.Series:
         if method == "percentile":
             rank = df[factor_name].rolling(252, min_periods=1).rank(pct=True)
-            signals = (rank >= threshold).astype(int) if direction == "long" else (rank <= threshold).astype(int)
+            signals = (
+                (rank >= threshold).astype(int)
+                if direction == "long"
+                else (rank <= threshold).astype(int)
+            )
         else:
             signals = (
                 (df[factor_name] >= threshold).astype(int)
@@ -155,10 +175,15 @@ class BacktestService:
     # ==================== 基准对比 ====================
 
     def calculate_benchmark_metrics(
-        self, returns: pd.Series, benchmark_returns: pd.Series, annual_trading_days: int = ANNUAL_TRADING_DAYS
+        self,
+        returns: pd.Series,
+        benchmark_returns: pd.Series,
+        annual_trading_days: int = ANNUAL_TRADING_DAYS,
     ) -> Dict:
         """计算基准对比指标（委托risk_metrics统一入口，符合规则2）"""
-        relative = calculate_relative_metrics(returns, benchmark_returns, annual_trading_days=annual_trading_days)
+        relative = calculate_relative_metrics(
+            returns, benchmark_returns, annual_trading_days=annual_trading_days
+        )
         return {
             "excess_return": relative.get("excess_return"),
             "tracking_error": relative.get("tracking_error"),
@@ -183,32 +208,55 @@ class BacktestService:
 
     # ==================== 策略系统支持 ====================
 
-    def run_strategy(self, df: pd.DataFrame, strategy_name: str, strategy_params: Optional[Dict] = None) -> Dict:
+    def run_strategy(
+        self,
+        df: pd.DataFrame,
+        strategy_name: str,
+        strategy_params: Optional[Dict] = None,
+    ) -> Dict:
         if strategy_params is None:
             strategy_params = {}
         strategy = strategy_registry.get_strategy(strategy_name, **strategy_params)
         backtest_result = strategy.backtest(df)
         metrics = strategy.calculate_metrics(backtest_result["portfolio_returns"])
-        return {"strategy_name": strategy_name, "backtest": backtest_result, "metrics": metrics}
+        return {
+            "strategy_name": strategy_name,
+            "backtest": backtest_result,
+            "metrics": metrics,
+        }
 
     def run_strategy_comparison(
-        self, df: pd.DataFrame, strategy_names: List[str], strategy_params: Optional[Dict[str, Dict]] = None
+        self,
+        df: pd.DataFrame,
+        strategy_names: List[str],
+        strategy_params: Optional[Dict[str, Dict]] = None,
     ) -> Dict:
         return strategy_comparison_service.compare_strategies(
             df=df, strategy_names=strategy_names, strategy_params=strategy_params
         )
 
-    def analyze_positions(self, positions: pd.Series, initial_capital: float = 1000000) -> Dict:
-        return position_analysis_service.analyze_positions(positions=positions, initial_capital=initial_capital)
+    def analyze_positions(
+        self, positions: pd.Series, initial_capital: float = 1000000
+    ) -> Dict:
+        return position_analysis_service.analyze_positions(
+            positions=positions, initial_capital=initial_capital
+        )
 
-    def export_to_excel(self, backtest_result: Dict, output_path: str, strategy_name: str = "策略"):
+    def export_to_excel(
+        self, backtest_result: Dict, output_path: str, strategy_name: str = "策略"
+    ):
         metrics = backtest_result.get("metrics")
         export_service.export_backtest_to_excel(
-            backtest_result=backtest_result, output_path=output_path, metrics=metrics, strategy_name=strategy_name
+            backtest_result=backtest_result,
+            output_path=output_path,
+            metrics=metrics,
+            strategy_name=strategy_name,
         )
 
     def export_comparison_to_excel(self, comparison_result: Dict, output_path: str):
-        export_service.export_comparison_to_excel(comparison_result=comparison_result, output_path=output_path)
+        export_service.export_comparison_to_excel(
+            comparison_result=comparison_result, output_path=output_path
+        )
 
 
 def check_backtest_engine() -> str:

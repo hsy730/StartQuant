@@ -84,7 +84,9 @@ def ts_mean(a, n=5):
     ⚠️ Warning: This version does NOT filter limit-up/down days.
        For A-share market, please use ts_mean_masked() instead.
     """
-    logger.debug("ts_mean() called without tradable_mask - results may be contaminated by limit prices")
+    logger.debug(
+        "ts_mean() called without tradable_mask - results may be contaminated by limit prices"
+    )
     return a.rolling(window=int(n), min_periods=1).mean()
 
 
@@ -140,7 +142,10 @@ def ts_corr(a, b, n=5):
 
 
 def ts_mean_masked(
-    a: pd.Series, n: int = 5, mask: Optional[pd.Series] = None, min_valid_ratio: float = 0.6
+    a: pd.Series,
+    n: int = 5,
+    mask: Optional[pd.Series] = None,
+    min_valid_ratio: float = 0.6,
 ) -> pd.Series:
     """
     带掩码的滚动平均 - Mask-First设计
@@ -174,7 +179,10 @@ def ts_mean_masked(
 
 
 def ts_std_masked(
-    a: pd.Series, n: int = 5, mask: Optional[pd.Series] = None, min_valid_ratio: float = 0.6
+    a: pd.Series,
+    n: int = 5,
+    mask: Optional[pd.Series] = None,
+    min_valid_ratio: float = 0.6,
 ) -> pd.Series:
     """
     带掩码的滚动标准差 - Mask-First设计
@@ -202,7 +210,11 @@ def ts_std_masked(
 
 
 def ts_corr_masked(
-    a: pd.Series, b: pd.Series, n: int = 5, mask: Optional[pd.Series] = None, min_valid_ratio: float = 0.6
+    a: pd.Series,
+    b: pd.Series,
+    n: int = 5,
+    mask: Optional[pd.Series] = None,
+    min_valid_ratio: float = 0.6,
 ) -> pd.Series:
     """
     带掩码的滚动相关系数 - **最关键的改进！**
@@ -269,7 +281,10 @@ def _tanh(a):
 
 
 def create_pset(
-    n_factors: int, extended: bool = True, use_masked: bool = True, tradable_mask: Optional[pd.Series] = None
+    n_factors: int,
+    extended: bool = True,
+    use_masked: bool = True,
+    tradable_mask: Optional[pd.Series] = None,
 ) -> gp.PrimitiveSet:
     """Build a DEAP ``PrimitiveSet`` for factor expressions.
 
@@ -364,7 +379,9 @@ def create_pset(
             ts_corr_10_fn = partial(ts_corr_masked, n=10, mask=tradable_mask)
             ts_corr_20_fn = partial(ts_corr_masked, n=20, mask=tradable_mask)
 
-            logger.info("✅ PrimitiveSet: 使用Mask-First版本算子（已注入tradable_mask，过滤涨跌停）")
+            logger.info(
+                "✅ PrimitiveSet: 使用Mask-First版本算子（已注入tradable_mask，过滤涨跌停）"
+            )
         elif use_masked:
             # ⚠️ Mask-First版本但无mask（退化，不再spam警告）
             def ts_mean_fn(a):
@@ -394,7 +411,9 @@ def create_pset(
             def ts_corr_20_fn(a, b):
                 return ts_corr_masked(a, b, 20)
 
-            logger.info("PrimitiveSet: 使用Mask-First版本算子（无mask，退化为普通版本）")
+            logger.info(
+                "PrimitiveSet: 使用Mask-First版本算子（无mask，退化为普通版本）"
+            )
         else:
             # ❌ 传统版本（不过滤）
             def ts_mean_fn(a):
@@ -424,7 +443,9 @@ def create_pset(
             def ts_corr_20_fn(a, b):
                 return ts_corr(a, b, 20)
 
-            logger.warning("⚠️ PrimitiveSet: 使用传统版本算子（未过滤涨跌停，IC可能虚高）")
+            logger.warning(
+                "⚠️ PrimitiveSet: 使用传统版本算子（未过滤涨跌停，IC可能虚高）"
+            )
 
         # Time-series window operations (unary, fixed window)
         pset.addPrimitive(ts_mean_fn, 1, name="ts_mean_5")
@@ -513,8 +534,12 @@ def expression_similarity(expr_a: str, expr_b: str) -> float:
     """
     if not expr_a or not expr_b:
         return 0.0
-    tokens_a = set(expr_a.replace("(", " ( ").replace(")", " ) ").replace(",", " , ").split())
-    tokens_b = set(expr_b.replace("(", " ( ").replace(")", " ) ").replace(",", " , ").split())
+    tokens_a = set(
+        expr_a.replace("(", " ( ").replace(")", " ) ").replace(",", " , ").split()
+    )
+    tokens_b = set(
+        expr_b.replace("(", " ( ").replace(")", " ) ").replace(",", " , ").split()
+    )
     if not tokens_a or not tokens_b:
         return 0.0
     intersection = tokens_a & tokens_b

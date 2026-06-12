@@ -16,7 +16,12 @@ from backend.services.data_service import data_service
 from backend.services.factor_service import factor_service
 from backend.repositories.factor_repository import FactorRepository
 from backend.core.database import get_db
-from backend.constants import ANNUAL_TRADING_DAYS, SEMI_ANNUAL_WINDOW, MIN_STABILITY_DAYS, STATISTICAL_SIGNIFICANCE_ALPHA
+from backend.constants import (
+    ANNUAL_TRADING_DAYS,
+    SEMI_ANNUAL_WINDOW,
+    MIN_STABILITY_DAYS,
+    STATISTICAL_SIGNIFICANCE_ALPHA,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +32,12 @@ class FactorStabilityService:
     def __init__(self):
         pass
 
-    def calculate_distribution_stability(self, factor_series: pd.Series, window: int = ANNUAL_TRADING_DAYS, method: str = "ks") -> Dict:
+    def calculate_distribution_stability(
+        self,
+        factor_series: pd.Series,
+        window: int = ANNUAL_TRADING_DAYS,
+        method: str = "ks",
+    ) -> Dict:
         """
         分布稳定性分析 - 使用KS检验比较不同窗口期的分布
 
@@ -100,7 +110,9 @@ class FactorStabilityService:
                 "comparisons": [],
             }
         avg_p_value = np.mean(p_values)
-        stable_ratio = sum(1 for p in p_values if p > STATISTICAL_SIGNIFICANCE_ALPHA) / len(p_values)
+        stable_ratio = sum(
+            1 for p in p_values if p > STATISTICAL_SIGNIFICANCE_ALPHA
+        ) / len(p_values)
 
         results = {
             "method": method,
@@ -114,7 +126,9 @@ class FactorStabilityService:
 
         return results
 
-    def calculate_time_series_stability(self, ic_series: pd.Series, maxlag: int = 10) -> Dict:
+    def calculate_time_series_stability(
+        self, ic_series: pd.Series, maxlag: int = 10
+    ) -> Dict:
         """
         时间序列稳定性分析 - 使用ADF检验判断平稳性
 
@@ -155,7 +169,11 @@ class FactorStabilityService:
                     "5%": float(critical_values["5%"]),
                     "10%": float(critical_values["10%"]),
                 },
-                "interpretation": ("序列平稳，拒绝存在单位根的原假设" if is_stationary else "序列不平稳，存在单位根"),
+                "interpretation": (
+                    "序列平稳，拒绝存在单位根的原假设"
+                    if is_stationary
+                    else "序列不平稳，存在单位根"
+                ),
             }
 
         except Exception as e:
@@ -197,7 +215,9 @@ class FactorStabilityService:
                 else (
                     "变异程度中等"
                     if cv is not None and cv < 1.0
-                    else "变异程度较高" if cv is not None else "无法计算（均值为0）"
+                    else "变异程度较高"
+                    if cv is not None
+                    else "无法计算（均值为0）"
                 )
             ),
         }
@@ -239,7 +259,10 @@ class FactorStabilityService:
             # 计算滚动时间序列Spearman相关性（非横截面IC，见方法文档说明）
             if factor_name in factor_data.columns and return_col in factor_data.columns:
                 rolling_corr_series = calculate_rolling_ic(
-                    factor_data[factor_name], factor_data[return_col], window=window, method="spearman"
+                    factor_data[factor_name],
+                    factor_data[return_col],
+                    window=window,
+                    method="spearman",
                 ).dropna()
                 rolling_ic = rolling_corr_series.tolist()
             else:
@@ -251,8 +274,14 @@ class FactorStabilityService:
                     "window": window,
                     "mean_ic": float(ic_series.mean()),
                     "std_ic": float(ic_series.std()),
-                    "ir": safe_ir(float(ic_series.mean()), float(ic_series.std()), default=None),
-                    "cv": safe_divide(float(ic_series.std()), float(abs(ic_series.mean())), default=None),
+                    "ir": safe_ir(
+                        float(ic_series.mean()), float(ic_series.std()), default=None
+                    ),
+                    "cv": safe_divide(
+                        float(ic_series.std()),
+                        float(abs(ic_series.mean())),
+                        default=None,
+                    ),
                 }
 
         return results
@@ -289,7 +318,11 @@ class FactorStabilityService:
 
         # 划分市场环境（向量化操作）
         lookback = 20
-        rolling_return = factor_data["market_return"].rolling(window=lookback, min_periods=lookback).sum()
+        rolling_return = (
+            factor_data["market_return"]
+            .rolling(window=lookback, min_periods=lookback)
+            .sum()
+        )
 
         regime_labels = pd.cut(
             rolling_return,
@@ -318,7 +351,9 @@ class FactorStabilityService:
             if factor_name in regime_data.columns and return_col in regime_data.columns:
                 from scipy.stats import spearmanr
 
-                valid = regime_data[factor_name].notna() & regime_data[return_col].notna()
+                valid = (
+                    regime_data[factor_name].notna() & regime_data[return_col].notna()
+                )
                 if valid.sum() >= 5:
                     ic, _ = spearmanr(
                         regime_data.loc[valid.index[valid], factor_name],
@@ -410,19 +445,29 @@ class FactorStabilityService:
                         continue
 
                     # 计算因子值
-                    factor_series = factor_service.calculator.calculate(data, factor.code)
+                    factor_series = factor_service.calculator.calculate(
+                        data, factor.code
+                    )
 
                     if factor_series is None or len(factor_series.dropna()) < 30:
                         logger.warning(f"股票 {stock_code} 因子计算失败或有效值不足")
                         continue
 
                     # 计算未来收益率（用于IC计算）
-                    df_with_returns = calculate_future_returns(data[["close"]], periods=[20])
+                    df_with_returns = calculate_future_returns(
+                        data[["close"]], periods=[20]
+                    )
                     future_return = df_with_returns["future_return_20"]
 
                     # 构建该股票的分析数据框（立即复制，避免后续修改影响原始数据）
                     stock_df = (
-                        pd.DataFrame({"factor": factor_series, "future_return": future_return, "close": data["close"]})
+                        pd.DataFrame(
+                            {
+                                "factor": factor_series,
+                                "future_return": future_return,
+                                "close": data["close"],
+                            }
+                        )
                         .dropna()
                         .copy()
                     )
@@ -431,7 +476,11 @@ class FactorStabilityService:
                         continue
 
                     all_factor_data.append(
-                        {"stock_code": stock_code, "data": stock_df, "factor_series": factor_series.dropna()}
+                        {
+                            "stock_code": stock_code,
+                            "data": stock_df,
+                            "factor_series": factor_series.dropna(),
+                        }
                     )
 
                     # 注意：不再计算单股票的时序IC序列
@@ -461,7 +510,9 @@ class FactorStabilityService:
                 ic_values = []
                 for date, group in panel_df.groupby(panel_df.index):
                     if len(group) >= 3:  # 至少3只股票才有统计意义
-                        ic, _ = spearmanr(group["factor"].values, group["future_return"].values)
+                        ic, _ = spearmanr(
+                            group["factor"].values, group["future_return"].values
+                        )
                         if not np.isnan(ic):
                             ic_dates.append(date)
                             ic_values.append(ic)
@@ -478,7 +529,9 @@ class FactorStabilityService:
                 )
 
             if len(all_ic_series) == 0:
-                raise ValueError("未能计算有效的截面IC序列，数据可能不足（需至少3只股票）")
+                raise ValueError(
+                    "未能计算有效的截面IC序列，数据可能不足（需至少3只股票）"
+                )
 
             logger.info(
                 f"成功获取 {len(all_factor_data)} 只股票的有效数据, "
@@ -511,10 +564,14 @@ class FactorStabilityService:
             # 6.1 分布稳定性分析
             try:
                 if len(combined_factor) >= MIN_STABILITY_DAYS:  # 至少2年数据(252*2)
-                    dist_result = self.calculate_distribution_stability(combined_factor, window=ANNUAL_TRADING_DAYS, method="ks")
+                    dist_result = self.calculate_distribution_stability(
+                        combined_factor, window=ANNUAL_TRADING_DAYS, method="ks"
+                    )
                     results["distribution_stability"] = dist_result
                     scores.append(dist_result.get("stability_score", 0.5))
-                    logger.info(f"分布稳定性得分: {dist_result.get('stability_score', 0):.3f}")
+                    logger.info(
+                        f"分布稳定性得分: {dist_result.get('stability_score', 0):.3f}"
+                    )
                 else:
                     results["distribution_stability"] = {
                         "warning": "数据不足504个点，跳过分布稳定性检验",
@@ -580,7 +637,10 @@ class FactorStabilityService:
                         "factor": cs_mean,
                         "future_return": (
                             pd.DataFrame(
-                                {item["stock_code"]: item["data"]["future_return"] for item in all_factor_data}
+                                {
+                                    item["stock_code"]: item["data"]["future_return"]
+                                    for item in all_factor_data
+                                }
                             )
                             .mean(axis=1)
                             .reindex(cs_mean.index)
@@ -590,7 +650,10 @@ class FactorStabilityService:
                     }
                 ).dropna()
                 rolling_result = self.calculate_rolling_stability(
-                    rolling_data, factor_name="factor", return_col="future_return", windows=[20, 60, 120]
+                    rolling_data,
+                    factor_name="factor",
+                    return_col="future_return",
+                    windows=[20, 60, 120],
                 )
                 # 注意：calculate_rolling_stability 计算的是时间序列相关性，
                 # 此处输入为横截面均值序列，结果反映横截面IC的时序稳定性趋势
@@ -627,7 +690,10 @@ class FactorStabilityService:
                         "factor": cs_mean,
                         "future_return": (
                             pd.DataFrame(
-                                {item["stock_code"]: item["data"]["future_return"] for item in all_factor_data}
+                                {
+                                    item["stock_code"]: item["data"]["future_return"]
+                                    for item in all_factor_data
+                                }
                             )
                             .mean(axis=1)
                             .reindex(cs_mean.index)
@@ -635,7 +701,12 @@ class FactorStabilityService:
                             else pd.Series(dtype=float)
                         ),
                         "close": (
-                            pd.DataFrame({item["stock_code"]: item["data"]["close"] for item in all_factor_data})
+                            pd.DataFrame(
+                                {
+                                    item["stock_code"]: item["data"]["close"]
+                                    for item in all_factor_data
+                                }
+                            )
                             .mean(axis=1)
                             .reindex(cs_mean.index)
                             if len(all_factor_data) > 0
@@ -644,7 +715,10 @@ class FactorStabilityService:
                     }
                 ).dropna()
                 regime_result = self.calculate_market_regime_performance(
-                    market_data, factor_name="factor", return_col="future_return", price_col="close"
+                    market_data,
+                    factor_name="factor",
+                    return_col="future_return",
+                    price_col="close",
                 )
                 results["market_regime_performance"] = regime_result
 
@@ -690,7 +764,9 @@ class FactorStabilityService:
                     "overall_score": round(float(overall_score), 4),
                     "risk_level": risk_level,
                     "recommendation": recommendation,
-                    "analysis_dimensions": len([k for k in results.keys() if "error" not in k]),
+                    "analysis_dimensions": len(
+                        [k for k in results.keys() if "error" not in k]
+                    ),
                     "total_stocks_analyzed": len(all_factor_data),
                     "valid_data_points": {
                         "factor_values": int(len(combined_factor)),
@@ -708,7 +784,8 @@ class FactorStabilityService:
             }
 
             logger.info(
-                f"综合稳定性检验完成: 总体得分={overall_score:.3f}, " f"风险等级={risk_level}, 建议={recommendation}"
+                f"综合稳定性检验完成: 总体得分={overall_score:.3f}, "
+                f"风险等级={risk_level}, 建议={recommendation}"
             )
 
             return final_result

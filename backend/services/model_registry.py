@@ -141,7 +141,13 @@ class ModelRegistry:
             use_database: 是否使用数据库后端（需要 SQLAlchemy 配置）
         """
         if base_path is None:
-            base_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "models", "registry")
+            base_path = os.path.join(
+                os.path.dirname(os.path.abspath(__file__)),
+                "..",
+                "..",
+                "models",
+                "registry",
+            )
         self.base_path = Path(base_path)
         self.base_path.mkdir(parents=True, exist_ok=True)
         self.use_database = use_database
@@ -334,7 +340,9 @@ class ModelRegistry:
         Returns:
             按版本号升序排列的元数据列表
         """
-        versions = [m.to_dict() for m in self._index.values() if m.model_name == model_name]
+        versions = [
+            m.to_dict() for m in self._index.values() if m.model_name == model_name
+        ]
         versions.sort(key=lambda x: x.get("version", 0))
         return versions
 
@@ -360,7 +368,11 @@ class ModelRegistry:
         # 如果目标是 production，先将同名的其他 production 模型降级
         if target_stage == ModelStage.PRODUCTION.value:
             for m in self._index.values():
-                if m.model_name == meta.model_name and m.stage == ModelStage.PRODUCTION and m.model_id != model_id:
+                if (
+                    m.model_name == meta.model_name
+                    and m.stage == ModelStage.PRODUCTION
+                    and m.model_id != model_id
+                ):
                     m.stage = ModelStage.STAGING
                     self._persist_metadata(m)
 
@@ -426,7 +438,9 @@ class ModelRegistry:
         total_size = 0
 
         for meta in self._index.values():
-            by_framework[meta.framework.value] = by_framework.get(meta.framework.value, 0) + 1
+            by_framework[meta.framework.value] = (
+                by_framework.get(meta.framework.value, 0) + 1
+            )
             by_stage[meta.stage.value] = by_stage.get(meta.stage.value, 0) + 1
             total_size += meta.file_size_bytes
 
@@ -447,7 +461,9 @@ class ModelRegistry:
 
     def _get_latest_version(self, model_name: str) -> int:
         """获取指定模型的最新版本号"""
-        versions = [m.version for m in self._index.values() if m.model_name == model_name]
+        versions = [
+            m.version for m in self._index.values() if m.model_name == model_name
+        ]
         return max(versions) if versions else 0
 
     def _persist_metadata(self, meta: ModelMetadata):

@@ -26,7 +26,10 @@ class EnhancedAnalysisService:
         pass
 
     def calculate_ic_significance(
-        self, factor_values: pd.Series, return_values: pd.Series, confidence_level: float = 0.95
+        self,
+        factor_values: pd.Series,
+        return_values: pd.Series,
+        confidence_level: float = 0.95,
     ) -> Dict:
         """
         计算IC的显著性t检验
@@ -42,10 +45,15 @@ class EnhancedAnalysisService:
             IC显著性检验结果
         """
         # 移除缺失值
-        valid_data = pd.DataFrame({"factor": factor_values, "return": return_values}).dropna()
+        valid_data = pd.DataFrame(
+            {"factor": factor_values, "return": return_values}
+        ).dropna()
 
         if len(valid_data) < 10:
-            return {"error": "有效数据不足（至少需要10个数据点）", "n_samples": len(valid_data)}
+            return {
+                "error": "有效数据不足（至少需要10个数据点）",
+                "n_samples": len(valid_data),
+            }
 
         # 尝试按横截面（日期）计算IC，再对IC序列做t检验
         # 如果数据有日期索引（MultiIndex或DatetimeIndex），按日期分组
@@ -85,7 +93,9 @@ class EnhancedAnalysisService:
             # 计算置信区间
             alpha = 1 - confidence_level
             t_critical = stats.t.ppf(1 - alpha / 2, df=len(ic_series) - 1)
-            se = safe_divide(ic_series.std(ddof=1), np.sqrt(len(ic_series)), default=0.0)
+            se = safe_divide(
+                ic_series.std(ddof=1), np.sqrt(len(ic_series)), default=0.0
+            )
             ci_lower = mean_ic - t_critical * se
             ci_upper = mean_ic + t_critical * se
 
@@ -97,7 +107,9 @@ class EnhancedAnalysisService:
                 "significance_level": (
                     f"极高显著性 (p<{HIGHLY_SIGNIFICANT_ALPHA})"
                     if p_value < HIGHLY_SIGNIFICANT_ALPHA
-                    else f"显著性 (p<{STATISTICAL_SIGNIFICANCE_ALPHA})" if p_value < STATISTICAL_SIGNIFICANCE_ALPHA else f"不显著 (p>={STATISTICAL_SIGNIFICANCE_ALPHA})"
+                    else f"显著性 (p<{STATISTICAL_SIGNIFICANCE_ALPHA})"
+                    if p_value < STATISTICAL_SIGNIFICANCE_ALPHA
+                    else f"不显著 (p>={STATISTICAL_SIGNIFICANCE_ALPHA})"
                 ),
                 "confidence_interval": {
                     "lower": float(ci_lower),
@@ -108,7 +120,7 @@ class EnhancedAnalysisService:
                 "n_cross_sections": len(ic_list),
                 "method": "spearman_cross_sectional",
                 "interpretation": (
-                    f"横截面IC均值在{confidence_level*100:.0f}%置信区间为[{ci_lower:.4f}, {ci_upper:.4f}]"
+                    f"横截面IC均值在{confidence_level * 100:.0f}%置信区间为[{ci_lower:.4f}, {ci_upper:.4f}]"
                 ),
             }
 
@@ -152,7 +164,9 @@ class EnhancedAnalysisService:
         Returns:
             横截面IC均值（float），或None（无日期信息或截面不足）
         """
-        if date_series is None or (isinstance(date_series, pd.Series) and date_series.isna().all()):
+        if date_series is None or (
+            isinstance(date_series, pd.Series) and date_series.isna().all()
+        ):
             logger.warning("无日期信息，无法计算横截面IC")
             return None
 
@@ -254,13 +268,17 @@ class EnhancedAnalysisService:
                 for date, group in panel_df.groupby(panel_df.index):
                     if len(group) < 3:  # 截面至少3只股票才有意义
                         continue
-                    ic_val = group[factor_name].corr(group["future_return"], method="spearman")
+                    ic_val = group[factor_name].corr(
+                        group["future_return"], method="spearman"
+                    )
                     if not np.isnan(ic_val):
                         daily_ics.append(ic_val)
 
                 if daily_ics:
                     mean_ic = float(np.mean(daily_ics))
-                    ic_std = float(np.std(daily_ics, ddof=1)) if len(daily_ics) > 1 else 0.0
+                    ic_std = (
+                        float(np.std(daily_ics, ddof=1)) if len(daily_ics) > 1 else 0.0
+                    )
                     n_days = len(daily_ics)
                     # t检验：IC均值是否显著不为0
                     if ic_std > 1e-10:
@@ -281,7 +299,9 @@ class EnhancedAnalysisService:
                         "ic": mean_ic,
                         "ic_std": ic_std,
                         "ir": safe_ir(float(mean_ic), float(ic_std), default=None),
-                        "t_statistic": float(t_stat) if t_stat is not None and np.isfinite(t_stat) else None,
+                        "t_statistic": float(t_stat)
+                        if t_stat is not None and np.isfinite(t_stat)
+                        else None,
                         "p_value": float(p_value) if p_value is not None else None,
                         "is_significant": is_significant,
                         "n_samples": n_days,
@@ -322,44 +342,58 @@ class EnhancedAnalysisService:
 
                         # 市值中性化
                         if "market_cap" in combined_df.columns:
-                            mc_neutralized = factor_neutralization_service.neutralize_market_cap(
-                                combined_df, factor_name, "market_cap"
+                            mc_neutralized = (
+                                factor_neutralization_service.neutralize_market_cap(
+                                    combined_df, factor_name, "market_cap"
+                                )
                             )
 
                             if "future_return" in combined_df.columns:
                                 ic_after_mc = self._calculate_cross_sectional_ic(
-                                    mc_neutralized, combined_df["future_return"], combined_df.get("_date")
+                                    mc_neutralized,
+                                    combined_df["future_return"],
+                                    combined_df.get("_date"),
                                 )
-                                ic_before = results["factors"][factor_name]["ic_significance"]["ic"]
+                                ic_before = results["factors"][factor_name][
+                                    "ic_significance"
+                                ]["ic"]
                                 results["neutralization"][f"{factor_name}_mc"] = {
                                     "method": "市值中性化",
                                     "ic_before": ic_before,
                                     "ic_after": ic_after_mc,
                                     "improvement": (
                                         (ic_after_mc - ic_before)
-                                        if ic_after_mc is not None and ic_before is not None
+                                        if ic_after_mc is not None
+                                        and ic_before is not None
                                         else None
                                     ),
                                 }
 
                         # 行业中性化
                         if "industry" in combined_df.columns:
-                            industry_neutralized = factor_neutralization_service.neutralize_industry(
-                                combined_df, factor_name, "industry"
+                            industry_neutralized = (
+                                factor_neutralization_service.neutralize_industry(
+                                    combined_df, factor_name, "industry"
+                                )
                             )
 
                             if "future_return" in combined_df.columns:
                                 ic_after_ind = self._calculate_cross_sectional_ic(
-                                    industry_neutralized, combined_df["future_return"], combined_df.get("_date")
+                                    industry_neutralized,
+                                    combined_df["future_return"],
+                                    combined_df.get("_date"),
                                 )
-                                ic_before = results["factors"][factor_name]["ic_significance"]["ic"]
+                                ic_before = results["factors"][factor_name][
+                                    "ic_significance"
+                                ]["ic"]
                                 results["neutralization"][f"{factor_name}_ind"] = {
                                     "method": "行业中性化",
                                     "ic_before": ic_before,
                                     "ic_after": ic_after_ind,
                                     "improvement": (
                                         (ic_after_ind - ic_before)
-                                        if ic_after_ind is not None and ic_before is not None
+                                        if ic_after_ind is not None
+                                        and ic_before is not None
                                         else None
                                     ),
                                 }
@@ -387,7 +421,11 @@ class EnhancedAnalysisService:
                         combined_factor = pd.Series(dtype=float)
 
                     if len(combined_factor) >= 504:
-                        dist_stability = factor_stability_service.calculate_distribution_stability(combined_factor)
+                        dist_stability = (
+                            factor_stability_service.calculate_distribution_stability(
+                                combined_factor
+                            )
+                        )
                     else:
                         dist_stability = {
                             "warning": f"数据不足504个点(当前{len(combined_factor)})，跳过分布稳定性检验",
@@ -406,8 +444,10 @@ class EnhancedAnalysisService:
                             break
 
                     if first_stock_df is not None:
-                        rolling_stability = factor_stability_service.calculate_rolling_stability(
-                            first_stock_df, factor_name
+                        rolling_stability = (
+                            factor_stability_service.calculate_rolling_stability(
+                                first_stock_df, factor_name
+                            )
                         )
                     else:
                         rolling_stability = None

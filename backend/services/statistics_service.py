@@ -16,7 +16,13 @@ from backend.utils.returns import calculate_future_returns
 from backend.utils.safe_math import safe_divide
 from backend.utils.ic_calculator import calculate_ic
 from backend.services.risk_metrics import calculate_risk_metrics
-from backend.constants import ANNUAL_TRADING_DAYS, RISK_FREE_RATE, SEMI_ANNUAL_WINDOW, QUARTERLY_WINDOW, ROLLING_IC_WINDOW
+from backend.constants import (
+    ANNUAL_TRADING_DAYS,
+    RISK_FREE_RATE,
+    SEMI_ANNUAL_WINDOW,
+    QUARTERLY_WINDOW,
+    ROLLING_IC_WINDOW,
+)
 
 # 配置日志
 logger = logging.getLogger(__name__)
@@ -98,7 +104,9 @@ class StatisticsService:
             "confidence_interval": ci,
         }
 
-    def test_monotonicity(self, quantile_returns: Dict[str, pd.Series], alternative: str = "increasing") -> Dict:
+    def test_monotonicity(
+        self, quantile_returns: Dict[str, pd.Series], alternative: str = "increasing"
+    ) -> Dict:
         """
         检验因子分层的单调性
 
@@ -127,11 +135,15 @@ class StatisticsService:
         with _suppress_scipy_warnings():
             if alternative == "increasing":
                 # 正相关
-                correlation, p_value = stats.spearmanr(layer_ranks, layer_means, alternative="greater")
+                correlation, p_value = stats.spearmanr(
+                    layer_ranks, layer_means, alternative="greater"
+                )
                 expected_direction = "正相关"
             else:
                 # 负相关
-                correlation, p_value = stats.spearmanr(layer_ranks, layer_means, alternative="less")
+                correlation, p_value = stats.spearmanr(
+                    layer_ranks, layer_means, alternative="less"
+                )
                 expected_direction = "负相关"
 
         return {
@@ -143,7 +155,9 @@ class StatisticsService:
             "expected_direction": expected_direction,
         }
 
-    def calculate_factor_decay(self, df: pd.DataFrame, factor_name: str, max_periods: int = 10) -> Dict:
+    def calculate_factor_decay(
+        self, df: pd.DataFrame, factor_name: str, max_periods: int = 10
+    ) -> Dict:
         """
         计算因子衰减（预测能力随时间的变化）
 
@@ -205,7 +219,9 @@ class StatisticsService:
             start_idx = factor_group.index[0]
             end_idx = factor_group.index[-1]
 
-            return_mask = (return_data.index >= start_idx) & (return_data.index <= end_idx)
+            return_mask = (return_data.index >= start_idx) & (
+                return_data.index <= end_idx
+            )
             return_group = return_data[return_mask]
 
             # 对齐并计算IC（使用统一入口，符合规则0和规则5）
@@ -225,7 +241,16 @@ class StatisticsService:
 
         return periodic_ic
 
-    def calculate_rolling_ic_stability(self, ic_series: pd.Series, windows: List[int] = [ROLLING_IC_WINDOW, QUARTERLY_WINDOW, SEMI_ANNUAL_WINDOW, ANNUAL_TRADING_DAYS]) -> Dict:
+    def calculate_rolling_ic_stability(
+        self,
+        ic_series: pd.Series,
+        windows: List[int] = [
+            ROLLING_IC_WINDOW,
+            QUARTERLY_WINDOW,
+            SEMI_ANNUAL_WINDOW,
+            ANNUAL_TRADING_DAYS,
+        ],
+    ) -> Dict:
         """
         计算不同滚动窗口下的IC统计量，评估因子稳定性
 
@@ -240,8 +265,12 @@ class StatisticsService:
 
         for window in windows:
             min_periods = max(1, window // 4)
-            rolling_mean = ic_series.rolling(window=window, min_periods=min_periods).mean()
-            rolling_std = ic_series.rolling(window=window, min_periods=min_periods).std()
+            rolling_mean = ic_series.rolling(
+                window=window, min_periods=min_periods
+            ).mean()
+            rolling_std = ic_series.rolling(
+                window=window, min_periods=min_periods
+            ).std()
             rolling_ir = safe_divide(rolling_mean, rolling_std, default=None)
 
             results[f"window_{window}"] = {
@@ -290,7 +319,9 @@ class StatisticsService:
 
     # ==================== 因子交互效应分析 ====================
 
-    def analyze_factor_interactions(self, df: pd.DataFrame, factor_names: List[str], degree: int = 2) -> Dict:
+    def analyze_factor_interactions(
+        self, df: pd.DataFrame, factor_names: List[str], degree: int = 2
+    ) -> Dict:
         """
         分析因子交互效应
 
@@ -333,7 +364,9 @@ class StatisticsService:
             "feature_info": interaction_results,
         }
 
-    def calculate_factor_correlation_matrix(self, df: pd.DataFrame, factor_names: List[str]) -> pd.DataFrame:
+    def calculate_factor_correlation_matrix(
+        self, df: pd.DataFrame, factor_names: List[str]
+    ) -> pd.DataFrame:
         """
         计算因子相关性矩阵
 
@@ -355,7 +388,9 @@ class StatisticsService:
 
     # ==================== 因子拥挤度分析 ====================
 
-    def calculate_factor_crowding(self, df: pd.DataFrame, factor_name: str, window: int = 20) -> pd.Series:
+    def calculate_factor_crowding(
+        self, df: pd.DataFrame, factor_name: str, window: int = 20
+    ) -> pd.Series:
         """
         计算因子拥挤度（因子值的标准差，越小越拥挤）
 
@@ -405,7 +440,10 @@ class StatisticsService:
     # ==================== 因子分层收益分析 ====================
 
     def analyze_quantile_returns(
-        self, quantile_returns: Dict[str, pd.Series], annual_trading_days: int = None, risk_free_rate: float = None
+        self,
+        quantile_returns: Dict[str, pd.Series],
+        annual_trading_days: int = None,
+        risk_free_rate: float = None,
     ) -> Dict:
         """
         分析各分层收益的统计特性
@@ -445,7 +483,9 @@ class StatisticsService:
                 std = returns_clean.std()
                 # 委托risk_metrics统一入口计算年化收益和Sharpe（符合规则2）
                 metrics = calculate_risk_metrics(
-                    returns_clean, risk_free_rate=risk_free_rate, annual_trading_days=annual_trading_days
+                    returns_clean,
+                    risk_free_rate=risk_free_rate,
+                    annual_trading_days=annual_trading_days,
                 )
                 annual_return = metrics.get("annual_return")
                 sharpe = metrics.get("sharpe_ratio")
@@ -477,7 +517,9 @@ class StatisticsService:
         autocorrs = []
         for lag_val in range(1, lag + 1):
             autocorr = ic_series.autocorr(lag=lag_val)
-            if autocorr is not None and not (isinstance(autocorr, float) and math.isnan(autocorr)):
+            if autocorr is not None and not (
+                isinstance(autocorr, float) and math.isnan(autocorr)
+            ):
                 autocorrs.append(autocorr)
 
         if not autocorrs:

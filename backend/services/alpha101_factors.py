@@ -28,7 +28,8 @@ def get_alpha101_factors() -> Dict[str, List[Dict]]:
             {
                 "name": "alpha008",
                 "code": (
-                    "-1 * (SUM(open, 5) * SUM(RETURNS(close), 5) " "- REF(SUM(open, 5) * SUM(RETURNS(close), 5), 10))"
+                    "-1 * (SUM(open, 5) * SUM(RETURNS(close), 5) "
+                    "- REF(SUM(open, 5) * SUM(RETURNS(close), 5), 10))"
                 ),
                 "description": "Alpha#8: 开盘价收益动量差值",
             },

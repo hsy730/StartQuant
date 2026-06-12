@@ -33,7 +33,6 @@ from scipy.stats import spearmanr
 
 from backend.utils.safe_math import safe_divide, safe_ir
 from backend.utils.ic_calculator import calculate_rolling_ic
-from backend.constants import STATISTICAL_SIGNIFICANCE_ALPHA, HIGH_CORRELATION_THRESHOLD
 
 logger = logging.getLogger(__name__)
 
@@ -170,12 +169,16 @@ class LookaheadBiasDetector:
         checks: List[BiasCheckResult] = []
         context = extra_context or {}
 
-        logger.info(f"[未来函数检测] 开始检测因子: {factor_name}, 样本数: {len(factor_values)}")
+        logger.info(
+            f"[未来函数检测] 开始检测因子: {factor_name}, 样本数: {len(factor_values)}"
+        )
 
         # ---- 基础校验 ----
         factor_clean = factor_values.dropna()
         if len(factor_clean) < 20:
-            logger.warning(f"[未来函数检测] 因子 {factor_name} 有效数据不足 (n={len(factor_clean)} < 20)，跳过检测")
+            logger.warning(
+                f"[未来函数检测] 因子 {factor_name} 有效数据不足 (n={len(factor_clean)} < 20)，跳过检测"
+            )
             return self._insufficient_data_result(factor_name, len(factor_clean))
 
         # ---- 维度 1: IC 异常检测 ----
@@ -226,7 +229,7 @@ class LookaheadBiasDetector:
         logger.info(
             f"[未来函数检测] 检测完成: {factor_name}, "
             f"风险等级={risk_level.value}, 评分={risk_score:.1f}, "
-            f"通过={len(checks)-len(failed_checks)}/{len(checks)}"
+            f"通过={len(checks) - len(failed_checks)}/{len(checks)}"
         )
 
         return LookaheadBiasDetectionResult(
@@ -284,7 +287,9 @@ class LookaheadBiasDetector:
             if len(group) < 5:
                 continue
 
-            fv = group[factor_name] if factor_name in group.columns else group.iloc[:, 2]
+            fv = (
+                group[factor_name] if factor_name in group.columns else group.iloc[:, 2]
+            )
             ret = group["return"] if "return" in group.columns else group.iloc[:, 3]
 
             valid = fv.notna() & ret.notna()
@@ -320,7 +325,13 @@ class LookaheadBiasDetector:
             except Exception as e:
                 logger.debug(f"计算分层收益差失败: {e}")
 
-        ic_series = pd.Series(daily_rank_ics) if daily_rank_ics else pd.Series(daily_ics) if daily_ics else pd.Series()
+        ic_series = (
+            pd.Series(daily_rank_ics)
+            if daily_rank_ics
+            else pd.Series(daily_ics)
+            if daily_ics
+            else pd.Series()
+        )
 
         # 检测 1: 横截面 IC 均值过高
         if len(ic_series) > 0:
@@ -378,7 +389,10 @@ class LookaheadBiasDetector:
                         f"IC>0占比={pos_ratio:.1%}，接近100%或0%意味着因子方向过于确定。"
                         f"正常因子通常在50%~80%之间波动。"
                     ),
-                    detail={"positive_ratio": float(pos_ratio), "n_days": len(ic_series)},
+                    detail={
+                        "positive_ratio": float(pos_ratio),
+                        "n_days": len(ic_series),
+                    },
                 )
             )
 
@@ -392,13 +406,18 @@ class LookaheadBiasDetector:
                     passed=abs(avg_spread) < spread_threshold,
                     value=float(abs(avg_spread)),
                     threshold=spread_threshold,
-                    severity="error" if abs(avg_spread) > spread_threshold * 3 else "warning",
+                    severity="error"
+                    if abs(avg_spread) > spread_threshold * 3
+                    else "warning",
                     message=(
-                        f"日均Top-Bottom收益差={avg_spread:.4f}({avg_spread*100:.2f}%)，"
+                        f"日均Top-Bottom收益差={avg_spread:.4f}({avg_spread * 100:.2f}%)，"
                         f"{'极大' if abs(avg_spread) > spread_threshold * 3 else '偏大'}。"
                         f"日均>5%需警惕未来函数。"
                     ),
-                    detail={"avg_spread": float(avg_spread), "n_days": len(daily_spreads)},
+                    detail={
+                        "avg_spread": float(avg_spread),
+                        "n_days": len(daily_spreads),
+                    },
                 )
             )
 
@@ -430,7 +449,9 @@ class LookaheadBiasDetector:
 
     # ==================== 单项检测方法 ====================
 
-    def _check_ic_magnitude(self, factor: pd.Series, returns: pd.Series) -> BiasCheckResult:
+    def _check_ic_magnitude(
+        self, factor: pd.Series, returns: pd.Series
+    ) -> BiasCheckResult:
         """检测 1a: IC 绝对值是否异常偏高（使用Spearman秩相关）"""
         aligned = pd.DataFrame({"f": factor, "r": returns}).dropna()
         if len(aligned) < 10:
@@ -455,7 +476,9 @@ class LookaheadBiasDetector:
             detail={"ic": float(ic), "n_samples": len(aligned)},
         )
 
-    def _check_ir_magnitude(self, factor: pd.Series, returns: pd.Series) -> BiasCheckResult:
+    def _check_ir_magnitude(
+        self, factor: pd.Series, returns: pd.Series
+    ) -> BiasCheckResult:
         """检测 1b: IR 是否异常偏高（基于滚动Spearman IC）"""
         aligned = pd.DataFrame({"f": factor, "r": returns}).dropna()
         if len(aligned) < 40:
@@ -493,10 +516,17 @@ class LookaheadBiasDetector:
                 f"{'极高' if ir > threshold * 2 else '偏高'}。"
                 f"正常因子IR通常<2.0，IR>3需审查是否存在前视偏差。"
             ),
-            detail={"ir": float(ir), "ic_mean": float(ic_mean), "ic_std": float(ic_std), "window": window},
+            detail={
+                "ir": float(ir),
+                "ic_mean": float(ic_mean),
+                "ic_std": float(ic_std),
+                "window": window,
+            },
         )
 
-    def _check_ic_positive_ratio(self, factor: pd.Series, returns: pd.Series) -> BiasCheckResult:
+    def _check_ic_positive_ratio(
+        self, factor: pd.Series, returns: pd.Series
+    ) -> BiasCheckResult:
         """检测 1c: IC 正向比例是否异常（接近 100% 或 0%，使用Spearman IC）"""
         aligned = pd.DataFrame({"f": factor, "r": returns}).dropna()
         if len(aligned) < 20:
@@ -531,10 +561,15 @@ class LookaheadBiasDetector:
                 f"IC同向占比={extreme_ratio:.1%}({'正向' if pos_ratio > neg_ratio else '负向'})，"
                 f"接近100%意味着因子预测方向过于确定，需检查是否有泄漏。"
             ),
-            detail={"positive_ratio": float(pos_ratio), "negative_ratio": float(neg_ratio)},
+            detail={
+                "positive_ratio": float(pos_ratio),
+                "negative_ratio": float(neg_ratio),
+            },
         )
 
-    def _check_rank_correlation(self, factor: pd.Series, returns: pd.Series) -> BiasCheckResult:
+    def _check_rank_correlation(
+        self, factor: pd.Series, returns: pd.Series
+    ) -> BiasCheckResult:
         """检测 2a: Spearman 排名相关系数（完美排名检测）"""
         aligned = pd.DataFrame({"f": factor, "r": returns}).dropna()
         if len(aligned) < 10:
@@ -558,7 +593,9 @@ class LookaheadBiasDetector:
             detail={"rank_corr": float(rank_corr)},
         )
 
-    def _check_rank_ic_magnitude(self, factor: pd.Series, returns: pd.Series) -> BiasCheckResult:
+    def _check_rank_ic_magnitude(
+        self, factor: pd.Series, returns: pd.Series
+    ) -> BiasCheckResult:
         """检测 2b: Rank IC 均值"""
         aligned = pd.DataFrame({"f": factor, "r": returns}).dropna()
         if len(aligned) < 20:
@@ -587,7 +624,9 @@ class LookaheadBiasDetector:
             value=float(mean_rank_ic),
             threshold=threshold,
             severity="error" if mean_rank_ic > threshold * 1.5 else "warning",
-            message=(f"Rank IC均值={mean_rank_ic:.4f}，{'偏高' if mean_rank_ic > threshold else '正常'}。"),
+            message=(
+                f"Rank IC均值={mean_rank_ic:.4f}，{'偏高' if mean_rank_ic > threshold else '正常'}。"
+            ),
             detail={"mean_rank_ic": float(mean_rank_ic)},
         )
 
@@ -629,7 +668,9 @@ class LookaheadBiasDetector:
             value=float(abs_ac5),
             threshold=threshold,
             severity="warning",
-            message=(f"五阶自相关系数={ac5:.6f}，{'偏高' if abs_ac5 > threshold else '正常'}。"),
+            message=(
+                f"五阶自相关系数={ac5:.6f}，{'偏高' if abs_ac5 > threshold else '正常'}。"
+            ),
             detail={"autocorr_lag5": float(ac5)},
         )
 
@@ -645,7 +686,9 @@ class LookaheadBiasDetector:
         std = factor.std()
         mean = factor.mean()
         if std > 0:
-            outlier_ratio = ((factor < mean - 3 * std) | (factor > mean + 3 * std)).mean()
+            outlier_ratio = (
+                (factor < mean - 3 * std) | (factor > mean + 3 * std)
+            ).mean()
         else:
             outlier_ratio = 0.0
 
@@ -688,7 +731,10 @@ class LookaheadBiasDetector:
         is_too_stable = (
             std_factor > 1e-10
             and avg_change > 0
-            and safe_divide(float(day_over_day_change.std()), float(avg_change), default=0.0) < 0.01
+            and safe_divide(
+                float(day_over_day_change.std()), float(avg_change), default=0.0
+            )
+            < 0.01
         )
 
         is_abnormal = is_constant or is_too_stable
@@ -712,7 +758,9 @@ class LookaheadBiasDetector:
             },
         )
 
-    def _check_quantile_spread(self, quantile_returns: Dict[str, Any]) -> BiasCheckResult:
+    def _check_quantile_spread(
+        self, quantile_returns: Dict[str, Any]
+    ) -> BiasCheckResult:
         """检测 5a: 分层收益差异（Top-Bottom Spread）"""
         # quantile_returns 格式: {"Q1": series, "Q2": series, ...} 或类似
         try:
@@ -735,9 +783,11 @@ class LookaheadBiasDetector:
                             passed=abs_spread < threshold,
                             value=float(abs_spread),
                             threshold=threshold,
-                            severity="critical" if abs_spread > threshold * 5 else "error",
+                            severity="critical"
+                            if abs_spread > threshold * 5
+                            else "error",
                             message=(
-                                f"分层收益差(Q{keys[-1]}-Q{keys[0]})={spread:.4f}({spread*100:.2f}%/天)，"
+                                f"分层收益差(Q{keys[-1]}-Q{keys[0]})={spread:.4f}({spread * 100:.2f}%/天)，"
                                 f"{'极其异常' if abs_spread > threshold * 5 else '偏大'}。"
                                 f"正常分层收益差通常<1%/天。"
                             ),
@@ -752,7 +802,9 @@ class LookaheadBiasDetector:
 
         return self._skip_result("quantile_spread", "数据格式不支持")
 
-    def _check_quantile_monotonicity(self, quantile_returns: Dict[str, Any]) -> BiasCheckResult:
+    def _check_quantile_monotonicity(
+        self, quantile_returns: Dict[str, Any]
+    ) -> BiasCheckResult:
         """检测 5b: 分层收益单调性（过强也可疑——完美单调可能意味着泄漏）"""
         try:
             if isinstance(quantile_returns, dict):
@@ -760,14 +812,23 @@ class LookaheadBiasDetector:
                 if len(keys) >= 3:
                     means = [np.nanmean(quantile_returns[k]) for k in keys]
                     # 计算单调性：相邻层之间的方向一致性（双向检测）
-                    directions = [means[i + 1] - means[i] for i in range(len(means) - 1)]
-                    increase_ratio = sum(1 for d in directions if d > 0) / len(directions)
-                    decrease_ratio = sum(1 for d in directions if d < 0) / len(directions)
+                    directions = [
+                        means[i + 1] - means[i] for i in range(len(means) - 1)
+                    ]
+                    increase_ratio = sum(1 for d in directions if d > 0) / len(
+                        directions
+                    )
+                    decrease_ratio = sum(1 for d in directions if d < 0) / len(
+                        directions
+                    )
                     same_direction = max(increase_ratio, decrease_ratio)
                     # 同向比例过高（>0.95 且各层差距很大）是可疑信号
                     max_gap = max(means) - min(means) if means else 0
 
-                    is_too_perfect = same_direction > self.thresholds["quantile_monotonicity_min"] and max_gap > 0.02
+                    is_too_perfect = (
+                        same_direction > self.thresholds["quantile_monotonicity_min"]
+                        and max_gap > 0.02
+                    )
 
                     return BiasCheckResult(
                         check_name="quantile_monotonicity",
@@ -779,7 +840,11 @@ class LookaheadBiasDetector:
                             f"分层收益单调性={same_direction:.1%}(各层均值={means})，"
                             f"{'近乎完美单调且差距较大，需注意' if is_too_perfect else '正常'}。"
                         ),
-                        detail={"monotonicity": float(same_direction), "layer_means": means, "max_gap": float(max_gap)},
+                        detail={
+                            "monotonicity": float(same_direction),
+                            "layer_means": means,
+                            "max_gap": float(max_gap),
+                        },
                     )
         except Exception as e:
             logger.debug(f"分层单调性检测失败: {e}")
@@ -806,11 +871,17 @@ class LookaheadBiasDetector:
             max_dd = 1.0
 
         if annual_return > self.thresholds["annual_return_max"]:
-            warnings_list.append(f"年化收益={annual_return:.1%}>={self.thresholds['annual_return_max']*100:.0f}%")
+            warnings_list.append(
+                f"年化收益={annual_return:.1%}>={self.thresholds['annual_return_max'] * 100:.0f}%"
+            )
         if sharpe > self.thresholds["sharpe_max"]:
-            warnings_list.append(f"夏普比率={sharpe:.1f}>={self.thresholds['sharpe_max']:.0f}")
+            warnings_list.append(
+                f"夏普比率={sharpe:.1f}>={self.thresholds['sharpe_max']:.0f}"
+            )
         if win_rate > self.thresholds["win_rate_max"]:
-            warnings_list.append(f"胜率={win_rate:.1%}>={self.thresholds['win_rate_max']*100:.0f}%")
+            warnings_list.append(
+                f"胜率={win_rate:.1%}>={self.thresholds['win_rate_max'] * 100:.0f}%"
+            )
         if 0 < max_dd < self.thresholds["max_drawdown_min"]:
             warnings_list.append(f"最大回撤={max_dd:.4f}极低，几乎无回撤")
 
@@ -822,7 +893,9 @@ class LookaheadBiasDetector:
             passed=not is_abnormal,
             value=float(n_warnings),
             threshold=2.0,
-            severity="critical" if n_warnings >= 3 else ("error" if n_warnings >= 2 else "info"),
+            severity="critical"
+            if n_warnings >= 3
+            else ("error" if n_warnings >= 2 else "info"),
             message=(
                 f"回测指标{'严重异常' if n_warnings >= 3 else '存疑' if n_warnings >= 2 else '正常'}。"
                 f"{'; '.join(warnings_list) if warnings_list else '各项指标在合理范围内'}"
@@ -833,12 +906,15 @@ class LookaheadBiasDetector:
                 "metrics_snapshot": {
                     k: v
                     for k, v in metrics.items()
-                    if k in ("annual_return", "sharpe_ratio", "win_rate", "max_drawdown")
+                    if k
+                    in ("annual_return", "sharpe_ratio", "win_rate", "max_drawdown")
                 },
             },
         )
 
-    def _check_temporal_consistency(self, factor: pd.Series, returns: pd.Series) -> BiasCheckResult:
+    def _check_temporal_consistency(
+        self, factor: pd.Series, returns: pd.Series
+    ) -> BiasCheckResult:
         """检测 7: 时段一致性检验（前后半段 IC 对比，使用Spearman）"""
         aligned = pd.DataFrame({"f": factor, "r": returns}).dropna()
         if len(aligned) < 40:
@@ -897,7 +973,9 @@ class LookaheadBiasDetector:
             detail={"skipped": True, "reason": reason},
         )
 
-    def _insufficient_data_result(self, factor_name: str, n_samples: int) -> LookaheadBiasDetectionResult:
+    def _insufficient_data_result(
+        self, factor_name: str, n_samples: int
+    ) -> LookaheadBiasDetectionResult:
         """数据不足时的默认结果"""
         return LookaheadBiasDetectionResult(
             has_bias=False,
@@ -915,7 +993,11 @@ class LookaheadBiasDetector:
             ],
             summary=f"因子 [{factor_name}] 数据不足（{n_samples}个样本），跳过未来函数检测。",
             recommendations=["增加数据量后重新检测"],
-            metadata={"factor_name": factor_name, "sample_size": n_samples, "reason": "insufficient_data"},
+            metadata={
+                "factor_name": factor_name,
+                "sample_size": n_samples,
+                "reason": "insufficient_data",
+            },
         )
 
     def _calculate_risk_score(self, checks: List[BiasCheckResult]) -> float:
@@ -940,7 +1022,9 @@ class LookaheadBiasDetector:
                 score += 5
         return min(score, 100.0)
 
-    def _determine_risk_level(self, risk_score: float, critical_count: int, error_count: int) -> BiasRiskLevel:
+    def _determine_risk_level(
+        self, risk_score: float, critical_count: int, error_count: int
+    ) -> BiasRiskLevel:
         """根据评分和严重程度确定风险等级"""
         if critical_count >= 2 or risk_score >= 70:
             return BiasRiskLevel.CRITICAL
@@ -952,7 +1036,9 @@ class LookaheadBiasDetector:
             return BiasRiskLevel.LOW
         return BiasRiskLevel.SAFE
 
-    def _generate_summary(self, factor_name: str, checks: List[BiasCheckResult], level: BiasRiskLevel) -> str:
+    def _generate_summary(
+        self, factor_name: str, checks: List[BiasCheckResult], level: BiasRiskLevel
+    ) -> str:
         """生成人类可读的摘要"""
         failed = [c for c in checks if not c.passed]
         level_emoji = {
@@ -971,32 +1057,49 @@ class LookaheadBiasDetector:
         if failed:
             lines.append("   未通过项目:")
             for c in failed[:5]:  # 最多显示5条
-                lines.append(f"     - [{c.severity.upper()}] {c.check_name}: {c.message[:80]}")
+                lines.append(
+                    f"     - [{c.severity.upper()}] {c.check_name}: {c.message[:80]}"
+                )
             if len(failed) > 5:
                 lines.append(f"     ... 还有 {len(failed) - 5} 项未通过")
 
         return "\n".join(lines)
 
-    def _generate_recommendations(self, failed_checks: List[BiasCheckResult]) -> List[str]:
+    def _generate_recommendations(
+        self, failed_checks: List[BiasCheckResult]
+    ) -> List[str]:
         """根据失败的检测项生成改进建议"""
         recommendations = set()
         severity_names = {c.check_name for c in failed_checks if not c.passed}
 
         if "ic_magnitude" in severity_names or "rank_correlation" in severity_names:
-            recommendations.add("检查因子公式是否使用了 shift(-N) 或引用了未来字段（如 next_close）")
-            recommendations.add("确认因子值的计算时间点：应使用 T-1 及之前的数据计算 T 时刻的因子值")
+            recommendations.add(
+                "检查因子公式是否使用了 shift(-N) 或引用了未来字段（如 next_close）"
+            )
+            recommendations.add(
+                "确认因子值的计算时间点：应使用 T-1 及之前的数据计算 T 时刻的因子值"
+            )
 
         if "ir_magnitude" in severity_names:
             recommendations.add("IR 过高提示因子预测能力过强，请检查是否使用了未来信息")
 
-        if "autocorrelation_lag1" in severity_names or "value_constancy" in severity_names:
-            recommendations.add("因子自相关接近 1 或值几乎不变，可能存在计算错误或数据源问题")
+        if (
+            "autocorrelation_lag1" in severity_names
+            or "value_constancy" in severity_names
+        ):
+            recommendations.add(
+                "因子自相关接近 1 或值几乎不变，可能存在计算错误或数据源问题"
+            )
 
-        if any(k in severity_names for k in ("quantile_spread", "quantile_monotonicity")):
+        if any(
+            k in severity_names for k in ("quantile_spread", "quantile_monotonicity")
+        ):
             recommendations.add("分层收益异常完美，建议用样本外数据验证因子有效性")
 
         if "backtest_reality_check" in severity_names:
-            recommendations.add("回测指标不真实（年化收益/夏普/胜率过高），强烈建议检查是否存在未来函数")
+            recommendations.add(
+                "回测指标不真实（年化收益/夏普/胜率过高），强烈建议检查是否存在未来函数"
+            )
 
         if "temporal_consistency" in severity_names:
             recommendations.add("前后时段 IC 差异大，因子可能过拟合到特定时间段")

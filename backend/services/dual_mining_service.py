@@ -241,7 +241,9 @@ class DualMiningService:
         if self._pysr_service is not None:
             self._pysr_service.set_stock_pool(stock_codes, start_date, end_date)
         if self._tree_prescreen_service is not None:
-            self._tree_prescreen_service.set_stock_pool(stock_codes, start_date, end_date)
+            self._tree_prescreen_service.set_stock_pool(
+                stock_codes, start_date, end_date
+            )
         if self._gflownet_service is not None:
             self._gflownet_service.set_stock_pool(stock_codes, start_date, end_date)
         if self._deep_factor_service is not None:
@@ -250,7 +252,9 @@ class DualMiningService:
     def _pass_stock_pool_to_service(self, service):
         """将保存的股票池信息传递给新创建的子服务"""
         if self._stock_codes is not None and service is not None:
-            service.set_stock_pool(self._stock_codes, self._stock_start_date, self._stock_end_date)
+            service.set_stock_pool(
+                self._stock_codes, self._stock_start_date, self._stock_end_date
+            )
 
     def set_progress_callback(self, callback):
         self.progress_callback = callback
@@ -289,7 +293,9 @@ class DualMiningService:
         if self.progress_callback:
 
             def gp_progress(gen, total_gen, best_fitness, avg_fitness):
-                self.progress_callback(gen, total_gen, best_fitness, avg_fitness, algorithm="genetic")
+                self.progress_callback(
+                    gen, total_gen, best_fitness, avg_fitness, algorithm="genetic"
+                )
 
             self._gp_service.set_progress_callback(gp_progress)
 
@@ -317,7 +323,9 @@ class DualMiningService:
         if self.progress_callback:
 
             def pysr_progress(iteration, total_iter, best_fitness, avg_fitness):
-                self.progress_callback(iteration, total_iter, best_fitness, avg_fitness, algorithm="pysr")
+                self.progress_callback(
+                    iteration, total_iter, best_fitness, avg_fitness, algorithm="pysr"
+                )
 
             self._pysr_service.set_progress_callback(pysr_progress)
 
@@ -346,7 +354,9 @@ class DualMiningService:
         elif self.algorithm == "deep_implicit":
             return self._run_deep_implicit()
         else:
-            logger.warning(f"Unknown algorithm mode '{self.algorithm}', falling back to genetic")
+            logger.warning(
+                f"Unknown algorithm mode '{self.algorithm}', falling back to genetic"
+            )
             return self._run_genetic()
 
     def _run_tree_prescreen(self) -> Dict:
@@ -408,7 +418,13 @@ class DualMiningService:
                 # tree_prescreen 的 _report_progress 可能传字符串 phase 名（如 "feature_importance"），
                 # 而 mining.py 的 _update_progress 期望数字，此处过滤非数值调用
                 if isinstance(iteration, (int, float)):
-                    self.progress_callback(iteration, total_iter, best_fitness, avg_fitness, algorithm="tree_prescreen")
+                    self.progress_callback(
+                        iteration,
+                        total_iter,
+                        best_fitness,
+                        avg_fitness,
+                        algorithm="tree_prescreen",
+                    )
 
             self._tree_prescreen_service.set_progress_callback(tp_progress)
 
@@ -439,8 +455,16 @@ class DualMiningService:
 
         if self.progress_callback:
 
-            def gfn_progress(iteration, total_iter, best_fitness, avg_fitness, **kwargs):
-                self.progress_callback(iteration, total_iter, best_fitness, avg_fitness, algorithm="gflownet")
+            def gfn_progress(
+                iteration, total_iter, best_fitness, avg_fitness, **kwargs
+            ):
+                self.progress_callback(
+                    iteration,
+                    total_iter,
+                    best_fitness,
+                    avg_fitness,
+                    algorithm="gflownet",
+                )
 
             self._gflownet_service.set_progress_callback(gfn_progress)
 
@@ -475,7 +499,9 @@ class DualMiningService:
             "early_stopping_patience",
             "sparsity_coeff",
         }
-        filtered_deep = {k: v for k, v in self._deep_factor_params.items() if k in _deep_allowed}
+        filtered_deep = {
+            k: v for k, v in self._deep_factor_params.items() if k in _deep_allowed
+        }
 
         self._deep_factor_service = create_deep_factor_mining_service(
             base_factors=self.base_factor_codes,
@@ -490,7 +516,13 @@ class DualMiningService:
         if self.progress_callback:
 
             def deep_progress(epoch, total_epochs, best_fitness, avg_fitness, **kwargs):
-                self.progress_callback(epoch, total_epochs, best_fitness, avg_fitness, algorithm="deep_implicit")
+                self.progress_callback(
+                    epoch,
+                    total_epochs,
+                    best_fitness,
+                    avg_fitness,
+                    algorithm="deep_implicit",
+                )
 
             self._deep_factor_service.set_progress_callback(deep_progress)
 
@@ -510,4 +542,9 @@ def create_dual_mining_service(
     * ``algorithm`` – "genetic" / "pysr" / "tree_prescreen" /
       "gflownet" / "deep_implicit" (default "genetic")
     """
-    return DualMiningService(base_factors=base_factors, data=data, factor_calculator=factor_calculator, **kwargs)
+    return DualMiningService(
+        base_factors=base_factors,
+        data=data,
+        factor_calculator=factor_calculator,
+        **kwargs,
+    )

@@ -98,10 +98,12 @@ async def orchestrator_validate(request: OrchestratorValidateRequest):
             factor_name=request.factor_name,
         )
 
-        return sanitize_dict({
-            "success": result["status"] != "ERROR",
-            "data": result,
-        })
+        return sanitize_dict(
+            {
+                "success": result["status"] != "ERROR",
+                "data": result,
+            }
+        )
 
     except Exception as e:
         logger.error(f"一键验证失败: {e}\n{traceback.format_exc()}")
@@ -193,7 +195,9 @@ async def stock_ranker_train(request: RankerTrainRequest):
 
         # 构造特征数据（示例：使用基础因子作为特征）
         # 实际生产中应从数据库/因子库中获取预计算的特征矩阵
-        logger.info(f"[StockRanker API] 开始训练: model={request.model_name}, objective={request.objective}")
+        logger.info(
+            f"[StockRanker API] 开始训练: model={request.model_name}, objective={request.objective}"
+        )
 
         config = RankTrainingConfig(
             objective=request.objective,
@@ -293,7 +297,9 @@ async def stock_ranker_train_with_data(request: RankerTrainWithDataRequest):
                 "n_features": result.n_features,
                 "duration_seconds": round(result.duration_seconds, 2),
                 "training_metrics": result.training_metrics,
-                "feature_importance": dict(list(result.feature_importance.items())[:20]),
+                "feature_importance": dict(
+                    list(result.feature_importance.items())[:20]
+                ),
                 "train_period": result.train_period,
             },
         }

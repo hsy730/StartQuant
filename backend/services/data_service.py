@@ -82,7 +82,9 @@ class DataService:
         """从智能缓存加载数据"""
         return self.cache_service.get(cache_key)
 
-    def _save_to_cache(self, data: pd.DataFrame, cache_key: str, ttl: Optional[int] = None) -> None:
+    def _save_to_cache(
+        self, data: pd.DataFrame, cache_key: str, ttl: Optional[int] = None
+    ) -> None:
         """保存数据到智能缓存"""
         if ttl is None:
             ttl = settings.CACHE_DEFAULT_TTL
@@ -203,7 +205,9 @@ class DataService:
         stock_code = self._normalize_stock_code(stock_code)
 
         if use_cache and settings.AKSHARE_CACHE_ENABLED:
-            cache_key = f"{self._get_cache_key(stock_code, start_date, end_date)}_min_{period}"
+            cache_key = (
+                f"{self._get_cache_key(stock_code, start_date, end_date)}_min_{period}"
+            )
             cached_data = self._load_from_cache(cache_key)
             if cached_data is not None:
                 return cached_data.copy()
@@ -327,7 +331,9 @@ class DataService:
             MarketBoard枚举值
         """
         # 提取纯数字代码
-        pure_code = stock_code.replace(".SH", "").replace(".SZ", "").replace(".BJ", "").strip()
+        pure_code = (
+            stock_code.replace(".SH", "").replace(".SZ", "").replace(".BJ", "").strip()
+        )
 
         board = detect_market_board(pure_code)
 
@@ -338,7 +344,10 @@ class DataService:
         return board
 
     def _detect_price_limits(
-        self, df: pd.DataFrame, stock_code: str, config: Optional[TradableMaskConfig] = None
+        self,
+        df: pd.DataFrame,
+        stock_code: str,
+        config: Optional[TradableMaskConfig] = None,
     ) -> pd.DataFrame:
         """
         检测涨跌停并构建可交易性掩码（Mask-First核心方法）
@@ -387,11 +396,14 @@ class DataService:
         if config.check_limit_up:
             # 一字涨停：最高价>=涨停价 且 最低价≈最高价（全天封死，允许浮点误差）
             df["is_limit_up"] = (
-                (df["high"] >= df["limit_up_price"]) & np.isclose(df["low"], df["high"], atol=0.001)
+                (df["high"] >= df["limit_up_price"])
+                & np.isclose(df["low"], df["high"], atol=0.001)
             ).fillna(False)
 
             # 额外检测：收盘价==涨停价（触及涨停）
-            df["touched_limit_up"] = (df["close"] >= df["limit_up_price"] * 0.999).fillna(False)  # 允许0.1%误差
+            df["touched_limit_up"] = (
+                df["close"] >= df["limit_up_price"] * 0.999
+            ).fillna(False)  # 允许0.1%误差
         else:
             df["is_limit_up"] = False
             df["touched_limit_up"] = False
@@ -400,20 +412,23 @@ class DataService:
         if config.check_limit_down:
             # 一字跌停：最低价<=跌停价 且 最低价≈最高价（允许浮点误差）
             df["is_limit_down"] = (
-                (df["low"] <= df["limit_down_price"]) & np.isclose(df["low"], df["high"], atol=0.001)
+                (df["low"] <= df["limit_down_price"])
+                & np.isclose(df["low"], df["high"], atol=0.001)
             ).fillna(False)
 
             # 触及跌停
-            df["touched_limit_down"] = (df["close"] <= df["limit_down_price"] * 1.001).fillna(False)  # 允许0.1%误差
+            df["touched_limit_down"] = (
+                df["close"] <= df["limit_down_price"] * 1.001
+            ).fillna(False)  # 允许0.1%误差
         else:
             df["is_limit_down"] = False
             df["touched_limit_down"] = False
 
         # 6. 检测停牌（成交量异常低或缺失）
         if config.check_suspended:
-            df["is_suspended"] = ((df["volume"] <= config.volume_threshold) | df["volume"].isna()).fillna(
-                True
-            )  # 缺失成交量视为停牌
+            df["is_suspended"] = (
+                (df["volume"] <= config.volume_threshold) | df["volume"].isna()
+            ).fillna(True)  # 缺失成交量视为停牌
         else:
             df["is_suspended"] = False
 
@@ -467,10 +482,10 @@ class DataService:
         logger.info(
             f"📊 Mask-First统计 [{stock_code}] | "
             f"总天数: {total_days} | "
-            f"可交易: {tradable_days} ({tradable_days/total_days*100:.1f}%) | "
-            f"涨停: {limit_up_days} ({limit_up_days/total_days*100:.1f}%) | "
-            f"跌停: {limit_down_days} ({limit_down_days/total_days*100:.1f}%) | "
-            f"停牌: {suspended_days} ({suspended_days/total_days*100:.1f}%) | "
+            f"可交易: {tradable_days} ({tradable_days / total_days * 100:.1f}%) | "
+            f"涨停: {limit_up_days} ({limit_up_days / total_days * 100:.1f}%) | "
+            f"跌停: {limit_down_days} ({limit_down_days / total_days * 100:.1f}%) | "
+            f"停牌: {suspended_days} ({suspended_days / total_days * 100:.1f}%) | "
             f"市场板块: {board.value}"
         )
 
@@ -496,7 +511,8 @@ class DataService:
         other_columns = [
             col
             for col in df.columns
-            if col not in final_columns and not col.startswith(("limit_", "prev_", "touched_", "is_new"))
+            if col not in final_columns
+            and not col.startswith(("limit_", "prev_", "touched_", "is_new"))
         ]
 
         return df[final_columns + other_columns]
@@ -542,15 +558,23 @@ class DataService:
             if volume_col in df.columns:
                 window = 20
                 n_sigma = settings.DATA_OUTLIER_N_SIGMA
-                rolling_median = df[volume_col].rolling(window=window, min_periods=1).median()
-                mad = (df[volume_col] - rolling_median).abs().rolling(window=window, min_periods=1).median() * 1.4826
+                rolling_median = (
+                    df[volume_col].rolling(window=window, min_periods=1).median()
+                )
+                mad = (df[volume_col] - rolling_median).abs().rolling(
+                    window=window, min_periods=1
+                ).median() * 1.4826
                 mad = mad.where(mad > 1e-10, np.nan).ffill()
                 # 注意：不对MAD做bfill，避免引入前视偏差
                 lower_bound = rolling_median - n_sigma * mad
                 upper_bound = rolling_median + n_sigma * mad
                 # 成交量异常值用边界值替换
-                df.loc[df[volume_col] < lower_bound, volume_col] = lower_bound[df[volume_col] < lower_bound]
-                df.loc[df[volume_col] > upper_bound, volume_col] = upper_bound[df[volume_col] > upper_bound]
+                df.loc[df[volume_col] < lower_bound, volume_col] = lower_bound[
+                    df[volume_col] < lower_bound
+                ]
+                df.loc[df[volume_col] > upper_bound, volume_col] = upper_bound[
+                    df[volume_col] > upper_bound
+                ]
 
         return df
 
@@ -582,7 +606,10 @@ class DataService:
             return local_map
 
         with ThreadPoolExecutor(max_workers=10) as executor:
-            futures = {executor.submit(_fetch_one_industry, name): name for name in industry_names}
+            futures = {
+                executor.submit(_fetch_one_industry, name): name
+                for name in industry_names
+            }
             for future in as_completed(futures):
                 local_map = future.result()
                 industry_map.update(local_map)
@@ -592,7 +619,9 @@ class DataService:
 
         return {code: industry_map.get(code, "") for code in stock_codes}
 
-    def get_market_cap_data(self, stock_code: str, start_date: str, end_date: str) -> pd.DataFrame:
+    def get_market_cap_data(
+        self, stock_code: str, start_date: str, end_date: str
+    ) -> pd.DataFrame:
         stock_code = self._normalize_stock_code(stock_code)
         cache_key = self._get_cache_key(stock_code + "_mktcap", start_date, end_date)
 

@@ -38,7 +38,9 @@ class FactorSummaryService:
             "factor_name": factor_name,
             "basic_stats": self._calculate_basic_stats(factor_data),
             "ic_summary": self._summarize_ic_analysis(ic_analysis),
-            "stability_summary": self._summarize_stability(stability_analysis) if stability_analysis else None,
+            "stability_summary": self._summarize_stability(stability_analysis)
+            if stability_analysis
+            else None,
             "quality_score": None,
             "grade": None,
         }
@@ -158,7 +160,9 @@ class FactorSummaryService:
         # 稳定性得分（0-20分）
         stability_summary = summary.get("stability_summary")
         if stability_summary and "distribution" in stability_summary:
-            stability_score = stability_summary["distribution"].get("stability_score", 0)
+            stability_score = stability_summary["distribution"].get(
+                "stability_score", 0
+            )
             if isinstance(stability_score, float) and np.isnan(stability_score):
                 stability_score = 0.0
             score += stability_score * 20
@@ -253,6 +257,7 @@ class FactorSummaryService:
         if ic_summary:
             for factor, stats in ic_summary.items():
                 if isinstance(stats, dict):
+
                     def _fmt(val, fmt=".4f"):
                         if val is None:
                             return "N/A"
@@ -260,10 +265,10 @@ class FactorSummaryService:
 
                     report += f"""
 **因子**: {factor}
-- IC均值: {_fmt(stats.get('ic_mean'))}
-- IC标准差: {_fmt(stats.get('ic_std'))}
-- 信息比率(IR): {_fmt(stats.get('ir'))}
-- IC>0占比: {_fmt(stats.get('ic_positive_ratio'), ".2%")}
+- IC均值: {_fmt(stats.get("ic_mean"))}
+- IC标准差: {_fmt(stats.get("ic_std"))}
+- 信息比率(IR): {_fmt(stats.get("ir"))}
+- IC>0占比: {_fmt(stats.get("ic_positive_ratio"), ".2%")}
 """
 
         # 添加稳定性分析
@@ -275,8 +280,8 @@ class FactorSummaryService:
                 dist = stability_summary["distribution"]
                 report += f"""
 **分布稳定性**
-- 稳定性得分: {_safe_float(dist.get('stability_score'), default=0):.2f}
-- 稳定比例: {_safe_float(dist.get('stable_ratio'), default=0):.2%}
+- 稳定性得分: {_safe_float(dist.get("stability_score"), default=0):.2f}
+- 稳定比例: {_safe_float(dist.get("stable_ratio"), default=0):.2%}
 """
 
             if "time_series" in stability_summary:
@@ -284,8 +289,8 @@ class FactorSummaryService:
                 is_stationary = ts.get("is_stationary", False)
                 report += f"""
 **时间序列稳定性**
-- 平稳性: {'是' if is_stationary else '否'}
-- P值: {_safe_float(ts.get('p_value'), default=1):.4f}
+- 平稳性: {"是" if is_stationary else "否"}
+- P值: {_safe_float(ts.get("p_value"), default=1):.4f}
 """
 
         return report

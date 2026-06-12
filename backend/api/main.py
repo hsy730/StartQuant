@@ -72,7 +72,12 @@ class NumpyJSONEncoder(json.JSONEncoder):
 def jsonable_encoder_with_numpy(obj, *args, **kwargs):
     """处理numpy类型的JSON编码器"""
     try:
-        return jsonable_encoder(obj, *args, **kwargs, custom_serializer=lambda x: NumpyJSONEncoder().default(x))
+        return jsonable_encoder(
+            obj,
+            *args,
+            **kwargs,
+            custom_serializer=lambda x: NumpyJSONEncoder().default(x),
+        )
     except (TypeError, ValueError):
         return jsonable_encoder(obj, *args, **kwargs)
 
@@ -120,7 +125,9 @@ if FRONTEND_DIST.exists():
 async def spa_fallback(request, exc):
     """SPA fallback - return index.html for 404 errors (non-API routes)"""
     # Only handle non-API routes for HTML requests
-    if FRONTEND_DIST.exists() and not request.url.path.startswith(("/api", "/docs", "/redoc", "/openapi.json")):
+    if FRONTEND_DIST.exists() and not request.url.path.startswith(
+        ("/api", "/docs", "/redoc", "/openapi.json")
+    ):
         return FileResponse(FRONTEND_DIST / "index.html")
     return JSONResponse(status_code=404, content={"detail": "Not Found"})
 
@@ -132,7 +139,9 @@ app.include_router(mining.router, prefix="/api/mining", tags=["因子挖掘"])
 app.include_router(portfolio.router, prefix="/api/portfolio", tags=["组合分析"])
 app.include_router(backtest.router, prefix="/api/backtest", tags=["策略回测"])
 app.include_router(data.router, prefix="/api/data", tags=["数据管理"])
-app.include_router(orchestrator.router, prefix="/api", tags=["编排器/排序学习/模型管理"])
+app.include_router(
+    orchestrator.router, prefix="/api", tags=["编排器/排序学习/模型管理"]
+)
 # preprocessing_api 自带 prefix="/api/preprocessing"，无需额外前缀
 app.include_router(preprocessing_api.router)
 
@@ -140,7 +149,12 @@ app.include_router(preprocessing_api.router)
 @app.get("/api")
 async def api_root():
     """API 根路径"""
-    return {"message": "FactorFlow API", "version": "1.0.0", "docs": "/docs", "status": "running"}
+    return {
+        "message": "FactorFlow API",
+        "version": "1.0.0",
+        "docs": "/docs",
+        "status": "running",
+    }
 
 
 @app.get("/health")
@@ -155,7 +169,10 @@ async def health_check():
 async def global_exception_handler(request, exc):
     """全局异常处理"""
     logger.error(f"请求错误: {exc}")
-    return JSONResponse(status_code=500, content={"success": False, "message": str(exc), "detail": "服务器内部错误"})
+    return JSONResponse(
+        status_code=500,
+        content={"success": False, "message": str(exc), "detail": "服务器内部错误"},
+    )
 
 
 if __name__ == "__main__":

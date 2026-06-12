@@ -97,7 +97,9 @@ class FactorGeneratorService:
                 ops = random.sample(list(self.operators.keys()), 2)
 
                 # 生成嵌套表达式
-                expr = f"(({selected[0]} {ops[0]} {selected[1]}) {ops[1]} {selected[2]})"
+                expr = (
+                    f"(({selected[0]} {ops[0]} {selected[1]}) {ops[1]} {selected[2]})"
+                )
                 expressions.append(expr)
 
         # 生成深度3的组合（如果需要）
@@ -112,7 +114,10 @@ class FactorGeneratorService:
         return expressions[:max_combinations]
 
     def generate_statistical_combinations(
-        self, base_factors: List[str], window_sizes: List[int] = [5, 10, 20, 60], max_combinations: int = 50
+        self,
+        base_factors: List[str],
+        window_sizes: List[int] = [5, 10, 20, 60],
+        max_combinations: int = 50,
     ) -> List[str]:
         """
         生成统计函数组合因子
@@ -187,7 +192,10 @@ class FactorGeneratorService:
         return expressions[:max_combinations]
 
     def generate_indicator_combinations(
-        self, base_factors: List[str], price_column: str = "close", max_combinations: int = 30
+        self,
+        base_factors: List[str],
+        price_column: str = "close",
+        max_combinations: int = 30,
     ) -> List[str]:
         """
         生成技术指标组合因子
@@ -224,7 +232,9 @@ class FactorGeneratorService:
 
         return expressions[:max_combinations]
 
-    def generate_hybrid_factors(self, base_factors: List[str], n_factors: int = 100) -> List[Dict]:
+    def generate_hybrid_factors(
+        self, base_factors: List[str], n_factors: int = 100
+    ) -> List[Dict]:
         """
         生成混合因子（结合多种方法）
 
@@ -239,7 +249,9 @@ class FactorGeneratorService:
 
         # 1. 二元运算组合（40%）
         n_binary = int(n_factors * 0.4)
-        binary_exprs = self.generate_binary_combinations(base_factors, max_combinations=n_binary)
+        binary_exprs = self.generate_binary_combinations(
+            base_factors, max_combinations=n_binary
+        )
 
         for expr in binary_exprs:
             factors.append(
@@ -252,7 +264,9 @@ class FactorGeneratorService:
 
         # 2. 统计函数组合（30%）
         n_statistical = int(n_factors * 0.3)
-        stat_exprs = self.generate_statistical_combinations(base_factors, max_combinations=n_statistical)
+        stat_exprs = self.generate_statistical_combinations(
+            base_factors, max_combinations=n_statistical
+        )
 
         for expr in stat_exprs:
             factors.append(
@@ -265,7 +279,9 @@ class FactorGeneratorService:
 
         # 3. 技术指标组合（20%）
         n_indicator = int(n_factors * 0.2)
-        indicator_exprs = self.generate_indicator_combinations(base_factors, max_combinations=n_indicator)
+        indicator_exprs = self.generate_indicator_combinations(
+            base_factors, max_combinations=n_indicator
+        )
 
         for expr in indicator_exprs:
             factors.append(
@@ -308,7 +324,9 @@ class FactorGeneratorService:
 
         return factors[:n_factors]
 
-    def compile_expression_to_code(self, expression: str, data_column: str = "close") -> str:
+    def compile_expression_to_code(
+        self, expression: str, data_column: str = "close"
+    ) -> str:
         """
         将因子表达式编译为可执行代码
 
@@ -336,7 +354,10 @@ class FactorGeneratorService:
             ("ATR", "talib.ATR({args})"),
             # 滚动统计函数 → df.rolling().func()
             ("kurtosis", "df['{col}'].rolling(window=252, min_periods=1).kurtosis()"),
-            ("quantile", "df['{col}'].rolling(window=252, min_periods=1).quantile({args})"),
+            (
+                "quantile",
+                "df['{col}'].rolling(window=252, min_periods=1).quantile({args})",
+            ),
             ("median", "df['{col}'].rolling(window=252, min_periods=1).median()"),
             ("skew", "df['{col}'].rolling(window=252, min_periods=1).skew()"),
             ("std", "df['{col}'].rolling(window=252, min_periods=1).std()"),
@@ -476,7 +497,11 @@ class FactorGeneratorService:
                                     else:
                                         data_source = f"df['{data_column}']"
                                     # 剩余参数（除第一个外的所有参数）
-                                    remaining_args = ", ".join(arg_list[1:]) if len(arg_list) > 1 else ""
+                                    remaining_args = (
+                                        ", ".join(arg_list[1:])
+                                        if len(arg_list) > 1
+                                        else ""
+                                    )
                                     # 确定窗口大小：第二个参数（如果存在且为数字），用于 rolling 函数
                                     window = 252
                                     if len(arg_list) >= 2:
@@ -486,13 +511,23 @@ class FactorGeneratorService:
                                             window = 252
                                     # 构建替换：先替换 df['{col}'] 整体为 data_source，再替换其余占位符
                                     # 必须先替换 df['{col}'] 再替换 {col}，避免展开后无法匹配多引用场景
-                                    replacement = template.replace("df['{col}']", data_source)
-                                    replacement = replacement.replace("{col}", data_column)
-                                    replacement = replacement.replace("{args}", remaining_args)
+                                    replacement = template.replace(
+                                        "df['{col}']", data_source
+                                    )
+                                    replacement = replacement.replace(
+                                        "{col}", data_column
+                                    )
+                                    replacement = replacement.replace(
+                                        "{args}", remaining_args
+                                    )
                                     if "window=252" in replacement and window != 252:
-                                        replacement = replacement.replace("window=252", f"window={window}", 1)
+                                        replacement = replacement.replace(
+                                            "window=252", f"window={window}", 1
+                                        )
                                 else:
-                                    replacement = template.replace("{args}", parsed_args)
+                                    replacement = template.replace(
+                                        "{args}", parsed_args
+                                    )
                                 replaced = True
                                 break
                         if not replaced:
@@ -573,7 +608,9 @@ def calculate_factor(df):
             return False, "括号不匹配"
 
         # 检查是否有非法字符
-        allowed_chars = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789+-*/()., _")
+        allowed_chars = set(
+            "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789+-*/()., _"
+        )
         for char in expression:
             if char not in allowed_chars:
                 return False, f"包含非法字符: {char}"
@@ -666,10 +703,16 @@ def calculate_factor(df):
                 factor_values = factor_data_map[expression]
 
                 # 对齐数据
-                aligned_data = pd.DataFrame({"factor": factor_values, "return": return_data}).dropna()
+                aligned_data = pd.DataFrame(
+                    {"factor": factor_values, "return": return_data}
+                ).dropna()
 
                 # 检查数据比例
-                valid_ratio = len(aligned_data) / len(factor_values) if len(factor_values) > 0 else 0.0
+                valid_ratio = (
+                    len(aligned_data) / len(factor_values)
+                    if len(factor_values) > 0
+                    else 0.0
+                )
                 if valid_ratio < min_valid_ratio:
                     continue
 
@@ -677,7 +720,9 @@ def calculate_factor(df):
                 valid = aligned_data["factor"].notna() & aligned_data["return"].notna()
                 if valid.sum() < 5:
                     continue
-                ic, _ = spearmanr(aligned_data["factor"][valid], aligned_data["return"][valid])
+                ic, _ = spearmanr(
+                    aligned_data["factor"][valid], aligned_data["return"][valid]
+                )
                 if pd.isna(ic):
                     ic = 0.0
 
@@ -698,9 +743,9 @@ def calculate_factor(df):
                     r, _ = spearmanr(x[valid], y_aligned[valid])
                     return r
 
-                rolling_ic_series = factor_vals.rolling(window=window, min_periods=min_periods).apply(
-                    _rolling_spearman, raw=False
-                )
+                rolling_ic_series = factor_vals.rolling(
+                    window=window, min_periods=min_periods
+                ).apply(_rolling_spearman, raw=False)
                 rolling_ic_values = rolling_ic_series.tolist()
 
                 if rolling_ic_values:
@@ -723,13 +768,17 @@ def calculate_factor(df):
                 # 通过筛选
                 factor_info_copy = factor_info.copy()
                 factor_info_copy["ic"] = float(ic)
-                factor_info_copy["ir"] = float(ir) if ir is not None and np.isfinite(ir) else None
+                factor_info_copy["ir"] = (
+                    float(ir) if ir is not None and np.isfinite(ir) else None
+                )
                 factor_info_copy["valid_ratio"] = float(valid_ratio)
                 selected_factors.append(factor_info_copy)
 
         return selected_factors
 
-    def calculate_factor_metrics(self, factor_values: pd.Series, return_values: pd.Series) -> Dict:
+    def calculate_factor_metrics(
+        self, factor_values: pd.Series, return_values: pd.Series
+    ) -> Dict:
         """
         计算因子的质量指标
 
@@ -741,7 +790,9 @@ def calculate_factor(df):
             质量指标字典
         """
         # 对齐数据
-        aligned_data = pd.DataFrame({"factor": factor_values, "return": return_values}).dropna()
+        aligned_data = pd.DataFrame(
+            {"factor": factor_values, "return": return_values}
+        ).dropna()
 
         if len(aligned_data) < 10:
             return {"valid": False, "message": "数据不足"}
@@ -768,9 +819,9 @@ def calculate_factor(df):
             r, _ = spearmanr(x[v], y_aligned[v])
             return r
 
-        rolling_ic_series = factor_vals.rolling(window=window, min_periods=min_periods).apply(
-            _rolling_spearman, raw=False
-        )
+        rolling_ic_series = factor_vals.rolling(
+            window=window, min_periods=min_periods
+        ).apply(_rolling_spearman, raw=False)
 
         rolling_ic = rolling_ic_series
 
@@ -779,7 +830,9 @@ def calculate_factor(df):
         ir = safe_ir(float(ic_mean), float(ic_std), default=None)
 
         # 计算胜率
-        ic_win_rate = (rolling_ic > 0).sum() / rolling_ic.count() if rolling_ic.count() > 0 else 0
+        ic_win_rate = (
+            (rolling_ic > 0).sum() / rolling_ic.count() if rolling_ic.count() > 0 else 0
+        )
 
         # 计算因子分布特征
         factor_stats = {
