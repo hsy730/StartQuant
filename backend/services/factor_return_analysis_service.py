@@ -783,7 +783,7 @@ class FactorReturnAnalysisService:
         if len(daily_returns) >= 2:
             metrics = calculate_risk_metrics(daily_returns)
             dd = metrics.get("max_drawdown")
-            return abs(float(dd)) if dd is not None else 0.0
+            return abs(float(dd)) if dd is not None else None
 
         # 数据不足，手动计算
         wealth_index = pd.Series(returns).add(1).cumprod()

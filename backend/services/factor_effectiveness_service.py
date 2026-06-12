@@ -268,12 +268,13 @@ class FactorEffectivenessService:
             return {"error": "无法计算IC序列"}
 
         ic_series = pd.Series(ic_values)
+        ic_std = float(ic_series.std()) if len(ic_series) > 1 else None
         return {
             "dates": dates,
             "ic_values": [float(v) for v in ic_values],
             "ic_mean": float(ic_series.mean()),
-            "ic_std": float(ic_series.std()),
-            "ir": safe_ir(float(ic_series.mean()), float(ic_series.std()), default=None),
+            "ic_std": ic_std,
+            "ir": safe_ir(float(ic_series.mean()), ic_std, default=None) if ic_std is not None else None,
             "ic_positive_ratio": float((ic_series > 0).mean()),
         }
 

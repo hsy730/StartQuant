@@ -577,7 +577,7 @@ class FactorPreprocessingPipeline:
                 if self.config.handle_missing == "fill_median":
                     factor_vals = factor_vals.fillna(factor_vals.median())
                 else:
-                    factor_vals = factor_vals.fillna(factor_vals.median())
+                    factor_vals = factor_vals.fillna(0)
 
             # 去极值
             if self.config.winsorize_method == WinsorizeMethod.MAD:

@@ -394,9 +394,9 @@ class BaseMiningService(ABC):
             raw_ir_val = validation.get("_raw_ir")
             raw_ic = abs(raw_ic_val) if raw_ic_val is not None else 0.0
             raw_ir = abs(raw_ir_val) if raw_ir_val is not None else 0.0
-            if raw_ic > 1e-10:
+            if raw_ic > 1e-10 and np.isfinite(raw_ic):
                 valid_ic.append(raw_ic)
-            if raw_ir > 1e-10:
+            if raw_ir > 1e-10 and np.isfinite(raw_ir):
                 valid_ir.append(raw_ir)
 
         if len(valid_ic) < 2 or len(valid_ir) < 2:
@@ -436,7 +436,7 @@ class BaseMiningService(ABC):
 
             # 更新validation score以匹配
             if "score" in validation:
-                validation["score"] = max(0.0, factor_info["fitness"] * 100)
+                validation["score"] = max(0.0, min(factor_info["fitness"] * 100, 100.0))
 
         # 按更新后的适应度重新排名
         best_factors.sort(key=lambda f: f.get("fitness", 0), reverse=True)

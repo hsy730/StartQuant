@@ -763,19 +763,15 @@ class AnalysisService:
                         factor_key = f"{factor_name}_{ic_type_key}_{period_label}"
 
                     all_ic_stats[factor_key] = {
-                        "IC均值": period_stats.get("mean_ic") if period_stats.get("mean_ic") is not None else 0,
-                        "IC标准差": period_stats.get("std_ic") if period_stats.get("std_ic") is not None else 0,
-                        "IR": period_stats.get("ir") if period_stats.get("ir") is not None else 0,
-                        "IC>0占比": (
-                            period_stats.get("ic_positive_ratio")
-                            if period_stats.get("ic_positive_ratio") is not None
-                            else 0
-                        ),
+                        "IC均值": period_stats.get("mean_ic"),
+                        "IC标准差": period_stats.get("std_ic"),
+                        "IR": period_stats.get("ir"),
+                        "IC>0占比": period_stats.get("ic_positive_ratio"),
                         "IC绝对值均值": abs(ic_s).mean() if len(ic_s) > 0 else 0,
                         "IC序列": ic_s.to_dict(),
                         "IC类型": f"横截面{ic_type_name}（Alphalens）",
-                        "t统计量": period_stats.get("t_statistic", 0),
-                        "p值": period_stats.get("p_value", 1),
+                        "t统计量": period_stats.get("t_statistic"),
+                        "p值": period_stats.get("p_value"),
                     }
                     if len(ic_s) > 0:
                         all_monthly_ic[factor_key] = self._calculate_monthly_ic({factor_key: ic_s})[factor_key]

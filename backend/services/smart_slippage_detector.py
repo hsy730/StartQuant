@@ -465,7 +465,7 @@ class SmartSlippageDetector:
                 "slippage_rate": slip,
                 "estimated_annual_cost": round(annual_slippage_cost, 4),
                 "net_return_estimate": round(net_return, 4),
-                "return_decay_pct": round(return_decay, 2),
+                "return_decay_pct": round(return_decay, 2) if np.isfinite(return_decay) else None,
             }
 
         # 计算敏感性指标

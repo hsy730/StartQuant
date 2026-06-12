@@ -151,7 +151,7 @@ class StrategyComparisonService:
                         "p_value": float(paired_p_value),
                         "significant": paired_p_value < 0.05,
                     },
-                    "correlation": float(correlation),
+                    "correlation": float(correlation) if pd.notna(correlation) else None,
                 }
 
         return tests

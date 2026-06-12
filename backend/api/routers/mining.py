@@ -1134,7 +1134,7 @@ async def get_mining_status(task_id: str):
                 f"{response_data['total_generations']}"
             )
 
-        return {"success": True, "data": response_data}
+        return sanitize_dict({"success": True, "data": response_data})
 
     # 内存中没有，从数据库获取
     try:
@@ -1171,7 +1171,7 @@ async def get_mining_status(task_id: str):
                 response_data["avg_fitness"] = task_record.avg_fitness or 0
                 response_data["fitness_history"] = task_record.fitness_history or {"best": [], "average": []}
 
-            return {"success": True, "data": response_data}
+            return sanitize_dict({"success": True, "data": response_data})
     except HTTPException:
         raise
     except Exception as e:

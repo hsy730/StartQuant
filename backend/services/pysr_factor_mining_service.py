@@ -11,6 +11,7 @@ PySR符号回归因子挖掘服务
 """
 
 import logging
+import re
 import traceback
 from typing import List, Dict, Optional, Tuple
 import pandas as pd
@@ -41,6 +42,16 @@ _PYSR_OPERATOR_MAP = {
     "log": "log",
     "sqrt": "sqrt",
 }
+
+
+def _safe_float(val, default=0.0):
+    if val is None:
+        return default
+    try:
+        f = float(val)
+        return default if (np.isnan(f) or np.isinf(f)) else f
+    except (TypeError, ValueError):
+        return default
 
 
 class PySRFactorMiningService(BaseMiningService):
@@ -117,7 +128,7 @@ class PySRFactorMiningService(BaseMiningService):
         feature_names = []
         series_list = []
 
-        for var_name in sorted(self.base_factor_values.keys()):
+        for var_name in sorted(self.base_factor_values.keys(), key=lambda k: int(k.replace("x", "")) if k.startswith("x") and k[1:].isdigit() else k):
             info = self.base_factor_values[var_name]
             feature_names.append(var_name)
             series_list.append(info["values"])
@@ -148,7 +159,7 @@ class PySRFactorMiningService(BaseMiningService):
         stock_factor_map maps stock_code -> {var_name: pd.Series}.
         """
         feature_names = (
-            sorted(self.stock_pool_base_factor_values.get(self._sampled_stock_codes[0], {}).keys())
+            sorted(self.stock_pool_base_factor_values.get(self._sampled_stock_codes[0], {}).keys(), key=lambda k: int(k.replace("x", "")) if k.startswith("x") and k[1:].isdigit() else k)
             if self._sampled_stock_codes
             else []
         )
@@ -204,10 +215,10 @@ class PySRFactorMiningService(BaseMiningService):
         """
         result = expr_str
 
-        for var_name in sorted(feature_names, key=len, reverse=True):
+        for var_name in feature_names:
             _idx = int(var_name.replace("x", ""))  # noqa: F841
             factor_code = self.base_factor_values.get(var_name, {}).get("code", var_name)
-            result = result.replace(var_name, f"({factor_code})")
+            result = re.sub(r'\b' + re.escape(var_name) + r'\b', f"({factor_code})", result)
 
         result = result.replace("np.", "")
 
@@ -228,7 +239,7 @@ class PySRFactorMiningService(BaseMiningService):
         for code, stock_data in stock_factor_map.items():
             try:
                 ordered_values = []
-                for var_name in sorted(stock_data.keys()):
+                for var_name in sorted(stock_data.keys(), key=lambda k: int(k.replace("x", "")) if k.startswith("x") and k[1:].isdigit() else k):
                     ordered_values.append(stock_data[var_name].values)
 
                 X_stock = np.column_stack(ordered_values)
@@ -328,7 +339,7 @@ class PySRFactorMiningService(BaseMiningService):
                         },
                         "score": max(0.0, min(fitness * 100, 100.0)),
                         "_raw_ic_mean": ic_mean_val,
-                        "_raw_ir": ir_val,
+                        "_raw_ir": ir_val if (ir_val is not None and np.isfinite(ir_val)) else None,
                         "_alphalens": True,
                     }
                     alphalens_success = True
@@ -362,6 +373,10 @@ class PySRFactorMiningService(BaseMiningService):
             else:
                 logger.warning("[PySR Eval] ⚠️ No fallback possible: best_fv or best_ret is None")
 
+        if fitness is not None and np.isnan(fitness):
+            logger.warning("[PySR Eval] fitness is NaN, resetting to 0.0")
+            fitness = 0.0
+
         logger.info(f"[PySR Eval] Returning: fitness={fitness:.4f}, validation_keys={list(validation.keys())}")
         return fitness, validation
 
@@ -370,7 +385,7 @@ class PySRFactorMiningService(BaseMiningService):
 
         Returns (fitness, validation_dict).
         """
-        feature_names = sorted(self.base_factor_values.keys())
+        feature_names = sorted(self.base_factor_values.keys(), key=lambda k: int(k.replace("x", "")) if k.startswith("x") and k[1:].isdigit() else k)
         ordered_values = []
         for var_name in feature_names:
             info = self.base_factor_values[var_name]
@@ -392,7 +407,8 @@ class PySRFactorMiningService(BaseMiningService):
                 return_values=self.return_values,
                 existing_factors=None,
             )
-            fitness = validation.get("score", 0) / 100.0
+            score_val = validation.get("score")
+            fitness = (score_val / 100.0) if score_val is not None else 0.0
             return fitness, validation
         else:
             # 无收益率数据时，使用变异系数(CV)作为代理适应度
@@ -505,8 +521,8 @@ class PySRFactorMiningService(BaseMiningService):
             for idx, row in equations_df.iterrows():
                 sympy_expr = str(row.get("sympy_format", row.get("equation", "")))
                 complexity = int(row.get("complexity", len(sympy_expr)))
-                loss = float(row.get("loss", 1.0))
-                score = float(row.get("score", 0.0))
+                loss = _safe_float(row.get("loss"), default=1.0)
+                score = _safe_float(row.get("score"), default=0.0)
 
                 factor_code = self._pysr_expr_to_factor_code(sympy_expr, feature_names)
 

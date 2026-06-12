@@ -13,7 +13,7 @@ def _safe_float(val, default=0.0):
         return default
     try:
         f = float(val)
-        return default if np.isnan(f) else f
+        return default if (np.isnan(f) or np.isinf(f)) else f
     except (TypeError, ValueError):
         return default
 

@@ -70,7 +70,7 @@ class StatisticsService:
                 p_value = 1.0
                 is_sig = False
             return {
-                "t_statistic": t_stat,
+                "t_statistic": t_stat if np.isfinite(t_stat) else None,
                 "p_value": p_value,
                 "confidence_interval": (None, None),
                 "is_significant": is_sig,

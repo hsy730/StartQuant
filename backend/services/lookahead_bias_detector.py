@@ -791,7 +791,9 @@ class LookaheadBiasDetector:
 
         annual_return = metrics.get("annual_return")
         if annual_return is None:
-            annual_return = metrics.get("total_return", 0)
+            annual_return = metrics.get("total_return")
+        if annual_return is None:
+            annual_return = 0
         sharpe = metrics.get("sharpe_ratio")
         if sharpe is None:
             sharpe = 0

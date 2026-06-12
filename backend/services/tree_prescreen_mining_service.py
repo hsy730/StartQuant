@@ -353,7 +353,7 @@ class TreePrescreenMiningService(BaseMiningService):
         raw_importance = model.feature_importance(importance_type=self.importance_type)
         total = raw_importance.sum()
 
-        if total == 0:
+        if total < 1e-10:
             return {name: 0.0 for name in feature_names}
 
         importance_dict = {name: float(imp / total) for name, imp in zip(feature_names, raw_importance)}
@@ -407,6 +407,30 @@ class TreePrescreenMiningService(BaseMiningService):
                 factor_codes.append(info["code"])
         return factor_codes
 
+    def _get_pool_start_date(self):
+        """安全获取股票池起始日期"""
+        if not self.stock_pool_data:
+            return ""
+        first_df = next(iter(self.stock_pool_data.values()))
+        if first_df.empty:
+            return ""
+        try:
+            return first_df.index[0].strftime("%Y-%m-%d")
+        except (IndexError, AttributeError):
+            return ""
+
+    def _get_pool_end_date(self):
+        """安全获取股票池结束日期"""
+        if not self.stock_pool_data:
+            return ""
+        first_df = next(iter(self.stock_pool_data.values()))
+        if first_df.empty:
+            return ""
+        try:
+            return first_df.index[-1].strftime("%Y-%m-%d")
+        except (IndexError, AttributeError):
+            return ""
+
     def _run_downstream_genetic(self, selected_factor_codes: List[str]) -> Dict:
         """运行 DEAP 遗传规划下游"""
         from backend.services.genetic_factor_mining_service import (
@@ -433,8 +457,8 @@ class TreePrescreenMiningService(BaseMiningService):
         if self.stock_codes:
             service.set_stock_pool(
                 self.stock_codes,
-                list(self.stock_pool_data.values())[0].index[0].strftime("%Y-%m-%d") if self.stock_pool_data else "",
-                list(self.stock_pool_data.values())[0].index[-1].strftime("%Y-%m-%d") if self.stock_pool_data else "",
+                self._get_pool_start_date(),
+                self._get_pool_end_date(),
             )
 
         # 设置进度回调（映射到 30-100%）
@@ -477,8 +501,8 @@ class TreePrescreenMiningService(BaseMiningService):
         if self.stock_codes:
             service.set_stock_pool(
                 self.stock_codes,
-                list(self.stock_pool_data.values())[0].index[0].strftime("%Y-%m-%d") if self.stock_pool_data else "",
-                list(self.stock_pool_data.values())[0].index[-1].strftime("%Y-%m-%d") if self.stock_pool_data else "",
+                self._get_pool_start_date(),
+                self._get_pool_end_date(),
             )
 
         # 设置进度回调

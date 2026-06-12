@@ -330,7 +330,7 @@ class FactorOrchestrator:
                                 "status": result["status"],
                                 "score": result.get("summary", {}).get("overall_score", 0),
                                 "ic_mean": ic_result.get("ic_mean") if ic_result.get("ic_mean") is not None else 0,
-                                "ir": ic_result.get("ir") if ic_result.get("ir") is not None else 0,
+                                "ir": ic_result.get("ir"),
                                 "risk_level": bias_result.get("risk_level", "N/A"),
                         }
                     )
@@ -374,7 +374,7 @@ class FactorOrchestrator:
                             "status": result["status"],
                             "score": result.get("summary", {}).get("overall_score", 0),
                             "ic_mean": ic_result.get("ic_mean") if ic_result.get("ic_mean") is not None else 0,
-                            "ir": ic_result.get("ir") if ic_result.get("ir") is not None else 0,
+                            "ir": ic_result.get("ir"),
                             "risk_level": bias_result.get("risk_level", "N/A"),
                         }
                     )
