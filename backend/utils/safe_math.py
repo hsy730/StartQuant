@@ -10,6 +10,38 @@ import pandas as pd
 from typing import Optional, Union
 
 
+def safe_float(val, default=0.0):
+    """
+    安全转换为 float — 处理 None/NaN/Inf 崩溃（规则7.36）
+
+    当值为 None、NaN 或 Inf 时返回 default，避免 float(None) TypeError 和
+    dict.get(key, default) 在键存在但值为 None 时返回 None 的陷阱。
+
+    Args:
+        val: 待转换的值（任意类型）
+        default: 转换失败时的返回值（默认 0.0）
+
+    Returns:
+        float: 转换结果，或 default
+
+    Examples:
+        >>> safe_float(None, default=0.0)      # → 0.0
+        >>> safe_float(3.14)                    # → 3.14
+        >>> safe_float(float('nan'), default=None)  # → None
+        >>> safe_float(float('inf'), default=0.0)   # → 0.0
+    """
+    if val is None:
+        return default
+    try:
+        f = float(val)
+    except (TypeError, ValueError):
+        return default
+    # 同时处理 numpy 和 Python 标量的 NaN/Inf
+    if isinstance(f, (float, np.floating)) and (np.isnan(f) or np.isinf(f)):
+        return default
+    return f
+
+
 def safe_divide(
     numerator: Union[float, np.ndarray, pd.Series],
     denominator: Union[float, np.ndarray, pd.Series],

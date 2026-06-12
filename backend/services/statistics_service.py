@@ -405,19 +405,25 @@ class StatisticsService:
     # ==================== 因子分层收益分析 ====================
 
     def analyze_quantile_returns(
-        self, quantile_returns: Dict[str, pd.Series], annual_trading_days: int = 252, risk_free_rate: float = 0.03
+        self, quantile_returns: Dict[str, pd.Series], annual_trading_days: int = None, risk_free_rate: float = None
     ) -> Dict:
         """
         分析各分层收益的统计特性
 
         Args:
             quantile_returns: 各分层收益字典
-            annual_trading_days: 年化交易日数
-            risk_free_rate: 无风险利率（年化）
+            annual_trading_days: 年化交易日数（默认使用 ANNUAL_TRADING_DAYS 常量）
+            risk_free_rate: 无风险利率（年化，默认使用 RISK_FREE_RATE 常量）
 
         Returns:
             Dict: 各分层收益统计
         """
+        # 解析默认参数为常量（避免方法签名硬编码）
+        if annual_trading_days is None:
+            annual_trading_days = ANNUAL_TRADING_DAYS
+        if risk_free_rate is None:
+            risk_free_rate = RISK_FREE_RATE
+
         results = {}
         _daily_rf = risk_free_rate / annual_trading_days  # noqa: F841
 

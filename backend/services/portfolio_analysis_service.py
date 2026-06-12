@@ -279,6 +279,9 @@ class PortfolioAnalysisService:
         if factor_returns.empty:
             return {"weights": {}, "method": method, "error": "因子收益率为空"}
 
+        # 防御性复制：避免修改调用方数据（规则3）
+        factor_returns = factor_returns.copy()
+
         # 预处理因子收益率，处理 NaN 和 Inf 值
         # NaN 不填充为0.0（0.0在Z-score空间意味着"平均水平"，严重误导优化）
         # 先前向填充（保留时间序列连续性），再删除剩余NaN

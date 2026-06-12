@@ -5,8 +5,12 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import List, Optional, Dict
+import logging
+
 import numpy as np
 import asyncio
+
+logger = logging.getLogger(__name__)
 
 from backend.utils.serialization import sanitize_dict
 from backend.services.vectorbt_backtest_service import VectorBTBacktestService, check_vectorbt_available
@@ -449,6 +453,7 @@ async def run_single_backtest(request: SingleBacktestRequest):
     except HTTPException:
         raise
     except Exception as e:
+        logger.error(f"单因子回测失败: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -569,6 +574,7 @@ async def run_strategy_comparison(request: ComparisonRequest):
     except HTTPException:
         raise
     except Exception as e:
+        logger.error(f"策略对比失败: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -599,6 +605,7 @@ async def get_backtest_history(limit: int = 10):
 
             return {"success": True, "data": history_list, "total": len(history_list)}
     except Exception as e:
+        logger.error(f"获取回测历史失败: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -617,4 +624,5 @@ async def delete_backtest_history(record_id: int):
     except HTTPException:
         raise
     except Exception as e:
+        logger.error(f"删除回测历史失败: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))

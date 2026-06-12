@@ -6,16 +6,7 @@ import pandas as pd
 import numpy as np
 from typing import Dict, List, Optional, Any
 
-
-def _safe_float(val, default=0.0):
-    """Convert value to float, returning default for None/NaN"""
-    if val is None:
-        return default
-    try:
-        f = float(val)
-        return default if (np.isnan(f) or np.isinf(f)) else f
-    except (TypeError, ValueError):
-        return default
+from backend.utils.safe_math import safe_float as _safe_float
 
 
 class FactorSummaryService:

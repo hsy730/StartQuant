@@ -165,7 +165,7 @@ class FactorReturnAnalysisService:
                             )
                         except ValueError:
                             # 分位数相同时无法切分，跳过该截面
-                            pass
+                            logger.debug(f"qcut跳过截面 {date}: 因子{factor_name}值相同, n={len(group)}")
             else:
                 # 无日期信息时退化为全局分位（单股票场景）
                 merged_df["quantile"] = pd.qcut(

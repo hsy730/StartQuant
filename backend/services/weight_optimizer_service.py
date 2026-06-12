@@ -143,21 +143,13 @@ class WeightOptimizer:
                 aligned_data = pd.DataFrame({"factor": values, "returns": returns}).dropna()
 
                 if len(aligned_data) > 20:
+                    from backend.utils.ic_calculator import calculate_rolling_ic
 
-                    def _rolling_spearman_ic(window_factor, returns_series):
-                        y_aligned = returns_series.loc[window_factor.index]
-                        valid = window_factor.notna() & y_aligned.notna()
-                        if valid.sum() < 5:
-                            return np.nan
-                        return spearmanr(window_factor[valid], y_aligned[valid])[0]
-
-                    ic_series = (
-                        aligned_data["factor"]
-                        .rolling(window=20, min_periods=10)
-                        .apply(lambda x: _rolling_spearman_ic(x, aligned_data["returns"]), raw=False)
+                    rolling_ic = calculate_rolling_ic(
+                        aligned_data["factor"], aligned_data["returns"], window=20, method="spearman"
                     )
-                    ic_mean = ic_series.mean()
-                    ic_std = ic_series.std()
+                    ic_mean = rolling_ic.mean()
+                    ic_std = rolling_ic.std()
                     ir = safe_ir(float(ic_mean), float(ic_std), default=None)
                     if ir is not None:
                         ir_values[factor_name] = abs(ir)

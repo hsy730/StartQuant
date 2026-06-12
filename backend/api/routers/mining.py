@@ -15,13 +15,13 @@ from typing import List, Optional, Dict
 import asyncio
 
 import numpy as np
-import math
 import json
 import time
 import logging
 from datetime import datetime
 
 from backend.utils.serialization import sanitize_dict
+from backend.utils.safe_math import safe_float as _safe_float
 from backend.core.database import get_db
 from backend.models.mining_task import MiningTaskModel
 from backend.repositories.mining_task_repository import MiningTaskRepository
@@ -32,18 +32,6 @@ logger = logging.getLogger(__name__)
 from backend.services import factor_validation_service  # noqa: E402
 
 router = APIRouter()
-
-
-def _safe_float(value, default=None):
-    if value is None:
-        return default
-    try:
-        v = float(value)
-    except (TypeError, ValueError):
-        return default
-    if math.isnan(v) or math.isinf(v):
-        return default
-    return v
 
 
 def _extract_first_fitness(value) -> float:

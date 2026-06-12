@@ -7,9 +7,13 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import List, Optional
+import logging
+
 from backend.services.factor_service import factor_service
 from backend.services.factor_generator_service import factor_generator_service
 import ast
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -229,6 +233,7 @@ async def get_factors(category: Optional[str] = None, source: Optional[str] = No
 
         return {"success": True, "data": factors, "total": len(factors)}
     except Exception as e:
+        logger.error(f"获取因子列表失败: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -239,6 +244,7 @@ async def get_factor_stats():
         stats = factor_service.get_factor_stats()
         return {"success": True, "data": stats}
     except Exception as e:
+        logger.error(f"获取因子统计失败: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -262,6 +268,7 @@ async def get_factor(factor_id: int):
     except HTTPException:
         raise
     except Exception as e:
+        logger.error(f"获取因子详情失败: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -289,6 +296,7 @@ async def create_factor(request: FactorCreate):
         # 验证门控拒绝，返回400而非500
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
+        logger.error(f"创建因子失败: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -307,6 +315,7 @@ async def update_factor(factor_id: int, request: FactorUpdate):
 
         return {"success": True, "message": "因子更新成功"}
     except Exception as e:
+        logger.error(f"更新因子失败: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -323,6 +332,7 @@ async def delete_factor(factor_id: int):
     except HTTPException:
         raise
     except Exception as e:
+        logger.error(f"删除因子失败: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -382,6 +392,7 @@ async def batch_generate_factors(request: BatchGenerateRequest):
 
         return {"success": True, "data": result}
     except Exception as e:
+        logger.error(f"批量生成因子失败: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -396,6 +407,7 @@ async def preselect_factors(request: PreselectRequest):
             "data": {"total": len(request.factors), "selected": len(request.factors), "factors": request.factors},
         }
     except Exception as e:
+        logger.error(f"预筛选因子失败: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -435,6 +447,7 @@ async def validate_factor(request: ValidateFactorRequest):
             "message": "验证通过",
         }
     except Exception as e:
+        logger.warning(f"验证因子表达式失败: {e}")
         return {"success": False, "message": str(e)}
 
 
@@ -488,6 +501,7 @@ async def copy_factor(factor_id: int):
     except HTTPException:
         raise
     except Exception as e:
+        logger.error(f"复制因子失败: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -526,6 +540,7 @@ async def get_generated_factors(
             "total": len(result),
         }
     except Exception as e:
+        logger.error(f"获取生成因子列表失败: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -552,6 +567,7 @@ async def get_generated_factor(generated_id: int):
     except HTTPException:
         raise
     except Exception as e:
+        logger.error(f"获取生成因子详情失败: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -643,6 +659,7 @@ async def promote_generated_factor(generated_id: int, request: PromoteFactorRequ
     except HTTPException:
         raise
     except Exception as e:
+        logger.error(f"提升因子失败: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -672,4 +689,5 @@ async def delete_generated_factor(generated_id: int):
     except HTTPException:
         raise
     except Exception as e:
+        logger.error(f"删除生成因子失败: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))

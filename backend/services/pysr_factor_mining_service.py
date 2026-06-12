@@ -44,7 +44,7 @@ _PYSR_OPERATOR_MAP = {
 }
 
 
-from backend.services.factor_summary_service import _safe_float
+from backend.utils.safe_math import safe_float as _safe_float
 
 
 class PySRFactorMiningService(BaseMiningService):

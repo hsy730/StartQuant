@@ -276,7 +276,7 @@ class FactorAttributionService:
         relative_metrics = calculate_relative_metrics(
             strategy_returns=aligned_data["portfolio"],
             benchmark_returns=aligned_data["benchmark"],
-            risk_free_rate=0.03,
+            risk_free_rate=RISK_FREE_RATE,
         )
 
         alpha_annual = relative_metrics.get("alpha")
