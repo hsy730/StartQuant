@@ -120,6 +120,7 @@ async def get_stock_data(code: str, start_date: str, end_date: str):
     except HTTPException:
         raise
     except Exception as e:
+        logger.error(f"获取股票数据失败: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -262,6 +263,7 @@ async def get_stock_pool_stocks(pool_id: str):
     except HTTPException:
         raise
     except Exception as e:
+        logger.error(f"获取股票池成分股失败: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"获取股票池成分股失败: {str(e)}")
 
 
@@ -272,6 +274,7 @@ async def get_cache_stats():
         stats = data_service.get_cache_stats()
         return {"success": True, "data": stats}
     except Exception as e:
+        logger.error(f"获取缓存统计失败: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -286,6 +289,7 @@ async def cleanup_cache():
             "message": f"已清理 {cleaned} 个过期缓存",
         }
     except Exception as e:
+        logger.error(f"清理缓存失败: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -300,4 +304,5 @@ async def clear_cache():
             "message": f"已清空 {cleared} 个缓存",
         }
     except Exception as e:
+        logger.error(f"清空缓存失败: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))

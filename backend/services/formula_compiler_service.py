@@ -3,7 +3,10 @@
 """
 
 import ast
+import logging
 from typing import Dict, Tuple
+
+logger = logging.getLogger(__name__)
 
 
 class FormulaCompilerService:
@@ -360,6 +363,7 @@ class FormulaCompilerService:
         except SyntaxError as e:
             return False, f"语法错误: {e}"
         except Exception as e:
+            logger.error(f"公式验证失败: {e}")
             return False, f"验证失败: {e}"
 
     def parse_expression(self, expression: str) -> Dict:

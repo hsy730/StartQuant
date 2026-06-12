@@ -413,6 +413,7 @@ async def decay_analysis(request: ICAnalysisRequest):
 
         return sanitize_dict({"success": True, "data": result})
     except Exception as e:
+        logger.error(f"衰减分析失败: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 

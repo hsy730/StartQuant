@@ -177,6 +177,7 @@ class FactorStabilityService:
             }
 
         except Exception as e:
+            logger.error(f"平稳性检验失败: {e}")
             return {
                 "error": str(e),
                 "is_stationary": None,

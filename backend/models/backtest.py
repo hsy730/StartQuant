@@ -72,7 +72,8 @@ class BacktestResultModel(Base):
     )
 
     def __repr__(self):
-        return f"<BacktestResult(id={self.id}, strategy={self.strategy_name}, return={self.total_return:.2%})>"
+        ret_str = f"{self.total_return:.2%}" if self.total_return is not None else "N/A"
+        return f"<BacktestResult(id={self.id}, strategy={self.strategy_name}, return={ret_str})>"
 
 
 class TradeRecordModel(Base):

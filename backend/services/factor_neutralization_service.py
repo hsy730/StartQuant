@@ -23,6 +23,8 @@ from backend.services.data_service import data_service
 
 logger = logging.getLogger(__name__)
 
+MIN_INDUSTRY_SIZE = 5
+
 
 class FactorNeutralizationService:
     """因子中性化服务类"""
@@ -119,7 +121,6 @@ class FactorNeutralizationService:
             return df[factor_name].copy()
 
         # 检查最小行业样本量，样本过小的行业会导致回归不稳定
-        MIN_INDUSTRY_SIZE = 5
         industry_counts = industries.value_counts()
         small_industries = industry_counts[industry_counts < MIN_INDUSTRY_SIZE]
         if len(small_industries) > 0:
@@ -205,7 +206,6 @@ class FactorNeutralizationService:
                 logger.warning("联合中性化：行业分类不足2个，跳过行业中性化部分")
                 has_industry = False
             else:
-                MIN_INDUSTRY_SIZE = 5
                 industry_counts = industries.value_counts()
                 small_industries = industry_counts[industry_counts < MIN_INDUSTRY_SIZE]
                 if len(small_industries) > 0:

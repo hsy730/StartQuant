@@ -296,14 +296,14 @@ class TearSheetService:
                 if not isinstance(period_stats, dict) or "error" in period_stats:
                     continue
                 current = {
-                    "mean_ic": period_stats.get("mean_ic", 0),
-                    "std_ic": period_stats.get("std_ic", 0),
-                    "ir": period_stats.get("ir", 0),
-                    "ic_positive_ratio": period_stats.get("ic_positive_ratio", 0),
+                    "mean_ic": period_stats.get("mean_ic"),
+                    "std_ic": period_stats.get("std_ic"),
+                    "ir": period_stats.get("ir"),
+                    "ic_positive_ratio": period_stats.get("ic_positive_ratio"),
                     "n_observations": period_stats.get("n_periods", 0),
-                    "median_ic": period_stats.get("median_ic", 0),
-                    "skewness": period_stats.get("skewness", 0),
-                    "kurtosis": period_stats.get("kurtosis", 0),
+                    "median_ic": period_stats.get("median_ic"),
+                    "skewness": period_stats.get("skewness"),
+                    "kurtosis": period_stats.get("kurtosis"),
                 }
                 if result is None or "1" in str(period_label):
                     result = current
@@ -337,8 +337,10 @@ class TearSheetService:
 
         if "ic_ir_analysis" in sections:
             ic_ir = sections["ic_ir_analysis"]
-            ir = abs(_safe_val(ic_ir.get("ir", 0)))
-            positive_ratio = _safe_val(ic_ir.get("ic_positive_ratio", 0.5))
+            ir_val = ic_ir.get("ir")
+            ir = abs(ir_val) if ir_val is not None else 0
+            positive_ratio_val = ic_ir.get("ic_positive_ratio")
+            positive_ratio = positive_ratio_val if positive_ratio_val is not None else 0.5
 
             ic_score = min(ir * 15 + (positive_ratio - 0.5) * 40, 100)
             scores["ic_strength"] = max(0, ic_score)

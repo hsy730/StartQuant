@@ -92,6 +92,7 @@ class FactorImportService:
                 }
 
         except Exception as e:
+            logger.error(f"CSV导入因子 '{factor_name}' 失败: {e}")
             return {
                 "success": False,
                 "error": str(e),
@@ -165,6 +166,7 @@ class FactorImportService:
                 }
 
         except Exception as e:
+            logger.error(f"DataFrame导入因子 '{factor_name}' 失败: {e}")
             return {
                 "success": False,
                 "error": str(e),
@@ -239,6 +241,7 @@ class FactorImportService:
             return result
 
         except Exception as e:
+            logger.error(f"CSV格式验证失败: {e}")
             return {
                 "valid": False,
                 "errors": [f"文件读取失败: {e}"],

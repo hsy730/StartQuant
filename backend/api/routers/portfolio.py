@@ -247,6 +247,7 @@ async def optimize_weights(request: OptimizeWeightsRequest):
     except HTTPException:
         raise
     except Exception as e:
+        logger.error(f"综合得分计算失败: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -317,6 +318,7 @@ async def calculate_composite_score(request: CompositeScoreRequest):
 
         return {"success": True, "data": score_list}
     except Exception as e:
+        logger.error(f"综合评分计算失败: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 

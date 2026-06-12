@@ -439,14 +439,27 @@ class FactorCorrelationService:
                                 else:
                                     # 不足3天有效数据，回退到经典公式
                                     z_val = np.arctanh(val)
-                                    z_se = 1 / np.sqrt(n_days - 3)
+                                    z_se = (
+                                        1 / np.sqrt(n_days - 3)
+                                        if n_days > 3
+                                        else None
+                                    )
                             else:
                                 # 无每日数据，回退到经典公式
                                 z_val = np.arctanh(val)
-                                z_se = 1 / np.sqrt(n_days - 3)
-                            p_value = 2 * (1 - scipy_stats.norm.cdf(abs(z_val) / z_se))
+                                z_se = (
+                                    1 / np.sqrt(n_days - 3)
+                                    if n_days > 3
+                                    else None
+                                )
+                            if z_se is not None:
+                                p_value = 2 * (
+                                    1 - scipy_stats.norm.cdf(abs(z_val) / z_se)
+                                )
+                            else:
+                                p_value = None
 
-                            if p_value < 0.05:
+                            if p_value is not None and p_value < 0.05:
                                 sig_pairs.append(
                                     {
                                         "pair": f"{f1}-{f2}",

@@ -681,6 +681,8 @@ class DeepFactorMiningService:
         X = df_features.values
 
         # 标准化（使用训练时保存的统计量）
+        # NOTE: Division by self._feature_std is safe because _normalize_features
+        # replaces std[std < 1e-10] with 1.0 during training
         if self._feature_mean is not None and self._feature_std is not None:
             X_norm = (X - self._feature_mean) / self._feature_std
         else:

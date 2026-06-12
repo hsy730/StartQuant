@@ -212,6 +212,7 @@ async def start_genetic_mining(
             "message": f"{algo_label.get(request.algorithm, '挖掘')}任务已启动",
         }
     except Exception as e:
+        logger.error(f"因子挖掘失败: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -896,13 +897,17 @@ def _finalize_task(
                 _full_validation = unified["validation"]
 
                 # 如果统一验证完全无结果（如 deep_implicit 的隐式因子），回退到算法自带数据
-                if validation_score == 0.0 and ic == 0.0 and ir == 0.0:
+                if (
+                    abs(validation_score) < 1e-10
+                    and abs(ic) < 1e-10
+                    and abs(ir) < 1e-10
+                ):
                     algo_validation = factor_info.get("validation", {})
                     ic = _safe_float(
-                        algo_validation.get("ic_validation", {}).get("ic", 0.0)
+                        algo_validation.get("ic_validation", {}).get("ic")
                     )
                     ir = _safe_float(
-                        algo_validation.get("ir_validation", {}).get("ir", 0.0)
+                        algo_validation.get("ir_validation", {}).get("ir")
                     )
                     fitness = _safe_float(raw_fitness)
                     validation_score = _safe_float(algo_validation.get("score", 0.0))
@@ -984,13 +989,13 @@ def _finalize_task(
                 validation_score = unified["validation_score"]
                 overall_passed = unified["overall_passed"]
 
-                if validation_score == 0.0 and ic == 0.0:
+                if abs(validation_score) < 1e-10 and abs(ic) < 1e-10:
                     algo_validation = factor_info.get("validation", {})
                     ic = _safe_float(
-                        algo_validation.get("ic_validation", {}).get("ic", 0.0)
+                        algo_validation.get("ic_validation", {}).get("ic")
                     )
                     ir = _safe_float(
-                        algo_validation.get("ir_validation", {}).get("ir", 0.0)
+                        algo_validation.get("ir_validation", {}).get("ir")
                     )
                     fitness = _safe_float(raw_fitness)
                     validation_score = _safe_float(algo_validation.get("score", 0.0))

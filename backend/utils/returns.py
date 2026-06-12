@@ -10,6 +10,7 @@ from typing import Dict, Sequence, Tuple
 from scipy import stats as scipy_stats
 
 from backend.utils.safe_math import safe_divide, safe_ir
+from backend.utils.return_calculator import calculate_future_return
 
 
 def calculate_future_returns(
@@ -32,26 +33,9 @@ def calculate_future_returns(
         添加了 future_return_N 列的 DataFrame（副本）
     """
     result = df.copy()
-    if isinstance(result.index, pd.MultiIndex):
-        # MultiIndex 下按资产分组计算，避免跨资产比较价格
-        # 必须先提取为纯 DatetimeIndex Series 再计算 pct_change/shift
-        asset_level = 1
-        for p in periods:
-            col_name = f"future_return_{p}"
-            new_col = pd.Series(np.nan, index=result.index, name=col_name)
-            for asset_code in result.index.get_level_values(asset_level).unique():
-                # 使用 xs 提取单资产数据（返回 DatetimeIndex DataFrame），再计算
-                asset_df = result.xs(asset_code, level=asset_level)
-                ret = asset_df[price_col].pct_change(p).shift(-p)
-                # 将结果按日期索引对齐赋值
-                for date in ret.index:
-                    new_col.loc[(date, asset_code)] = (
-                        ret.loc[date] if not pd.isna(ret.loc[date]) else np.nan
-                    )
-            result[col_name] = new_col
-    else:
-        for p in periods:
-            result[f"future_return_{p}"] = result[price_col].pct_change(p).shift(-p)
+    for p in periods:
+        col_name = f"future_return_{p}"
+        result[col_name] = calculate_future_return(result, price_col, p)
     return result
 
 

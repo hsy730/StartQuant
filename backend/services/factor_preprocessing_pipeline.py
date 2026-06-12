@@ -533,8 +533,7 @@ class FactorPreprocessingPipeline:
                 # σ_hat ≈ std()，因此fallback直接使用std()而非std()*0.6745
                 sigma_hat = series.std()
                 if (
-                    sigma_hat == 0
-                    or np.isnan(sigma_hat)
+                    np.isnan(sigma_hat)
                     or sigma_hat < FLOAT_ZERO_THRESHOLD
                 ):
                     return series, {"clipped_count": 0}
@@ -563,7 +562,7 @@ class FactorPreprocessingPipeline:
             mean = series.mean()
             std = series.std()
 
-            if std == 0 or np.isnan(std) or std < FLOAT_ZERO_THRESHOLD:
+            if np.isnan(std) or std < FLOAT_ZERO_THRESHOLD:
                 return series, {"clipped_count": 0}
 
             lower_bound = mean - self.config.winsorize_n_sigma * std
@@ -630,8 +629,7 @@ class FactorPreprocessingPipeline:
                 median = factor_vals.median()
                 sigma_hat = 1.4826 * (factor_vals - median).abs().median()
                 if (
-                    sigma_hat == 0
-                    or np.isnan(sigma_hat)
+                    np.isnan(sigma_hat)
                     or sigma_hat < FLOAT_ZERO_THRESHOLD
                 ):
                     # 同_winsorize方法：MAD=0或极小时用std作为σ_hat估计
@@ -995,7 +993,7 @@ class FactorPreprocessingPipeline:
                 return factor_values
             median = valid.median()
             mad = 1.4826 * (valid - median).abs().median()
-            if mad == 0 or np.isnan(mad) or mad < FLOAT_ZERO_THRESHOLD:
+            if np.isnan(mad) or mad < FLOAT_ZERO_THRESHOLD:
                 return factor_values
             result = factor_values.copy()
             result[valid.index] = (valid - median) / mad

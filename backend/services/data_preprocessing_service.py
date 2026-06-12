@@ -2,10 +2,14 @@
 数据预处理服务 - 异常值检测、数据清洗、增量更新
 """
 
+import logging
+
 import pandas as pd
 import numpy as np
 from scipy.stats import zscore
 from typing import Tuple, Optional
+
+logger = logging.getLogger(__name__)
 
 
 class DataPreprocessingService:
@@ -35,6 +39,12 @@ class DataPreprocessingService:
 
         if method == "std":
             # 3σ原则检测 — 使用 scipy.stats.zscore
+            # 注意：zscore 对全量历史数据计算，在回测场景中可能引入前视偏差
+            # 此方法适用于数据预处理阶段（非实时），回测场景应使用滚动z-score
+            logger.warning(
+                "zscore方法使用全量数据计算，回测场景中可能引入前视偏差，"
+                "建议使用滚动z-score或仅使用历史数据"
+            )
             z = zscore(df[column].dropna(), nan_policy="omit")
             # zscore 返回的数组对应 dropna 后的数据，需要映射回原始索引
             valid_idx = df[column].dropna().index

@@ -2,10 +2,13 @@
 导出服务 - 导出回测结果到Excel多Sheet
 """
 
+import logging
 from typing import Dict
 import numpy as np
 import pandas as pd
 from datetime import datetime
+
+logger = logging.getLogger(__name__)
 
 
 class ExportService:
@@ -205,7 +208,7 @@ class ExportService:
                 ["最大日亏损", f"{portfolio_returns.min():.4%}"],
                 ["正收益天数", f"{(portfolio_returns > 0).sum()} 天"],
                 ["负收益天数", f"{(portfolio_returns < 0).sum()} 天"],
-                ["零收益天数", f"{(portfolio_returns == 0).sum()} 天"],
+                ["零收益天数", f"{(portfolio_returns.abs() < 1e-10).sum()} 天"],
             ]
 
             df_stats = pd.DataFrame(stats_data, columns=["统计项目", "值"])
@@ -264,7 +267,7 @@ class ExportService:
                             if test_result["paired_t_test"]["significant"]
                             else "否",
                             "相关系数": f"{test_result['correlation']:.4f}"
-                            if test_result["correlation"] is not None
+                            if test_result.get("correlation") is not None
                             else "N/A",
                         }
                     )
