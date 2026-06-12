@@ -21,6 +21,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 import logging
 
+from backend.constants import IR_PASS_THRESHOLD, TURNOVER_THRESHOLD, STATISTICAL_SIGNIFICANCE_ALPHA, HIGHLY_SIGNIFICANT_ALPHA
+
 logger = logging.getLogger(__name__)
 
 
@@ -402,7 +404,7 @@ class TearSheetService:
 
             if ir > 1.0:
                 interpretations["ic_ir"] += "IC表现优秀，因子具有很强的预测能力和稳定性。"
-            elif ir > 0.5:
+            elif ir > IR_PASS_THRESHOLD:
                 interpretations["ic_ir"] += "IC表现良好，因子具有一定的预测能力。"
             elif ir > 0:
                 interpretations["ic_ir"] += "IC表现一般，预测能力有限。"
@@ -524,7 +526,7 @@ class TearSheetService:
             turnover_stats = ta.get("turnover_stats", {})
             mean_to = turnover_stats.get("mean_turnover", 0)
 
-            if mean_to > 0.5:
+            if mean_to > TURNOVER_THRESHOLD:
                 recommendations.append(
                     {
                         "priority": "medium",

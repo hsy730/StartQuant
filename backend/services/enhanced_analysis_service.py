@@ -14,6 +14,7 @@ from backend.services.factor_neutralization_service import factor_neutralization
 from backend.services.factor_stability_service import factor_stability_service
 from backend.services.factor_summary_service import factor_summary_service
 from backend.utils.safe_math import safe_ir, safe_divide
+from backend.constants import STATISTICAL_SIGNIFICANCE_ALPHA, HIGHLY_SIGNIFICANT_ALPHA
 
 logger = logging.getLogger(__name__)
 
@@ -92,11 +93,11 @@ class EnhancedAnalysisService:
                 "ic": mean_ic,
                 "t_statistic": float(t_stat),
                 "p_value": float(p_value),
-                "is_significant": p_value < 0.05,
+                "is_significant": p_value < STATISTICAL_SIGNIFICANCE_ALPHA,
                 "significance_level": (
-                    "极高显著性 (p<0.01)"
-                    if p_value < 0.01
-                    else "显著性 (p<0.05)" if p_value < 0.05 else "不显著 (p>=0.05)"
+                    f"极高显著性 (p<{HIGHLY_SIGNIFICANT_ALPHA})"
+                    if p_value < HIGHLY_SIGNIFICANT_ALPHA
+                    else f"显著性 (p<{STATISTICAL_SIGNIFICANCE_ALPHA})" if p_value < STATISTICAL_SIGNIFICANCE_ALPHA else f"不显著 (p>={STATISTICAL_SIGNIFICANCE_ALPHA})"
                 ),
                 "confidence_interval": {
                     "lower": float(ci_lower),

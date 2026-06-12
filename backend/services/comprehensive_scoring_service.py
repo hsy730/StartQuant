@@ -8,6 +8,7 @@ import numpy as np
 
 from backend.services.smart_slippage_detector import smart_slippage_detector
 from backend.utils.safe_math import safe_divide
+from backend.constants import MAX_SCORE
 
 logger = logging.getLogger(__name__)
 
@@ -70,10 +71,10 @@ class ComprehensiveScoringService:
         # 2. IR得分 (0-100)
         ir_val = factor_metrics.get("ir")
         if ir_val is not None:
-            ir_score = min(abs(ir_val) * 40, 100)
+            ir_score = min(abs(ir_val) * 40, MAX_SCORE)
         elif factor_metrics.get("ic_mean") is not None and abs(factor_metrics.get("ic_mean", 0)) > 1e-10:
             # IR不可计算但IC非零 → 因子极其稳定，给予高分
-            ir_score = 100
+            ir_score = MAX_SCORE
         else:
             ir_score = 0
         total_score += weights["ir"] * ir_score
@@ -97,7 +98,7 @@ class ComprehensiveScoringService:
         grade = self._get_grade(total_score)
 
         return {
-            "total_score": max(0.0, min(round(total_score, 2), 100.0)),
+            "total_score": max(0.0, min(round(total_score, 2), MAX_SCORE)),
             "grade": grade,
             "details": details,
             "weights": weights,
@@ -382,7 +383,7 @@ class ComprehensiveScoringService:
         grade = self._get_grade(total_score)
 
         return {
-            "total_score": max(0.0, min(round(total_score, 2), 100.0)),
+            "total_score": max(0.0, min(round(total_score, 2), MAX_SCORE)),
             "grade": grade,
             "details": details,
             "weights": weights,
@@ -460,7 +461,7 @@ class ComprehensiveScoringService:
         grade = self._get_grade(total_score)
 
         return {
-            "total_score": max(0.0, min(round(total_score, 2), 100.0)),
+            "total_score": max(0.0, min(round(total_score, 2), MAX_SCORE)),
             "grade": grade,
             "details": details,
             "weights": weights,

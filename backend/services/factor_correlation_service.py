@@ -18,6 +18,7 @@ from typing import Dict, List, Tuple, Any
 from scipy import stats as scipy_stats
 from scipy.stats import median_abs_deviation
 from backend.utils.safe_math import safe_divide
+from backend.constants import HIGH_CORRELATION_THRESHOLD, WINSORIZE_LOWER, WINSORIZE_UPPER, STATISTICAL_SIGNIFICANCE_ALPHA, HIGHLY_SIGNIFICANT_ALPHA
 
 logger = logging.getLogger(__name__)
 
@@ -426,9 +427,9 @@ class FactorCorrelationService:
                     vif_data.append(
                         {
                             "factor": col,
-                            "vif": round(v, 2),
+                            "vif": round(v, 2) if np.isfinite(v) else None,
                             "level": (
-                                "severe" if v > 10 else ("high" if v > 5 else ("moderate" if v > 2.5 else "low"))
+                                "severe" if not np.isfinite(v) or v > 10 else ("high" if v > 5 else ("moderate" if v > 2.5 else "low"))
                             ),
                         }
                     )
@@ -541,7 +542,7 @@ class FactorCorrelationService:
                     if f1 < f2 and isinstance(val, (int, float)):
                         abs_val = abs(val)
 
-                        if abs_val > 0.7:
+                        if abs_val > HIGH_CORRELATION_THRESHOLD:
                             interp["high_correlation_pairs"].append(
                                 {
                                     "pair": f"{f1} vs {f2}",
@@ -678,7 +679,7 @@ class FactorCorrelationService:
                     results[f"{cat_col}_vs_{num_col}"] = {
                         "anova_f": float(f_stat),
                         "p_value": float(p_val),
-                        "significant": p_val < 0.05,
+                        "significant": p_val < STATISTICAL_SIGNIFICANCE_ALPHA,
                     }
                 except (ValueError, TypeError):
                     continue

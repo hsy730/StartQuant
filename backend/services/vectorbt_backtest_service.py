@@ -21,6 +21,7 @@ from backend.services.smart_slippage_detector import smart_slippage_detector, Sl
 from backend.utils.return_calculator import calculate_future_return
 from backend.utils.safe_math import safe_divide, safe_series_divide
 from backend.utils.ic_calculator import calculate_rolling_ic
+from backend.constants import ANNUAL_TRADING_DAYS, RISK_FREE_RATE, DEFAULT_SHARES_PER_TRADE
 
 logger = logging.getLogger(__name__)
 
@@ -29,36 +30,36 @@ logger = logging.getLogger(__name__)
 _FREQ_CONFIG = {
     "D": {
         "vbt_freq": "D",
-        "annual_bars": 252,
-        "rolling_window": 252,
+        "annual_bars": ANNUAL_TRADING_DAYS,
+        "rolling_window": ANNUAL_TRADING_DAYS,
         "rolling_min_periods": 150,
         "description": "日频",
     },
     "5min": {
         "vbt_freq": "5T",
-        "annual_bars": 252 * 48,  # 每交易日48根5分钟K线(4h/5min)
-        "rolling_window": 252 * 48,
+        "annual_bars": ANNUAL_TRADING_DAYS * 48,  # 每交易日48根5分钟K线(4h/5min)
+        "rolling_window": ANNUAL_TRADING_DAYS * 48,
         "rolling_min_periods": 150 * 48,
         "description": "5分钟",
     },
     "15min": {
         "vbt_freq": "15T",
-        "annual_bars": 252 * 16,
-        "rolling_window": 252 * 16,
+        "annual_bars": ANNUAL_TRADING_DAYS * 16,
+        "rolling_window": ANNUAL_TRADING_DAYS * 16,
         "rolling_min_periods": 150 * 16,
         "description": "15分钟",
     },
     "30min": {
         "vbt_freq": "30T",
-        "annual_bars": 252 * 8,
-        "rolling_window": 252 * 8,
+        "annual_bars": ANNUAL_TRADING_DAYS * 8,
+        "rolling_window": ANNUAL_TRADING_DAYS * 8,
         "rolling_min_periods": 150 * 8,
         "description": "30分钟",
     },
     "60min": {
         "vbt_freq": "1H",
-        "annual_bars": 252 * 4,
-        "rolling_window": 252 * 4,
+        "annual_bars": ANNUAL_TRADING_DAYS * 4,
+        "rolling_window": ANNUAL_TRADING_DAYS * 4,
         "rolling_min_periods": 150 * 4,
         "description": "60分钟",
     },
@@ -443,12 +444,12 @@ class VectorBTBacktestService:
         percentile: int = 50,
         direction: str = "long",
         n_quantiles: int = 5,
-        shares_per_trade: int = 100,
+        shares_per_trade: int = DEFAULT_SHARES_PER_TRADE,
         use_tradable_mask: bool = True,
         freq: str = "D",
         chunk_size: Optional[int] = None,
         overlap_size: Optional[int] = None,
-        risk_free_rate: float = 0.03,
+        risk_free_rate: float = RISK_FREE_RATE,
     ) -> Dict:
         """
         分块回测：将大数据集切分为重叠块，逐块计算后拼接结果，大幅降低内存峰值。
@@ -833,7 +834,7 @@ class VectorBTBacktestService:
         percentile: int = 50,
         direction: str = "long",
         n_quantiles: int = 5,
-        shares_per_trade: int = 100,
+        shares_per_trade: int = DEFAULT_SHARES_PER_TRADE,
         freq: str = "D",
         use_chunking: str = "auto",
     ) -> Dict:
@@ -862,7 +863,7 @@ class VectorBTBacktestService:
             df.index = pd.to_datetime(df.index)
 
         # 1. 标准化因子值（z-score，使用滚动窗口避免前视偏差）
-        std_window = min(252, max(20, len(df) // 2))
+        std_window = min(ANNUAL_TRADING_DAYS, max(20, len(df) // 2))
         for factor_name in factor_names:
             if factor_name in df.columns:
                 rolling_mean = df[factor_name].rolling(std_window, min_periods=20).mean()
@@ -922,7 +923,7 @@ class VectorBTBacktestService:
 
         elif method == "risk_parity":
             # 风险平价：使用滚动波动率，避免前视偏差
-            vol_window = min(252, max(60, len(df) // 2))
+            vol_window = min(ANNUAL_TRADING_DAYS, max(60, len(df) // 2))
             vol_weight_frames = []
             for factor_name in factor_names:
                 norm_factor = f"{factor_name}_normalized"
@@ -1226,8 +1227,8 @@ class VectorBTBacktestService:
         self,
         returns: pd.Series,
         equity_curve: pd.Series = None,
-        annual_trading_days: int = 252,
-        risk_free_rate: float = 0.03,
+        annual_trading_days: int = ANNUAL_TRADING_DAYS,
+        risk_free_rate: float = RISK_FREE_RATE,
     ) -> Dict:
         """
         计算性能指标（委托risk_metrics + empyrical）
@@ -1248,7 +1249,7 @@ class VectorBTBacktestService:
 
         return calculate_risk_metrics(returns_clean, risk_free_rate, annual_trading_days)
 
-    def _calculate_volatility(self, returns: pd.Series, annual_trading_days: int = 252) -> Optional[float]:
+    def _calculate_volatility(self, returns: pd.Series, annual_trading_days: int = ANNUAL_TRADING_DAYS) -> Optional[float]:
         """计算年化波动率（委托risk_metrics统一入口，符合规则2）"""
         return _calc_volatility(returns, annual_trading_days=annual_trading_days)
 

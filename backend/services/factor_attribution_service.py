@@ -12,6 +12,7 @@ import empyrical
 
 from backend.services.risk_metrics import calculate_sharpe, calculate_volatility, calculate_relative_metrics
 from backend.utils.safe_math import safe_divide
+from backend.constants import ANNUAL_TRADING_DAYS, RISK_FREE_RATE
 
 logger = logging.getLogger(__name__)
 
@@ -250,7 +251,7 @@ class FactorAttributionService:
                     "daily_mean": float(portfolio_returns.mean()),
                     "annual_return": float(empyrical.annual_return(portfolio_returns, period="daily")),
                     "volatility": calculate_volatility(portfolio_returns),
-                    "sharpe": calculate_sharpe(portfolio_returns, risk_free_rate=0.03),
+                    "sharpe": calculate_sharpe(portfolio_returns, risk_free_rate=RISK_FREE_RATE),
                 },
             }
 
@@ -292,8 +293,8 @@ class FactorAttributionService:
                 "interpretation": "基准方差为0，无法计算Beta和Alpha",
             }
 
-        # 计算日频 alpha（年化 alpha / 252）
-        daily_alpha = safe_divide(alpha_annual, 252, default=None) if alpha_annual is not None else None
+        # 计算日频 alpha（年化 alpha / ANNUAL_TRADING_DAYS）
+        daily_alpha = safe_divide(alpha_annual, ANNUAL_TRADING_DAYS, default=None) if alpha_annual is not None else None
 
         # R² = correlation²（规则7.18：ss_tot=0 时 correlation 为 None，R² 返回 None）
         if correlation is not None:
@@ -345,7 +346,7 @@ class FactorAttributionService:
                         "cumulative_return": cum_return,
                         "volatility": vol_annual,
                         "daily_volatility": float(returns.std()),
-                        "sharpe": calculate_sharpe(returns, risk_free_rate=0.03),
+                        "sharpe": calculate_sharpe(returns, risk_free_rate=RISK_FREE_RATE),
                         "win_rate": float((returns > 0).mean()),
                         "count": len(returns),
                     }

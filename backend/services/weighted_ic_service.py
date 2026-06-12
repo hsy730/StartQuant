@@ -23,6 +23,7 @@ import logging
 
 from backend.utils.safe_math import safe_divide, safe_ir
 from backend.utils.weight_utils import normalize_weights
+from backend.constants import ROLLING_IC_WINDOW, HIGH_CORRELATION_THRESHOLD, IR_CAP
 
 logger = logging.getLogger(__name__)
 
@@ -417,8 +418,8 @@ class WeightedICService:
                 except KeyError:
                     continue
 
-                if corr_value > 0.7:
-                    reduction_factor = 1.0 - (corr_value - 0.7) * 0.5
+                if corr_value > HIGH_CORRELATION_THRESHOLD:
+                    reduction_factor = 1.0 - (corr_value - HIGH_CORRELATION_THRESHOLD) * 0.5
 
                     if adjusted_weights[name_i] >= adjusted_weights[name_j]:
                         adjusted_weights[name_j] *= reduction_factor

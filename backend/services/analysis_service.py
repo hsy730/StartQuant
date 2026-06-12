@@ -41,6 +41,7 @@ from backend.services.lookahead_bias_detector import (  # noqa: E402
 from backend.utils.safe_math import safe_ir, safe_divide  # noqa: E402
 from backend.utils.weight_utils import normalize_weights  # noqa: E402
 from backend.utils.ic_calculator import calculate_rolling_ic  # noqa: E402
+from backend.constants import ANNUAL_TRADING_DAYS, ROLLING_IC_WINDOW, MIN_SAMPLE_SIZE_FOR_IC, STATISTICAL_SIGNIFICANCE_ALPHA, HIGHLY_SIGNIFICANT_ALPHA
 
 
 class AnalysisService:
@@ -222,7 +223,7 @@ class AnalysisService:
         start_date: str,
         end_date: str,
         use_cache: bool = True,
-        rolling_window: int = 252,
+        rolling_window: int = ANNUAL_TRADING_DAYS,
     ) -> Dict[str, Any]:
         """
         执行完整的因子分析
@@ -520,7 +521,7 @@ class AnalysisService:
             )
             merged = merged[valid_mask]
 
-            if len(merged) < 20:
+            if len(merged) < MIN_SAMPLE_SIZE_FOR_IC:
                 continue
 
             # 向量化：按日期分组计算Spearman秩相关IC
@@ -570,7 +571,7 @@ class AnalysisService:
         return {
             "ic_stats": ic_stats,
             "monthly_ic": self._calculate_monthly_ic(ic_series),
-            "rolling_ir": self._calculate_rolling_ir(ic_series, window=20),
+            "rolling_ir": self._calculate_rolling_ir(ic_series, window=ROLLING_IC_WINDOW),
             "warning": "使用手动横截面IC计算（Alphalens不可用或返回空结果）",
         }
 
@@ -656,7 +657,7 @@ class AnalysisService:
         result = {
             "ic_stats": ic_stats,
             "monthly_ic": self._calculate_monthly_ic(monthly_ic_source),
-            "rolling_ir": self._calculate_rolling_ir(rolling_ir_source, window=20),
+            "rolling_ir": self._calculate_rolling_ir(rolling_ir_source, window=ROLLING_IC_WINDOW),
         }
         if mask_stats:
             result["mask_statistics"] = mask_stats

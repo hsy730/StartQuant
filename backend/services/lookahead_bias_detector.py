@@ -33,6 +33,7 @@ from scipy.stats import spearmanr
 
 from backend.utils.safe_math import safe_divide, safe_ir
 from backend.utils.ic_calculator import calculate_rolling_ic
+from backend.constants import STATISTICAL_SIGNIFICANCE_ALPHA, HIGH_CORRELATION_THRESHOLD
 
 logger = logging.getLogger(__name__)
 

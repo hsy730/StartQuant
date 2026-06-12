@@ -10,6 +10,7 @@ from itertools import combinations
 from scipy.stats import spearmanr
 
 from backend.utils.safe_math import safe_ir
+from backend.constants import IC_PASS_THRESHOLD, IR_PASS_THRESHOLD
 
 
 class FactorGeneratorService:
@@ -637,8 +638,8 @@ def calculate_factor(df):
         factors: List[Dict],
         factor_data_map: Dict[str, pd.Series],
         return_data: pd.Series,
-        ic_threshold: float = 0.03,
-        ir_threshold: float = 0.5,
+        ic_threshold: float = IC_PASS_THRESHOLD,
+        ir_threshold: float = IR_PASS_THRESHOLD,
         min_valid_ratio: float = 0.7,
     ) -> List[Dict]:
         """

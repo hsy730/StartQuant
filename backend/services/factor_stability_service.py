@@ -16,6 +16,7 @@ from backend.services.data_service import data_service
 from backend.services.factor_service import factor_service
 from backend.repositories.factor_repository import FactorRepository
 from backend.core.database import get_db
+from backend.constants import ANNUAL_TRADING_DAYS, SEMI_ANNUAL_WINDOW, MIN_STABILITY_DAYS, STATISTICAL_SIGNIFICANCE_ALPHA
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +27,7 @@ class FactorStabilityService:
     def __init__(self):
         pass
 
-    def calculate_distribution_stability(self, factor_series: pd.Series, window: int = 252, method: str = "ks") -> Dict:
+    def calculate_distribution_stability(self, factor_series: pd.Series, window: int = ANNUAL_TRADING_DAYS, method: str = "ks") -> Dict:
         """
         分布稳定性分析 - 使用KS检验比较不同窗口期的分布
 
@@ -99,7 +100,7 @@ class FactorStabilityService:
                 "comparisons": [],
             }
         avg_p_value = np.mean(p_values)
-        stable_ratio = sum(1 for p in p_values if p > 0.05) / len(p_values)
+        stable_ratio = sum(1 for p in p_values if p > STATISTICAL_SIGNIFICANCE_ALPHA) / len(p_values)
 
         results = {
             "method": method,
@@ -140,8 +141,8 @@ class FactorStabilityService:
             n_obs = int(result[3])
             critical_values = result[4]
 
-            # 判断平稳性（p < 0.05）
-            is_stationary = p_value < 0.05
+            # 判断平稳性（p < STATISTICAL_SIGNIFICANCE_ALPHA）
+            is_stationary = p_value < STATISTICAL_SIGNIFICANCE_ALPHA
 
             return {
                 "is_stationary": is_stationary,
@@ -206,7 +207,7 @@ class FactorStabilityService:
         factor_data: pd.DataFrame,
         factor_name: str,
         return_col: str = "future_return",
-        windows: List[int] = [20, 60, 120, 252],
+        windows: List[int] = [20, 60, SEMI_ANNUAL_WINDOW, ANNUAL_TRADING_DAYS],
     ) -> Dict:
         """
         滚动窗口稳定性分析 — 基于时间序列相关性（非横截面IC）
@@ -509,8 +510,8 @@ class FactorStabilityService:
 
             # 6.1 分布稳定性分析
             try:
-                if len(combined_factor) >= 504:  # 至少2年数据(252*2)
-                    dist_result = self.calculate_distribution_stability(combined_factor, window=252, method="ks")
+                if len(combined_factor) >= MIN_STABILITY_DAYS:  # 至少2年数据(252*2)
+                    dist_result = self.calculate_distribution_stability(combined_factor, window=ANNUAL_TRADING_DAYS, method="ks")
                     results["distribution_stability"] = dist_result
                     scores.append(dist_result.get("stability_score", 0.5))
                     logger.info(f"分布稳定性得分: {dist_result.get('stability_score', 0):.3f}")

@@ -24,6 +24,7 @@ from backend.services.risk_metrics import (
 from backend.services.vectorbt_backtest_service import (
     VectorBTBacktestService,
 )
+from backend.constants import ANNUAL_TRADING_DAYS, RISK_FREE_RATE
 
 logger = logging.getLogger(__name__)
 
@@ -111,7 +112,7 @@ class BacktestService:
     # ==================== 性能指标计算 (委托risk_metrics + empyrical) ====================
 
     def calculate_metrics(
-        self, returns: pd.Series, annual_trading_days: int = 252, risk_free_rate: float = 0.03
+        self, returns: pd.Series, annual_trading_days: int = ANNUAL_TRADING_DAYS, risk_free_rate: float = RISK_FREE_RATE
     ) -> Dict:
         returns_clean = returns.dropna()
         if len(returns_clean) == 0:
@@ -154,7 +155,7 @@ class BacktestService:
     # ==================== 基准对比 ====================
 
     def calculate_benchmark_metrics(
-        self, returns: pd.Series, benchmark_returns: pd.Series, annual_trading_days: int = 252
+        self, returns: pd.Series, benchmark_returns: pd.Series, annual_trading_days: int = ANNUAL_TRADING_DAYS
     ) -> Dict:
         """计算基准对比指标（委托risk_metrics统一入口，符合规则2）"""
         relative = calculate_relative_metrics(returns, benchmark_returns, annual_trading_days=annual_trading_days)

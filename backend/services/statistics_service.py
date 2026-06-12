@@ -16,6 +16,7 @@ from backend.utils.returns import calculate_future_returns
 from backend.utils.safe_math import safe_divide
 from backend.utils.ic_calculator import calculate_ic
 from backend.services.risk_metrics import calculate_risk_metrics
+from backend.constants import ANNUAL_TRADING_DAYS, RISK_FREE_RATE, SEMI_ANNUAL_WINDOW, QUARTERLY_WINDOW, ROLLING_IC_WINDOW
 
 # 配置日志
 logger = logging.getLogger(__name__)
@@ -224,7 +225,7 @@ class StatisticsService:
 
         return periodic_ic
 
-    def calculate_rolling_ic_stability(self, ic_series: pd.Series, windows: List[int] = [20, 60, 120, 252]) -> Dict:
+    def calculate_rolling_ic_stability(self, ic_series: pd.Series, windows: List[int] = [ROLLING_IC_WINDOW, QUARTERLY_WINDOW, SEMI_ANNUAL_WINDOW, ANNUAL_TRADING_DAYS]) -> Dict:
         """
         计算不同滚动窗口下的IC统计量，评估因子稳定性
 

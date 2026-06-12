@@ -27,6 +27,7 @@ from sklearn.preprocessing import StandardScaler
 from scipy.stats.mstats import winsorize as scipy_winsorize
 
 import statsmodels.api as sm
+from backend.constants import FLOAT_ZERO_THRESHOLD, WINSORIZE_LOWER, WINSORIZE_UPPER
 
 logger = logging.getLogger(__name__)
 
@@ -493,7 +494,7 @@ class FactorPreprocessingPipeline:
                 # MAD=0时（如数据过于集中），用标准差作为σ_hat的估计
                 # σ_hat ≈ std()，因此fallback直接使用std()而非std()*0.6745
                 sigma_hat = series.std()
-                if sigma_hat == 0 or np.isnan(sigma_hat) or sigma_hat < 1e-10:
+                if sigma_hat == 0 or np.isnan(sigma_hat) or sigma_hat < FLOAT_ZERO_THRESHOLD:
                     return series, {"clipped_count": 0}
 
             lower_bound = median - self.config.winsorize_n_sigma * sigma_hat
@@ -518,7 +519,7 @@ class FactorPreprocessingPipeline:
             mean = series.mean()
             std = series.std()
 
-            if std == 0 or np.isnan(std) or std < 1e-10:
+            if std == 0 or np.isnan(std) or std < FLOAT_ZERO_THRESHOLD:
                 return series, {"clipped_count": 0}
 
             lower_bound = mean - self.config.winsorize_n_sigma * std
@@ -583,10 +584,10 @@ class FactorPreprocessingPipeline:
             if self.config.winsorize_method == WinsorizeMethod.MAD:
                 median = factor_vals.median()
                 sigma_hat = 1.4826 * (factor_vals - median).abs().median()
-                if sigma_hat == 0 or np.isnan(sigma_hat) or sigma_hat < 1e-10:
+                if sigma_hat == 0 or np.isnan(sigma_hat) or sigma_hat < FLOAT_ZERO_THRESHOLD:
                     # 同_winsorize方法：MAD=0或极小时用std作为σ_hat估计
                     sigma_hat = factor_vals.std()
-                    if sigma_hat == 0 or np.isnan(sigma_hat) or sigma_hat < 1e-10:
+                    if sigma_hat == 0 or np.isnan(sigma_hat) or sigma_hat < FLOAT_ZERO_THRESHOLD:
                         # 数据完全一致，无需去极值
                         pass
                     else:
@@ -609,7 +610,7 @@ class FactorPreprocessingPipeline:
             elif self.config.winsorize_method == WinsorizeMethod.STD:
                 mean = factor_vals.mean()
                 std = factor_vals.std()
-                if std > 1e-10 and not np.isnan(std):
+                if std > FLOAT_ZERO_THRESHOLD and not np.isnan(std):
                     factor_vals = factor_vals.clip(
                         lower=mean - self.config.winsorize_n_sigma * std,
                         upper=mean + self.config.winsorize_n_sigma * std,
@@ -702,7 +703,7 @@ class FactorPreprocessingPipeline:
                 if len(valid) > 1:
                     median = valid.median()
                     mad = 1.4826 * (valid - median).abs().median()
-                    if mad > 1e-10 and not np.isnan(mad):
+                    if mad > FLOAT_ZERO_THRESHOLD and not np.isnan(mad):
                         factor_vals[valid.index] = (valid - median) / mad
 
             return factor_vals
@@ -905,7 +906,7 @@ class FactorPreprocessingPipeline:
                 return factor_values
             median = valid.median()
             mad = 1.4826 * (valid - median).abs().median()
-            if mad == 0 or np.isnan(mad) or mad < 1e-10:
+            if mad == 0 or np.isnan(mad) or mad < FLOAT_ZERO_THRESHOLD:
                 return factor_values
             result = factor_values.copy()
             result[valid.index] = (valid - median) / mad

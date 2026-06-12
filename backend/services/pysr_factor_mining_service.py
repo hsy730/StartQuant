@@ -44,14 +44,7 @@ _PYSR_OPERATOR_MAP = {
 }
 
 
-def _safe_float(val, default=0.0):
-    if val is None:
-        return default
-    try:
-        f = float(val)
-        return default if (np.isnan(f) or np.isinf(f)) else f
-    except (TypeError, ValueError):
-        return default
+from backend.services.factor_summary_service import _safe_float
 
 
 class PySRFactorMiningService(BaseMiningService):

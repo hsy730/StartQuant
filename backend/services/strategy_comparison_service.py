@@ -9,6 +9,7 @@ import pandas as pd
 from scipy import stats
 from backend.services.strategy_registry import strategy_registry
 from backend.utils.safe_math import safe_divide
+from backend.constants import STATISTICAL_SIGNIFICANCE_ALPHA
 
 logger = logging.getLogger(__name__)
 
@@ -144,12 +145,12 @@ class StrategyComparisonService:
                     "independent_t_test": {
                         "statistic": float(t_stat),
                         "p_value": float(p_value),
-                        "significant": p_value < 0.05,
+                        "significant": p_value < STATISTICAL_SIGNIFICANCE_ALPHA,
                     },
                     "paired_t_test": {
                         "statistic": float(paired_t_stat),
                         "p_value": float(paired_p_value),
-                        "significant": paired_p_value < 0.05,
+                        "significant": paired_p_value < STATISTICAL_SIGNIFICANCE_ALPHA,
                     },
                     "correlation": float(correlation) if pd.notna(correlation) else None,
                 }

@@ -634,7 +634,7 @@ class FactorOrchestrator:
                 result={
                     "ic_mean": ic_mean,
                     "ir": ir,
-                    "rank_ic": float(factor_ic["Rank_IC均值"]) if factor_ic.get("Rank_IC均值") is not None else None,
+                    "rank_ic": float(factor_ic.get("Rank_IC均值")) if factor_ic.get("Rank_IC均值") is not None else None,
                     "full_result": ic_ir_result if self.config.include_intermediate_results else None,
                 },
                 warnings=warnings,

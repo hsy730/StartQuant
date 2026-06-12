@@ -25,6 +25,7 @@ from scipy.stats import spearmanr
 
 from backend.utils.safe_math import safe_divide
 from backend.services.risk_metrics import calculate_sharpe, calculate_risk_metrics
+from backend.constants import STATISTICAL_SIGNIFICANCE_ALPHA, HIGHLY_SIGNIFICANT_ALPHA, ANNUAL_TRADING_DAYS
 
 logger = logging.getLogger(__name__)
 
@@ -415,7 +416,7 @@ class FactorReturnAnalysisService:
 
                     result["summary_statistics"] = {
                         "final_cumulative_return": float(final_return),
-                        "max_drawdown": float(max_drawdown),
+                        "max_drawdown": float(max_drawdown) if max_drawdown is not None else None,
                         "sharpe_ratio": (
                             float(sharpe_ratio) if sharpe_ratio is not None and not np.isnan(sharpe_ratio) else None
                         ),
@@ -843,7 +844,7 @@ class FactorReturnAnalysisService:
 
     def _interpret_spread(self, spread: float, p_value: float) -> str:
         """解读多空利差"""
-        if p_value >= 0.05:
+        if p_value >= STATISTICAL_SIGNIFICANCE_ALPHA:
             return "多空利差不显著，因子预测能力较弱"
         elif spread > 0.02:
             return f"多空利差显著为正（{spread:.2%}），因子具有很强的预测能力"

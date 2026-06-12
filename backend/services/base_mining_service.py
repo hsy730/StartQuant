@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 from backend.services.data_service import data_service  # noqa: E402
 from backend.utils.safe_math import safe_divide, safe_ir  # noqa: E402
+from backend.constants import IC_PASS_THRESHOLD, IR_PASS_THRESHOLD  # noqa: E402
 
 
 class BaseMiningService(ABC):
@@ -44,6 +45,7 @@ class BaseMiningService(ABC):
     _service_name: str = "Mining"
 
     # Z-Score 先验冷启动常量（基于量化因子领域知识）
+    # 注意：_PRIOR_IC_MEAN 是贝叶斯估计先验值，不是验证通过阈值（IC_PASS_THRESHOLD=0.02）
     _PRIOR_IC_MEAN = 0.03
     _PRIOR_IC_STD = 0.02
     _PRIOR_IR_MEAN = 0.5

@@ -10,6 +10,7 @@ import pandas as pd
 from typing import Dict, Optional
 
 from backend.utils.safe_math import safe_divide
+from backend.constants import ANNUAL_TRADING_DAYS, RISK_FREE_RATE, VAR_CONFIDENCE_CUTOFF
 
 import empyrical
 
@@ -18,8 +19,8 @@ logger = logging.getLogger(__name__)
 
 def calculate_risk_metrics(
     returns: pd.Series,
-    risk_free_rate: float = 0.03,
-    annual_trading_days: int = 252,
+    risk_free_rate: float = RISK_FREE_RATE,
+    annual_trading_days: int = ANNUAL_TRADING_DAYS,
 ) -> Dict[str, float]:
     """
     计算标准风险指标（统一入口）
@@ -87,8 +88,8 @@ def calculate_risk_metrics(
         "max_drawdown": float(empyrical.max_drawdown(returns_arr)),
         "calmar_ratio": float(empyrical.calmar_ratio(returns_arr, period="daily", annualization=annual_trading_days)),
         "win_rate": float((returns_arr > 0).mean()),
-        "var_95": float(empyrical.value_at_risk(returns_arr, cutoff=0.05)),
-        "cvar_95": float(empyrical.conditional_value_at_risk(returns_arr, cutoff=0.05)),
+        "var_95": float(empyrical.value_at_risk(returns_arr, cutoff=VAR_CONFIDENCE_CUTOFF)),
+        "cvar_95": float(empyrical.conditional_value_at_risk(returns_arr, cutoff=VAR_CONFIDENCE_CUTOFF)),
     }
 
     # empyrical 在某些边界条件下可能返回非有限值，统一转为 None（符合规则6）
@@ -118,8 +119,8 @@ def _empty_metrics() -> Dict[str, Optional[float]]:
 def calculate_relative_metrics(
     strategy_returns: pd.Series,
     benchmark_returns: pd.Series,
-    risk_free_rate: float = 0.03,
-    annual_trading_days: int = 252,
+    risk_free_rate: float = RISK_FREE_RATE,
+    annual_trading_days: int = ANNUAL_TRADING_DAYS,
 ) -> Dict[str, Optional[float]]:
     """
     计算相对风险指标（需要基准收益率）
@@ -204,7 +205,7 @@ def _empty_relative_metrics() -> Dict[str, Optional[float]]:
 
 
 def calculate_sharpe(
-    returns: pd.Series, risk_free_rate: float = 0.03, annual_trading_days: int = 252
+    returns: pd.Series, risk_free_rate: float = RISK_FREE_RATE, annual_trading_days: int = ANNUAL_TRADING_DAYS
 ) -> Optional[float]:
     """
     单独计算Sharpe比率（轻量接口，用于只需Sharpe的场景）
@@ -234,7 +235,7 @@ def calculate_sharpe(
     return result if np.isfinite(result) else None
 
 
-def calculate_volatility(returns: pd.Series, annual_trading_days: int = 252) -> Optional[float]:
+def calculate_volatility(returns: pd.Series, annual_trading_days: int = ANNUAL_TRADING_DAYS) -> Optional[float]:
     """
     单独计算年化波动率（轻量接口）
 

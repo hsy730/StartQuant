@@ -16,6 +16,7 @@ from backend.services.lookahead_bias_detector import (
     BiasRiskLevel,
 )
 from backend.utils.safe_math import safe_ir
+from backend.constants import IC_PASS_THRESHOLD, IR_PASS_THRESHOLD
 
 logger = logging.getLogger(__name__)
 
@@ -37,8 +38,8 @@ class FactorValidationService:
 
     def __init__(
         self,
-        ic_threshold: float = 0.03,
-        ir_threshold: float = 0.5,
+        ic_threshold: float = IC_PASS_THRESHOLD,
+        ir_threshold: float = IR_PASS_THRESHOLD,
         turnover_threshold: float = 0.5,
         max_correlation: float = 0.8,
         ic_type: str = "time_series",

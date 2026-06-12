@@ -11,6 +11,7 @@ import numpy as np
 from backend.utils.safe_math import safe_divide
 from backend.utils.weight_utils import normalize_weights
 from backend.services.risk_metrics import calculate_relative_metrics
+from backend.constants import ANNUAL_TRADING_DAYS, RISK_FREE_RATE
 
 logger = logging.getLogger(__name__)
 
@@ -186,8 +187,8 @@ class PortfolioAnalysisService:
         self,
         returns: pd.Series,
         benchmark_returns: Optional[pd.Series] = None,
-        annual_trading_days: int = 252,
-        risk_free_rate: float = 0.03,
+        annual_trading_days: int = ANNUAL_TRADING_DAYS,
+        risk_free_rate: float = RISK_FREE_RATE,
     ) -> Dict:
         """计算组合风险指标，委托 risk_metrics 统一入口"""
         from backend.services.risk_metrics import calculate_risk_metrics as calc_risk, _empty_metrics
@@ -256,8 +257,7 @@ class PortfolioAnalysisService:
 
         return result
 
-    def optimize_weights(
-        self, factor_returns: pd.DataFrame, method: str = "equal_weight", risk_free_rate: float = 0.03, **kwargs
+    def optimize_weights(self, factor_returns: pd.DataFrame, method: str = "equal_weight", risk_free_rate: float = RISK_FREE_RATE, **kwargs
     ) -> Dict:
         """
         优化因子权重
@@ -364,7 +364,7 @@ class PortfolioAnalysisService:
 
         # 计算加权波动率（年化）
         # 组合方差 = w' * Σ * w
-        cov_matrix = factor_returns.cov() * 252  # 年化协方差矩阵
+        cov_matrix = factor_returns.cov() * ANNUAL_TRADING_DAYS  # 年化协方差矩阵
         portfolio_variance = np.dot(weights.T, np.dot(cov_matrix.values, weights))
         # 数值精度保护：方差可能因浮点误差略小于0，截断到0
         portfolio_variance = max(0.0, portfolio_variance)
@@ -440,8 +440,7 @@ class PortfolioAnalysisService:
 
         return combined_score
 
-    def compare_weight_methods(
-        self, factor_returns: pd.DataFrame, methods: List[str] = None, risk_free_rate: float = 0.03
+    def compare_weight_methods(self, factor_returns: pd.DataFrame, methods: List[str] = None, risk_free_rate: float = RISK_FREE_RATE
     ) -> Dict:
         """
         比较不同权重优化方法的效果
