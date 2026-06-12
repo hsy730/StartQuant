@@ -346,9 +346,7 @@ class FactorOrchestrator:
                                 "score": result.get("summary", {}).get(
                                     "overall_score", 0
                                 ),
-                                "ic_mean": ic_result.get("ic_mean")
-                                if ic_result.get("ic_mean") is not None
-                                else 0,
+                                "ic_mean": ic_result.get("ic_mean"),
                                 "ir": ic_result.get("ir"),
                                 "risk_level": bias_result.get("risk_level", "N/A"),
                             }

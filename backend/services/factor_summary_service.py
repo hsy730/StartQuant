@@ -6,6 +6,9 @@ import pandas as pd
 import numpy as np
 from typing import Dict, List, Optional, Any
 
+import logging
+logger = logging.getLogger(__name__)
+
 from backend.utils.safe_math import safe_float as _safe_float
 
 

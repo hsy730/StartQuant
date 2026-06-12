@@ -17,6 +17,7 @@ from backend.services.lookahead_bias_detector import (
 )
 from backend.utils.safe_math import safe_ir
 from backend.constants import IC_PASS_THRESHOLD, IR_PASS_THRESHOLD
+from backend.services.factor_stability_service import FactorStabilityService
 
 logger = logging.getLogger(__name__)
 
@@ -201,9 +202,11 @@ class FactorValidationService:
 
                     # 基于IC序列的t检验（比单期Fisher z更可靠）
                     if n > 1 and ic_std > 1e-10:
-                        t_stat = float(ic) / float(
-                            ic_std / np.sqrt(n)
-                        )  # se guaranteed positive (Rule 7.34)
+                        # 直接除法：se = ic_std/sqrt(n)，ic_std >= 1e-10（上方检查）且 n >= 2，
+                        # 因此 se > 0，无需 safe_divide（规则7.34：safe_divide 的 min_threshold
+                        # 可能吞掉 se < 1e-10 时的有效极大 t 统计量）
+                        se = float(ic_std) / np.sqrt(n)
+                        t_stat = float(ic) / se
                         p_value = float(2 * (1 - stats.t.cdf(abs(t_stat), df=n - 1)))
                     else:
                         # 规则7.15：ic_std≈0 且 ic_mean≠0 → t_stat=inf
@@ -257,7 +260,8 @@ class FactorValidationService:
 
         n = len(aligned_data)
         ic_clipped = np.clip(ic, -0.9999, 0.9999)
-        t_stat = ic_clipped * np.sqrt(n - 2) / np.sqrt(1 - ic_clipped**2)
+        denom = np.sqrt(max(1 - ic_clipped**2, 1e-20))  # 截断避免除零
+        t_stat = ic_clipped * np.sqrt(n - 2) / denom
         p_value = 2 * (1 - stats.t.cdf(abs(t_stat), df=n - 2))
 
         is_significant = p_value < 0.05
@@ -280,42 +284,22 @@ class FactorValidationService:
     def _validate_rank_ic(
         self, factor_values: pd.Series, return_values: pd.Series
     ) -> Dict:
-        aligned_data = pd.DataFrame(
-            {"factor": factor_values, "return": return_values}
-        ).dropna()
+        """
+        验证Rank IC — 委托给 _validate_ic（规范5：代码复用）
 
-        if len(aligned_data) < 10:
-            return {
-                "passed": False,
-                "rank_ic": 0.0,
-                "message": "数据量不足",
-            }
-
-        rank_ic = aligned_data["factor"].rank().corr(aligned_data["return"].rank())
-
-        n = len(aligned_data)
-        if abs(rank_ic) >= 1.0:
-            t_stat = float("inf") if rank_ic > 0 else float("-inf")
-            p_value = 0.0
-        else:
-            t_stat = rank_ic * np.sqrt(n - 2) / np.sqrt(1 - rank_ic**2)
-            p_value = 2 * (1 - stats.t.cdf(abs(t_stat), df=n - 2))
-
-        is_significant = p_value < 0.05
-
-        passed = abs(rank_ic) >= self.ic_threshold and is_significant
-
+        Rank IC 即 Spearman IC，与 _validate_ic 的单股票回退路径
+        使用相同的 spearmanr 计算，无需重复实现。
+        """
+        result = self._validate_ic(factor_values, return_values)
+        # 将结果键名映射为 rank_ic 格式
         return {
-            "passed": passed,
-            "rank_ic": _to_python_float(rank_ic),
-            "t_statistic": _to_python_float(t_stat),
-            "p_value": _to_python_float(p_value),
-            "is_significant": is_significant,
+            "passed": result["passed"],
+            "rank_ic": result.get("ic", 0.0),
+            "t_statistic": result.get("t_statistic", 0.0),
+            "p_value": result.get("p_value", 1.0),
+            "is_significant": result.get("is_significant", False),
             "threshold": self.ic_threshold,
-            "message": (
-                f"Rank IC={rank_ic:.4f} t={t_stat:.4f} p={p_value:.4f} "
-                f"{'通过' if passed else '未通过'} (阈值±{self.ic_threshold}, 显著性p<0.05)"
-            ),
+            "message": result.get("message", ""),
         }
 
     def _validate_ir(
@@ -371,9 +355,10 @@ class FactorValidationService:
                         # t检验
                         n = len(ic_series)
                         if n > 1 and ic_std > 1e-10:
-                            t_stat = float(ic_mean) / float(
-                                ic_std / np.sqrt(n)
-                            )  # se guaranteed positive (Rule 7.34)
+                            # 直接除法：se = ic_std/sqrt(n)，ic_std >= 1e-10 且 n >= 2，
+                            # 因此 se > 0（规则7.34）
+                            se = float(ic_std) / np.sqrt(n)
+                            t_stat = float(ic_mean) / se
                             p_value = float(
                                 2 * (1 - stats.t.cdf(abs(t_stat), df=n - 1))
                             )
@@ -587,59 +572,29 @@ class FactorValidationService:
 
     def _validate_stability(self, factor_values: pd.Series) -> Dict:
         """
-        验证因子稳定性（分布稳定性）
+        验证因子稳定性（分布稳定性）— 委托给 FactorStabilityService（规范5：代码复用）
 
-        Args:
-            factor_values: 因子值
-
-        Returns:
-            稳定性验证结果
+        KS分段检验逻辑与 factor_stability_service.calculate_distribution_stability 重复，
+        统一委托以避免逻辑漂移。
         """
-        if len(factor_values) < 252:
+        try:
+            stability_service = FactorStabilityService()
+            result = stability_service.calculate_distribution_stability(factor_values)
+            stability_score = result.get("stability_score", 1.0)
+            passed = stability_score >= 0.6
+            return {
+                "passed": passed,
+                "stability_score": float(stability_score),
+                "n_comparisons": result.get("n_comparisons", 0),
+                "message": f"稳定性得分={stability_score:.2f} {'通过' if passed else '未通过'}",
+            }
+        except Exception as e:
+            logger.warning(f"稳定性检验失败: {e}")
             return {
                 "passed": True,
                 "stability_score": 1.0,
-                "message": "数据量不足，跳过稳定性检验",
+                "message": f"稳定性检验异常，跳过: {e}",
             }
-
-        # 分段检验（每252天一段）
-        n_segments = len(factor_values) // 252
-        if n_segments < 2:
-            return {
-                "passed": True,
-                "stability_score": 1.0,
-                "message": "数据长度不足2段，跳过稳定性检验",
-            }
-
-        segments = []
-        for i in range(n_segments):
-            start_idx = i * 252
-            end_idx = start_idx + 252
-            segment = factor_values.iloc[start_idx:end_idx].dropna()
-            if len(segment) > 0:
-                segments.append(segment)
-
-        # 两两KS检验
-        p_values = []
-        for i in range(len(segments) - 1):
-            for j in range(i + 1, len(segments)):
-                statistic, p_value = stats.ks_2samp(segments[i], segments[j])
-                p_values.append(p_value)
-
-        # 稳定性得分（p值 > 0.05的比例）
-        if p_values:
-            stable_ratio = sum(1 for p in p_values if p > 0.05) / len(p_values)
-            passed = stable_ratio >= 0.6  # 60%的比较显示稳定
-        else:
-            stable_ratio = 1.0
-            passed = True
-
-        return {
-            "passed": passed,
-            "stability_score": float(stable_ratio),
-            "n_comparisons": len(p_values),
-            "message": f"稳定性得分={stable_ratio:.2f} {'通过' if passed else '未通过'}",
-        }
 
     def _validate_correlation(
         self, factor_values: pd.Series, existing_factors: Dict[str, pd.Series]

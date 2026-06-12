@@ -297,7 +297,8 @@ async def calculate_composite_score(request: CompositeScoreRequest):
             raise HTTPException(status_code=400, detail="没有有效的因子数据")
 
         # 使用等权重（简化）
-        weights = {f: 1.0 / len(factor_data) for f in factor_data.keys()}
+        from backend.utils.safe_math import safe_divide
+        weights = {f: safe_divide(1.0, len(factor_data), default=0.0) for f in factor_data.keys()}
 
         # 调用综合得分计算
         result = portfolio_analysis_service.calculate_combined_factor_score(
@@ -426,19 +427,16 @@ async def compare_weight_methods(request: CompareMethodsRequest):
                     ic_std = ic_series.std()
                     ir = safe_ir(float(ic_mean), float(ic_std), default=None)
 
-                    # 注意：此处计算的是IC代理指标，非真实投资组合收益率，
-                    # 无法直接使用 empyrical（需要真实收益率序列）。
-                    # 如有真实组合收益率，应通过 risk_metrics.calculate_risk_metrics() 计算。
+                    # 注意：IC 是相关系数，范围 [-1,1]，不能直接乘 sqrt(252) 年化。
+                    # 年化 IR = daily_IR * sqrt(252) 是标准做法，但 IC 本身不需要年化。
+                    # 此处保留 ic_mean/ic_std 原始值，仅年化 IR。
                     results[method] = {
                         "ic_mean": float(ic_mean),
                         "ic_std": float(ic_std),
                         "ir": float(ir) if ir is not None else None,
-                        "ic_annualized": float(
-                            ic_mean * np.sqrt(252)
-                        ),  # 年化IC（非真实收益率）
-                        "ic_volatility_annualized": float(
-                            ic_std * np.sqrt(252)
-                        ),  # 年化IC标准差（非真实波动率）
+                        "ir_annualized": float(ir * np.sqrt(252))
+                        if ir is not None
+                        else None,
                         "information_ratio": float(ir)
                         if ir is not None
                         else None,  # IR（信息比率，非夏普比率）

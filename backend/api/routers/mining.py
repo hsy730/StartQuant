@@ -823,10 +823,10 @@ def _unified_validate_factor(
 def _empty_unified_result() -> dict:
     """返回空的统一验证结果（当无法验证时使用）。"""
     return {
-        "ic": 0.0,
-        "ir": 0.0,
-        "fitness": 0.0,
-        "validation_score": 0.0,
+        "ic": None,
+        "ir": None,
+        "fitness": None,
+        "validation_score": None,
         "overall_passed": False,
         "turnover": None,
         "stability": None,
@@ -968,6 +968,7 @@ def _finalize_task(
                     }
                 )
         except Exception as e:
+            db.rollback()
             logger.warning(f"保存挖掘结果到 generated_factors 表失败: {e}")
             # 降级：即使暂存失败，仍然返回结果给前端（兼容旧逻辑）
             for i, factor_info in enumerate(best_factors):
@@ -1039,6 +1040,8 @@ def _finalize_task(
             -MAX_FITNESS_HISTORY_ENTRIES:
         ]
 
+    from backend.utils.safe_math import safe_divide
+
     result_data = {
         "factors": discovered_factors,
         "best_fitness": _safe_float(discovered_factors[0]["fitness"])
@@ -1046,10 +1049,8 @@ def _finalize_task(
         else 0.0,
         "avg_fitness": (
             _safe_float(
-                sum(f["fitness"] for f in discovered_factors) / len(discovered_factors)
-            )
-            if discovered_factors
-            else 0.0
+                safe_divide(sum(f["fitness"] for f in discovered_factors), len(discovered_factors), default=0.0)
+            ) if discovered_factors else 0.0
         ),
         "generations": request.n_generations,
         "fitness_history": fitness_history,
@@ -1213,9 +1214,6 @@ async def _run_simulated_mining(
 @router.get("/status/{task_id}")
 async def get_mining_status(task_id: str):
     """获取挖掘状态"""
-    import logging
-
-    logger = logging.getLogger(__name__)
 
     # 优先从内存获取
     if task_id in mining_tasks:

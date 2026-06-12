@@ -1291,7 +1291,7 @@ class AnalysisService:
         aligned_weights = weights_normalized.reindex(ic_s.index, fill_value=0.0)
         weight_sum = aligned_weights.sum()
         if weight_sum > 0:
-            aligned_weights = aligned_weights / weight_sum
+            aligned_weights = safe_series_divide(aligned_weights, weight_sum, default=0.0)
 
         weighted_vals = ic_s * aligned_weights
         return float(weighted_vals.sum())
@@ -1536,17 +1536,23 @@ class AnalysisService:
                                     and "error" not in period_stats
                                 ):
 
-                                    def _sf(v, d=0):
-                                        return v if v is not None else d
+                                    def _sf(v, fmt=".4f"):
+                                        """格式化数值，None显示为N/A（规则7.26/7.41）"""
+                                        if v is None:
+                                            return "N/A"
+                                        try:
+                                            return f"{v:{fmt}}"
+                                        except (TypeError, ValueError):
+                                            return "N/A"
 
                                     report += (
                                         f"| {period_label} | "
-                                        f"{_sf(period_stats.get('mean_ic'), 0):.4f} | "
-                                        f"{_sf(period_stats.get('std_ic'), 0):.4f} | "
-                                        f"{_sf(period_stats.get('ir'), 0):.4f} | "
-                                        f"{_sf(period_stats.get('ic_positive_ratio'), 0):.2%} | "
-                                        f"{_sf(period_stats.get('t_statistic'), 0):.4f} | "
-                                        f"{_sf(period_stats.get('p_value'), 1):.4f} |\n"
+                                        f"{_sf(period_stats.get('mean_ic'))} | "
+                                        f"{_sf(period_stats.get('std_ic'))} | "
+                                        f"{_sf(period_stats.get('ir'))} | "
+                                        f"{_sf(period_stats.get('ic_positive_ratio'), '.2%')} | "
+                                        f"{_sf(period_stats.get('t_statistic'))} | "
+                                        f"{_sf(period_stats.get('p_value'))} |\n"
                                     )
                             report += "\n"
 

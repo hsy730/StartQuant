@@ -635,8 +635,7 @@ class FactorPreprocessingPipeline:
                     # 同_winsorize方法：MAD=0或极小时用std作为σ_hat估计
                     sigma_hat = factor_vals.std()
                     if (
-                        sigma_hat == 0
-                        or np.isnan(sigma_hat)
+                        np.isnan(sigma_hat)
                         or sigma_hat < FLOAT_ZERO_THRESHOLD
                     ):
                         # 数据完全一致，无需去极值

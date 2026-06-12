@@ -163,6 +163,10 @@ class SmartSlippageDetector:
         Returns:
             市场特征描述对象
         """
+        if market_data is not None:
+            market_data = market_data.copy()
+        if price_data is not None:
+            price_data = {k: v.copy() for k, v in price_data.items()}
         if not stock_codes:
             return self._empty_characteristics([])
 

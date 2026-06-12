@@ -110,6 +110,7 @@ class FactorReturnAnalysisService:
                 "group_details": {...}     # 各组详细信息
             }
         """
+        factor_data = {k: v.copy() for k, v in factor_data.items()}
         try:
             all_records = []
 
@@ -320,6 +321,7 @@ class FactorReturnAnalysisService:
                 "summary_statistics": {...}
             }
         """
+        factor_data = {k: v.copy() for k, v in factor_data.items()}
         try:
             date_returns = {}
 
@@ -799,7 +801,7 @@ class FactorReturnAnalysisService:
                                     duplicates="drop",
                                 )
                             except ValueError:
-                                pass
+                                logger.debug(f"Bootstrap迭代qcut跳过: 因子值相同, n={len(group)}")
                 else:
                     sample_df["quantile"] = pd.qcut(
                         sample_df[factor_col],

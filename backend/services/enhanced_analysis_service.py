@@ -94,10 +94,13 @@ class EnhancedAnalysisService:
             alpha = 1 - confidence_level
             t_critical = stats.t.ppf(1 - alpha / 2, df=len(ic_series) - 1)
             se = safe_divide(
-                ic_series.std(ddof=1), np.sqrt(len(ic_series)), default=0.0
+                ic_series.std(ddof=1), np.sqrt(len(ic_series)), default=None
             )
-            ci_lower = mean_ic - t_critical * se
-            ci_upper = mean_ic + t_critical * se
+            if se is not None:
+                ci_lower = mean_ic - t_critical * se
+                ci_upper = mean_ic + t_critical * se
+            else:
+                ci_lower = ci_upper = None
 
             return {
                 "ic": mean_ic,
@@ -112,8 +115,8 @@ class EnhancedAnalysisService:
                     else f"不显著 (p>={STATISTICAL_SIGNIFICANCE_ALPHA})"
                 ),
                 "confidence_interval": {
-                    "lower": float(ci_lower),
-                    "upper": float(ci_upper),
+                    "lower": float(ci_lower) if ci_lower is not None else None,
+                    "upper": float(ci_upper) if ci_upper is not None else None,
                     "level": confidence_level,
                 },
                 "n_samples": len(valid_data),
@@ -121,6 +124,8 @@ class EnhancedAnalysisService:
                 "method": "spearman_cross_sectional",
                 "interpretation": (
                     f"横截面IC均值在{confidence_level * 100:.0f}%置信区间为[{ci_lower:.4f}, {ci_upper:.4f}]"
+                    if ci_lower is not None and ci_upper is not None
+                    else "置信区间不可计算（标准误为零）"
                 ),
             }
 
@@ -212,6 +217,7 @@ class EnhancedAnalysisService:
         Returns:
             增强的分析结果
         """
+        factor_data = {k: v.copy() for k, v in factor_data.items()}
         results = {
             "factors": {},
             "neutralization": {},
@@ -282,7 +288,8 @@ class EnhancedAnalysisService:
                     n_days = len(daily_ics)
                     # t检验：IC均值是否显著不为0
                     if ic_std > 1e-10:
-                        t_stat = mean_ic / (ic_std / np.sqrt(n_days))
+                        se = safe_divide(ic_std, np.sqrt(n_days), default=None)
+                        t_stat = safe_divide(mean_ic, se, default=0.0) if se is not None else 0.0
                         p_value = 2 * (1 - stats.t.cdf(abs(t_stat), df=n_days - 1))
                         is_significant = p_value < 0.05
                     else:

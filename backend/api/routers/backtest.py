@@ -206,7 +206,8 @@ async def run_single_backtest(request: SingleBacktestRequest):
                 if not merged_list:
                     raise HTTPException(status_code=400, detail="没有有效的因子数据")
                 df = pd.concat(merged_list, ignore_index=True)
-                top_percentile = (100 - request.percentile) / 100.0
+                from backend.utils.safe_math import safe_divide
+                top_percentile = safe_divide(100 - request.percentile, 100.0, default=0.0)
                 result = await asyncio.to_thread(
                     backtest_service.cross_sectional_backtest,
                     df=df,
@@ -261,7 +262,8 @@ async def run_single_backtest(request: SingleBacktestRequest):
                 else:
                     raise HTTPException(status_code=400, detail="无法计算复合因子得分")
 
-                top_percentile = (100 - request.percentile) / 100.0
+                from backend.utils.safe_math import safe_divide
+                top_percentile = safe_divide(100 - request.percentile, 100.0, default=0.0)
                 result = await asyncio.to_thread(
                     backtest_service.cross_sectional_backtest,
                     df=df,
@@ -471,7 +473,7 @@ async def run_single_backtest(request: SingleBacktestRequest):
                     # Fallback: 使用基准价格曲线（明确标注为基准）
                     first_close = (
                         df["close"].iloc[0]
-                        if len(df) > 0 and df["close"].iloc[0] != 0
+                        if len(df) > 0 and abs(df["close"].iloc[0]) > 1e-10
                         else 1.0
                     )
                     stock_chart_data["equity"] = {
@@ -614,9 +616,15 @@ async def run_strategy_comparison(request: ComparisonRequest):
                         if total_return <= -1:
                             annual_return = -1.0  # 完全亏损
                         else:
-                            annual_return = float(
-                                (1 + total_return) ** (252 / n_days) - 1
-                            )
+                            # 规则7.32：几何复利年化
+                            from backend.utils.safe_math import safe_divide
+                            n_years = safe_divide(n_days, 252, default=0.0)
+                            if n_years > 0 and total_return > -1:
+                                annual_return = float((1 + total_return) ** (1 / n_years) - 1)
+                            elif total_return <= -1:
+                                annual_return = -1.0
+                            else:
+                                annual_return = None
                     else:
                         annual_return = None
 
@@ -624,7 +632,7 @@ async def run_strategy_comparison(request: ComparisonRequest):
                         "returns": returns_series.tolist(),
                         "total_return": total_return,
                         "annual_return": annual_return,
-                        "volatility": calculate_volatility(returns_series) or None,
+                        "volatility": calculate_volatility(returns_series),
                     }
 
                     # 计算夏普比率（委托risk_metrics统一入口，符合规则2）

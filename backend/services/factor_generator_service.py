@@ -10,6 +10,7 @@ from itertools import combinations
 from scipy.stats import spearmanr
 
 from backend.utils.safe_math import safe_ir
+from backend.utils.ic_calculator import calculate_rolling_ic
 from backend.constants import IC_PASS_THRESHOLD, IR_PASS_THRESHOLD
 
 
@@ -735,17 +736,10 @@ def calculate_factor(df):
                 factor_vals = aligned_data["factor"]
                 return_vals = aligned_data["return"]
 
-                def _rolling_spearman(x):
-                    y_aligned = return_vals.loc[x.index]
-                    valid = x.notna() & y_aligned.notna()
-                    if valid.sum() < min_periods:
-                        return np.nan
-                    r, _ = spearmanr(x[valid], y_aligned[valid])
-                    return r
-
-                rolling_ic_series = factor_vals.rolling(
-                    window=window, min_periods=min_periods
-                ).apply(_rolling_spearman, raw=False)
+                # 规则7.30：使用统一入口 calculate_rolling_ic
+                rolling_ic_series = calculate_rolling_ic(
+                    factor_vals, return_vals, window=window, method="spearman"
+                )
                 rolling_ic_values = rolling_ic_series.tolist()
 
                 if rolling_ic_values:
@@ -811,17 +805,10 @@ def calculate_factor(df):
         factor_vals = aligned_data["factor"]
         return_vals = aligned_data["return"]
 
-        def _rolling_spearman(x):
-            y_aligned = return_vals.loc[x.index]
-            v = x.notna() & y_aligned.notna()
-            if v.sum() < min_periods:
-                return np.nan
-            r, _ = spearmanr(x[v], y_aligned[v])
-            return r
-
-        rolling_ic_series = factor_vals.rolling(
-            window=window, min_periods=min_periods
-        ).apply(_rolling_spearman, raw=False)
+        # 规则7.30：使用统一入口 calculate_rolling_ic
+        rolling_ic_series = calculate_rolling_ic(
+            factor_vals, return_vals, window=window, method="spearman"
+        )
 
         rolling_ic = rolling_ic_series
 

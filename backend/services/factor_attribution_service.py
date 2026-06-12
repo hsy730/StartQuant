@@ -83,6 +83,7 @@ class FactorAttributionService:
                 "return_decomposition": {...}  # 收益分解
             }
         """
+        factor_data = {k: v.copy() for k, v in factor_data.items()}
         results = {}
 
         # 1. 因子收益贡献（基于因子暴露度与收益的关系）
@@ -159,7 +160,7 @@ class FactorAttributionService:
         for date in sorted(factor_panel.keys()):
             fv = factor_panel[date]
             rv = return_panel[date]
-            if len(fv) >= 5 and np.std(fv) > 1e-12:
+            if len(fv) >= 5 and np.std(fv) >= 1e-10:
                 ic, _ = spearmanr(fv, rv)
                 if not np.isnan(ic):
                     daily_ics.append(ic)

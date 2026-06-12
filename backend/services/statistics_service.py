@@ -169,6 +169,7 @@ class StatisticsService:
         Returns:
             Dict: 各期的IC值
         """
+        df = df.copy()
         periods = list(range(1, max_periods + 1))
         df = calculate_future_returns(df, periods=periods, price_col="close")
 

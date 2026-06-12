@@ -661,7 +661,8 @@ class StockRankerService:
                 top_stocks = day_result.head(top_n)
 
                 # 等权分配（向量化操作替代 iterrows）
-                weight = 1.0 / len(top_stocks)
+                from backend.utils.safe_math import safe_divide
+                weight = safe_divide(1.0, len(top_stocks), default=0.0)
                 if stock_col in top_stocks.columns:
                     stock_names = top_stocks[stock_col].values
                 elif "asset" in top_stocks.columns:
