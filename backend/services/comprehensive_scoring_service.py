@@ -4,6 +4,7 @@
 
 from typing import Dict, List, Optional
 import logging
+import numpy as np
 
 from backend.services.smart_slippage_detector import smart_slippage_detector
 from backend.utils.safe_math import safe_divide
@@ -68,7 +69,13 @@ class ComprehensiveScoringService:
 
         # 2. IR得分 (0-100)
         ir_val = factor_metrics.get("ir")
-        ir_score = min(abs(ir_val) * 40, 100) if ir_val is not None else 0  # IR=2.5时满分
+        if ir_val is not None:
+            ir_score = min(abs(ir_val) * 40, 100)
+        elif factor_metrics.get("ic_mean") is not None and abs(factor_metrics.get("ic_mean", 0)) > 1e-10:
+            # IR不可计算但IC非零 → 因子极其稳定，给予高分
+            ir_score = 100
+        else:
+            ir_score = 0
         total_score += weights["ir"] * ir_score
         details["ir_score"] = float(ir_score)
 
@@ -160,7 +167,7 @@ class ComprehensiveScoringService:
                 "slippage_pct": f"{slip * 100:.2f}%",
                 "annual_cost_pct": round(annual_cost * 100, 2),
                 "net_annual_return": round(net_return * 100, 2),
-                "return_decay_pct": round(return_decay, 2),
+                "return_decay_pct": round(return_decay, 2) if not np.isinf(return_decay) else None,
                 "is_recommended": abs(slip - base_slippage) < 0.0001,
             }
             scenarios.append(scenario)
@@ -195,7 +202,7 @@ class ComprehensiveScoringService:
             "original_annual_return": round(annual_return * 100, 2),
             "sensitivity_level": sensitivity_level,
             "sensitivity_description": sensitivity_desc,
-            "cost_impact_ratio": round(sensitivity_ratio * 100, 2),
+            "cost_impact_ratio": round(sensitivity_ratio * 100, 2) if not np.isinf(sensitivity_ratio) else None,
             "scenarios": scenarios,
             "recommendations": recommendations,
         }
@@ -444,7 +451,7 @@ class ComprehensiveScoringService:
 
         # 4. 效率得分
         sharpe_ratio = portfolio_metrics.get("sharpe_ratio")
-        sharpe_ratio = sharpe_ratio if sharpe_ratio is not None else 1.0
+        sharpe_ratio = sharpe_ratio if sharpe_ratio is not None else 0.0
         sharpe_score = max(min(sharpe_ratio / 2.0 * 100, 100), 0)
         total_score += weights["efficiency"] * sharpe_score
         details["efficiency_score"] = float(sharpe_score)

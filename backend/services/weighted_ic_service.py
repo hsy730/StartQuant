@@ -258,7 +258,13 @@ class WeightedICService:
 
                 stability_score = self._calculate_stability_score(valid_ic)
 
-                ir_for_score = ir if ir is not None else 0.0
+                if ir is not None:
+                    ir_for_score = ir
+                elif abs(mean_ic) > 1e-10:
+                    # IC_std≈0 但 IC_mean≠0：因子极其稳定，IR 趋于无穷，给予封顶高分
+                    ir_for_score = 10.0
+                else:
+                    ir_for_score = 0.0
                 raw_score = (
                     ir_for_score * 30
                     + mean_abs_ic * 100
@@ -292,7 +298,7 @@ class WeightedICService:
                             )
 
                             uniqueness_penalty = max_corr_with_others**2 * 20
-                            importance_scores[name]["raw_score"] -= uniqueness_penalty
+                            importance_scores[name]["raw_score"] = max(0.0, importance_scores[name]["raw_score"] - uniqueness_penalty)
                             importance_scores[name]["components"]["uniqueness_penalty"] = float(uniqueness_penalty)
                             importance_scores[name]["components"]["max_correlation"] = float(max_corr_with_others)
 

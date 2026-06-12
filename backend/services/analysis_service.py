@@ -563,8 +563,8 @@ class AnalysisService:
                 "IC绝对值均值": float(abs(ic_s).mean()),
                 "IC序列": ic_s.to_dict(),
                 "IC类型": "横截面IC（手动计算）",
-                "t统计量": t_stat,
-                "p值": p_value,
+                "t统计量": t_stat if np.isfinite(t_stat) else None,
+                "p值": p_value if np.isfinite(p_value) else None,
             }
 
         return {
@@ -1403,7 +1403,8 @@ class AnalysisService:
                         report += "**Top-Bottom Spread**\n\n"
                         for period_label, spread_data in spread.items():
                             if isinstance(spread_data, dict) and "spread" in spread_data:
-                                report += f"- {period_label}: {spread_data['spread']:.6f}\n"
+                                _spread_val = spread_data['spread']
+                                report += f"- {period_label}: {_spread_val:.6f}\n" if _spread_val is not None else f"- {period_label}: N/A\n"
                         report += "\n"
 
                     alpha_beta = returns_analysis.get("alpha_beta", {})

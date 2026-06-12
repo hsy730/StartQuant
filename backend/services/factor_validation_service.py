@@ -22,7 +22,9 @@ logger = logging.getLogger(__name__)
 
 def _to_python_float(value, default=None):
     """转换numpy类型为Python原生类型"""
-    if value is None or (isinstance(value, float) and (np.isnan(value) or np.isinf(value))):
+    if value is None:
+        return default
+    if isinstance(value, (float, np.floating)) and (np.isnan(value) or np.isinf(value)):
         return default
     try:
         return float(value)
@@ -198,8 +200,8 @@ class FactorValidationService:
                         "passed": passed,
                         "ic": ic,
                         "ic_std": _to_python_float(ic_std),
-                        "t_statistic": float(t_stat),
-                        "p_value": float(p_value),
+                        "t_statistic": _to_python_float(t_stat),
+                        "p_value": _to_python_float(p_value),
                         "is_significant": is_significant,
                         "threshold": self.ic_threshold,
                         "method": "alphalens横截面Spearman IC",
@@ -278,9 +280,9 @@ class FactorValidationService:
 
         return {
             "passed": passed,
-            "rank_ic": float(rank_ic),
-            "t_statistic": float(t_stat),
-            "p_value": float(p_value),
+            "rank_ic": _to_python_float(rank_ic),
+            "t_statistic": _to_python_float(t_stat),
+            "p_value": _to_python_float(p_value),
             "is_significant": is_significant,
             "threshold": self.ic_threshold,
             "message": (
@@ -358,8 +360,8 @@ class FactorValidationService:
                             "ir": float(ir) if ir is not None else None,
                             "ic_mean": ic_mean,
                             "ic_std": ic_std,
-                            "t_statistic": float(t_stat),
-                            "p_value": float(p_value),
+                            "t_statistic": _to_python_float(t_stat),
+                            "p_value": _to_python_float(p_value),
                             "threshold": self.ir_threshold,
                             "method": "alphalens横截面IC序列IR",
                             "n_dates": n,
@@ -384,18 +386,11 @@ class FactorValidationService:
         window = 20
         min_periods = 10
 
-        def _rolling_spearman_ic(x):
-            """滚动窗口内计算Spearman IC"""
-            y_aligned = aligned_data["return"].loc[x.index]
-            valid = x.notna() & y_aligned.notna()
-            if valid.sum() < min_periods:
-                return np.nan
-            return spearmanr(x[valid], y_aligned[valid])[0]
+        from backend.utils.ic_calculator import calculate_rolling_ic
 
-        rolling_ic = (
-            aligned_data["factor"]
-            .rolling(window=window, min_periods=min_periods)
-            .apply(_rolling_spearman_ic, raw=False)
+        rolling_ic = calculate_rolling_ic(
+            aligned_data["factor"], aligned_data["return"],
+            window=window, method="spearman"
         )
 
         ic_mean = rolling_ic.mean()
@@ -623,7 +618,10 @@ class FactorValidationService:
                 "message": "无现有因子可对比",
             }
 
-        max_corr = max(abs(c) for c in correlations)
+        valid_correlations = [c for c in correlations if pd.notna(c)]
+        if not valid_correlations:
+            return {"passed": True, "max_correlation": 0.0, "message": "无有效相关性可计算"}
+        max_corr = max(abs(c) for c in valid_correlations)
         passed = max_corr <= self.max_correlation
 
         return {
@@ -658,7 +656,7 @@ class FactorValidationService:
         ir_result = validation_results["ir_validation"]
         if ir_result["passed"] and ir_result["ir"] is not None:
             ir = ir_result["ir"]
-            score += min(ir * 20, 20)
+            score += max(min(ir * 20, 20), 0)
 
         stab_result = validation_results["stability_validation"]
         if stab_result["passed"]:
@@ -685,7 +683,7 @@ class FactorValidationService:
                 # 低风险: 轻微扣分
                 score = max(0, score * 0.9)
 
-        return round(score, 2)
+        return max(0.0, min(round(score, 2), 100.0))
 
     def detect_lookahead_bias(
         self,

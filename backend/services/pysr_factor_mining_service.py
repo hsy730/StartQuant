@@ -11,6 +11,7 @@ PySR符号回归因子挖掘服务
 """
 
 import logging
+import traceback
 from typing import List, Dict, Optional, Tuple
 import pandas as pd
 import numpy as np
@@ -153,7 +154,8 @@ class PySRFactorMiningService(BaseMiningService):
         )
 
         if not feature_names:
-            return self._build_feature_matrix()
+            X, y, feature_names = self._build_feature_matrix()
+            return X, y, feature_names, {}
 
         all_X = []
         all_y = []
@@ -186,7 +188,8 @@ class PySRFactorMiningService(BaseMiningService):
             stock_factor_map[code] = stock_data
 
         if not all_X:
-            return self._build_feature_matrix()
+            X, y, feature_names = self._build_feature_matrix()
+            return X, y, feature_names, {}
 
         X = np.vstack(all_X)
         y = np.concatenate(all_y)
@@ -290,8 +293,8 @@ class PySRFactorMiningService(BaseMiningService):
                     fitness = self._route_fitness(ic_results)
 
                     # 正确提取 IC/IR：从 pearson_ic 或 spearman_ic 的第一个周期中提取
-                    ic_mean_val = 0.0
-                    ir_val = 0.0
+                    ic_mean_val = None
+                    ir_val = None
 
                     for ic_type in ["spearman_ic", "pearson_ic"]:
                         ic_type_data = ic_results.get(ic_type, {})
@@ -302,7 +305,7 @@ class PySRFactorMiningService(BaseMiningService):
                                 ic_mean_val = (
                                     float(period_stats.get("mean_ic"))
                                     if period_stats.get("mean_ic") is not None
-                                    else 0.0
+                                    else None
                                 )
                                 ir_raw = period_stats.get("ir")
                                 ir_val = float(ir_raw) if ir_raw is not None else None
@@ -316,22 +319,24 @@ class PySRFactorMiningService(BaseMiningService):
 
                     validation = {
                         "ic_validation": {
-                            "ic": abs(ic_mean_val),
-                            "passed": abs(ic_mean_val) >= 0.02,
+                            "ic": abs(ic_mean_val) if ic_mean_val is not None else None,
+                            "passed": abs(ic_mean_val) >= 0.02 if ic_mean_val is not None else False,
                         },
                         "ir_validation": {
                             "ir": ir_capped,
                             "passed": ir_capped >= 0.3 if ir_capped is not None else False,
                         },
-                        "score": max(0.0, fitness * 100),
+                        "score": max(0.0, min(fitness * 100, 100.0)),
                         "_raw_ic_mean": ic_mean_val,
                         "_raw_ir": ir_val,
                         "_alphalens": True,
                     }
                     alphalens_success = True
+                    ic_str = f"{ic_mean_val:.4f}" if ic_mean_val is not None else "N/A"
+                    ir_str = f"{ir_val:.4f}" if ir_val is not None else "N/A"
+                    cap_str = f"{ir_capped:.4f}" if ir_capped is not None else "N/A"
                     logger.info(
-                        f"[PySR Eval] ✅ Alphalens SUCCESS: "
-                        f"IC={ic_mean_val:.4f}, IR={ir_val:.4f if ir_val is not None else 'N/A'} (capped={ir_capped:.4f if ir_capped is not None else 'N/A'})"
+                        f"[PySR Eval] Alphalens SUCCESS: IC={ic_str}, IR={ir_str} (capped={cap_str})"
                     )
         except Exception as e:
             logger.warning(f"[PySR Eval] ❌ Alphalens FAILED: {e}")
@@ -517,8 +522,6 @@ class PySRFactorMiningService(BaseMiningService):
                             fitness, validation = self._evaluate_pysr_factor_single(expr_callable)
                 except Exception as e:
                     logger.warning(f"[Mine Factors] ❌ Equation {idx} evaluation FAILED: {e}")
-                    import traceback
-
                     logger.warning(f"[Mine Factors] Traceback: {traceback.format_exc()}")
 
                 factor_info = {

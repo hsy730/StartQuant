@@ -19,6 +19,8 @@ import asyncio
 
 import logging
 
+from backend.utils.serialization import sanitize_dict
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
@@ -96,10 +98,10 @@ async def orchestrator_validate(request: OrchestratorValidateRequest):
             factor_name=request.factor_name,
         )
 
-        return {
+        return sanitize_dict({
             "success": result["status"] != "ERROR",
             "data": result,
-        }
+        })
 
     except Exception as e:
         logger.error(f"一键验证失败: {e}\n{traceback.format_exc()}")
@@ -124,7 +126,7 @@ async def orchestrator_batch_validate(request: OrchestratorBatchRequest):
             parallel=request.parallel,
         )
 
-        return {"success": True, "data": result}
+        return sanitize_dict({"success": True, "data": result})
 
     except Exception as e:
         logger.error(f"批量验证失败: {e}\n{traceback.format_exc()}")

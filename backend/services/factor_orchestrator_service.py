@@ -329,11 +329,11 @@ class FactorOrchestrator:
                                 "expression": expr[:50],
                                 "status": result["status"],
                                 "score": result.get("summary", {}).get("overall_score", 0),
-                                "ic_mean": ic_result.get("ic_mean", 0),
-                                "ir": ic_result.get("ir", 0),
+                                "ic_mean": ic_result.get("ic_mean") if ic_result.get("ic_mean") is not None else 0,
+                                "ir": ic_result.get("ir") if ic_result.get("ir") is not None else 0,
                                 "risk_level": bias_result.get("risk_level", "N/A"),
-                            }
-                        )
+                        }
+                    )
                     except Exception as e:
                         logger.warning(f"并行验证失败: {expr}, 错误: {e}")
                         results[factor_name] = {"status": "ERROR", "error": str(e)}
@@ -346,8 +346,8 @@ class FactorOrchestrator:
                                 "ic_mean": 0,
                                 "ir": 0,
                                 "risk_level": "ERROR",
-                            }
-                        )
+                        }
+                    )
         else:
             # 顺序执行
             for expr in expressions:
@@ -373,8 +373,8 @@ class FactorOrchestrator:
                             "expression": expr[:50],
                             "status": result["status"],
                             "score": result.get("summary", {}).get("overall_score", 0),
-                            "ic_mean": ic_result.get("ic_mean", 0),
-                            "ir": ic_result.get("ir", 0),
+                            "ic_mean": ic_result.get("ic_mean") if ic_result.get("ic_mean") is not None else 0,
+                            "ir": ic_result.get("ir") if ic_result.get("ir") is not None else 0,
                             "risk_level": bias_result.get("risk_level", "N/A"),
                         }
                     )

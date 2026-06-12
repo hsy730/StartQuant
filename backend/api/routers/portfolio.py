@@ -392,7 +392,7 @@ async def compare_weight_methods(request: CompareMethodsRequest):
                         "ic_mean": float(ic_mean),
                         "ic_std": float(ic_std),
                         "ir": float(ir) if ir is not None else None,
-                        "ic_annualized": float(ic_mean * 252),  # 年化IC（非真实收益率）
+                        "ic_annualized": float(ic_mean * np.sqrt(252)),  # 年化IC（非真实收益率）
                         "ic_volatility_annualized": float(ic_std * np.sqrt(252)),  # 年化IC标准差（非真实波动率）
                         "information_ratio": float(ir) if ir is not None else None,  # IR（信息比率，非夏普比率）
                     }

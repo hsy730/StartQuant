@@ -3,6 +3,7 @@
 """
 
 from typing import Dict
+import numpy as np
 import pandas as pd
 from datetime import datetime
 
@@ -52,15 +53,17 @@ class ExportService:
 
         # 回测参数
         summary_data.append(["回测参数"])
-        summary_data.append(["初始资金", f"{backtest_result.get('initial_capital', 1000000):,.0f} 元"])
+        capital = backtest_result.get("initial_capital")
+        capital_str = f"{capital:,.0f}" if capital is not None else "N/A"
+        summary_data.append(["初始资金", f"{capital_str} 元"])
         summary_data.append(["交易次数", f"{backtest_result.get('trades_count', 0)} 次"])
         summary_data.append([])
 
         # 性能指标
         if metrics:
 
-            def _fmt(val, fmt, default=0):
-                return f"{val:{fmt}}" if val is not None else f"{default:{fmt}}"
+            def _fmt(val, fmt, default="N/A"):
+                return f"{val:{fmt}}" if val is not None else default
 
             summary_data.append(["性能指标"])
             summary_data.append(["总收益率", _fmt(metrics.get("total_return"), ".2%", 0)])
@@ -88,7 +91,11 @@ class ExportService:
 
             # 计算收益率
             df_equity["收益率"] = df_equity["净值"].pct_change()
-            df_equity["累计收益率"] = df_equity["净值"] / df_equity["净值"].iloc[0] - 1
+            first_equity = df_equity["净值"].iloc[0]
+            if abs(first_equity) < 1e-10:
+                df_equity["累计收益率"] = np.nan
+            else:
+                df_equity["累计收益率"] = df_equity["净值"] / first_equity - 1
 
             df_equity.to_excel(writer, sheet_name="净值曲线")
 
@@ -124,7 +131,7 @@ class ExportService:
                 trades_list = []
 
                 for i, date in enumerate(trade_dates):
-                    prev_weight = weights.loc[weight_changes.index.get_loc(date) - 1] if i > 0 else 0
+                    prev_weight = weights.iloc[weight_changes.index.get_loc(date) - 1] if i > 0 else 0
                     curr_weight = weights.loc[date]
 
                     trades_list.append(
@@ -212,11 +219,11 @@ class ExportService:
                     tests_list.append(
                         {
                             "对比": test_key,
-                            "独立T检验p值": f"{test_result['independent_t_test']['p_value']:.4f}",
+                            "独立T检验p值": f"{test_result['independent_t_test']['p_value']:.4f}" if test_result['independent_t_test']['p_value'] is not None else "N/A",
                             "显著性": "是" if test_result["independent_t_test"]["significant"] else "否",
-                            "配对T检验p值": f"{test_result['paired_t_test']['p_value']:.4f}",
+                            "配对T检验p值": f"{test_result['paired_t_test']['p_value']:.4f}" if test_result['paired_t_test']['p_value'] is not None else "N/A",
                             "显著性(配对)": "是" if test_result["paired_t_test"]["significant"] else "否",
-                            "相关系数": f"{test_result['correlation']:.4f}",
+                            "相关系数": f"{test_result['correlation']:.4f}" if test_result['correlation'] is not None else "N/A",
                         }
                     )
 

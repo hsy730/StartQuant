@@ -21,6 +21,7 @@ import time
 import logging
 from datetime import datetime
 
+from backend.utils.serialization import sanitize_dict
 from backend.core.database import get_db
 from backend.models.mining_task import MiningTaskModel
 from backend.repositories.mining_task_repository import MiningTaskRepository
@@ -1196,7 +1197,7 @@ async def get_mining_results(task_id: str):
                     result_data["process_info"] = _rec.process_info
         except Exception as e:
             logger.debug(f"获取任务过程信息失败: {e}")
-        return {"success": True, "data": result_data}
+        return sanitize_dict({"success": True, "data": result_data})
 
     # 内存中没有，从数据库获取
     try:
@@ -1217,7 +1218,7 @@ async def get_mining_results(task_id: str):
             if task_record.process_info:
                 result_data["process_info"] = task_record.process_info
 
-            return {"success": True, "data": result_data}
+            return sanitize_dict({"success": True, "data": result_data})
     except HTTPException:
         raise
     except Exception as e:

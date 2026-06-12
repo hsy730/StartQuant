@@ -280,7 +280,7 @@ class EnhancedAnalysisService:
                         "ic": mean_ic,
                         "ic_std": ic_std,
                         "ir": safe_ir(float(mean_ic), float(ic_std), default=None),
-                        "t_statistic": float(t_stat) if t_stat is not None else None,
+                        "t_statistic": float(t_stat) if t_stat is not None and np.isfinite(t_stat) else None,
                         "p_value": float(p_value) if p_value is not None else None,
                         "is_significant": is_significant,
                         "n_samples": n_days,
