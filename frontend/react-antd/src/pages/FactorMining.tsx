@@ -17,6 +17,7 @@ import {
   Tag,
   Spin,
   Alert,
+  Modal,
 } from "antd";
 import {
   PlayCircleOutlined,
@@ -2047,8 +2048,8 @@ const ProcessInfoDisplay: React.FC<{ info: Record<string, any> }> = ({ info }) =
                     <Form.Item
                       label="扩展基元集"
                       name="use_extended_primitives"
+                      initialValue={true}
                       tooltip="扩展基元集开关。开启后增加时序窗口算子(如TS_MEAN、TS_STD、TS_RANK等约25个)，可挖掘动量/反转类因子；关闭仅保留基础算术运算(9个)，公式更简洁但表达力受限。强烈建议开启"
-                      valuePropName="checked"
                     >
                       <Select>
                         <Option value={true}>启用（~25个基元）</Option>
@@ -2060,8 +2061,8 @@ const ProcessInfoDisplay: React.FC<{ info: Record<string, any> }> = ({ info }) =
                     <Form.Item
                       label="NSGA-II多目标"
                       name="use_nsga2"
+                      initialValue={true}
                       tooltip="NSGA-II多目标进化。同时优化IC均值(越高越好)和表达式复杂度(越低越好)，产出Pareto前沿上的非支配解。开启后不再需要手动设简约系数。推荐开启，适合不确定简约系数时使用"
-                      valuePropName="checked"
                     >
                       <Select>
                         <Option value={true}>启用</Option>

@@ -301,6 +301,50 @@ export const api = {
   // 删除挖掘历史记录
   deleteMiningHistory(taskId: string) {
     return request.delete(`/mining/history/${taskId}`)
+  },
+
+  // 前视偏差检测
+  detectLookaheadBias(data: {
+    factor_names: string[]
+    stock_codes: string[]
+    start_date: string
+    end_date: string
+    strict_mode?: boolean
+  }) {
+    return request.post('/analysis/lookahead-bias', data, { timeout: 60000 })
+  },
+
+  // 分组收益分析
+  analyzeQuantileReturns(data: {
+    factor_name: string
+    stock_codes: string[]
+    start_date: string
+    end_date: string
+    n_quantiles?: number
+  }) {
+    return request.post('/analysis/quantile-returns', data, { timeout: 60000 })
+  },
+
+  // 累计收益曲线
+  analyzeCumulativeReturns(data: {
+    factor_name: string
+    stock_codes: string[]
+    start_date: string
+    end_date: string
+    n_quantiles?: number
+  }) {
+    return request.post('/analysis/cumulative-returns', data, { timeout: 60000 })
+  },
+
+  // Tear Sheet 全貌报告
+  generateTearSheet(data: {
+    factor_name: string
+    stock_codes: string[]
+    start_date: string
+    end_date: string
+    n_quantiles?: number
+  }) {
+    return request.post('/analysis/tear-sheet', data, { timeout: 120000 })
   }
 }
 

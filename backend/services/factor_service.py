@@ -487,8 +487,6 @@ class FactorCalculator:
             使用 talib.WMA（C实现），比 rolling().apply() 快 10-50x。
             SMA 已在同类函数中使用 talib，保持一致。
             """
-            import talib
-
             if not isinstance(series, pd.Series):
                 series = pd.Series(series)
             result = talib.WMA(series.values, timeperiod=n)

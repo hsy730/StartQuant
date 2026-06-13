@@ -25,6 +25,7 @@ import {
   ArrowLeftOutlined,
   ReloadOutlined,
   LineChartOutlined,
+  BarChartOutlined,
   EditOutlined,
   DeleteOutlined,
   CopyOutlined,
@@ -243,6 +244,10 @@ const FactorDetail: React.FC = () => {
   const [effectivenessData, setEffectivenessData] = useState<any>(null)
   const [attributionData, setAttributionData] = useState<any>(null)
   const [monitoringData, setMonitoringData] = useState<any>(null)
+  const [lookaheadBiasData, setLookaheadBiasData] = useState<any>(null)
+  const [quantileReturnsData, setQuantileReturnsData] = useState<any>(null)
+  const [cumulativeReturnsData, setCumulativeReturnsData] = useState<any>(null)
+  const [tearSheetData, setTearSheetData] = useState<any>(null)
   const [loadingAnalysisTabs, setLoadingAnalysisTabs] = useState(false)
   const [activeTabKey, setActiveTabKey] = useState<string>('chart')
 
@@ -1842,7 +1847,7 @@ const FactorDetail: React.FC = () => {
     setLoadingAnalysisTabs(true)
     try {
       // 并行加载所有分析数据
-      const [exposure, effectiveness, attribution, monitoring] = await Promise.all([
+      const [exposure, effectiveness, attribution, monitoring, lookaheadBias, quantileReturns, cumulativeReturns, tearSheet] = await Promise.all([
         api.analyzeExposure({
           factor_name: factor.name,
           stock_codes: stockCodes,
@@ -1874,7 +1879,32 @@ const FactorDetail: React.FC = () => {
           end_date: endDate,
           freq: dataFreq,
           period: dataFreq !== 'D' ? dataFreq.replace('min', '') : undefined
-        } as any)
+        } as any),
+        api.detectLookaheadBias({
+          factor_names: [factor.name],
+          stock_codes: stockCodes,
+          start_date: startDate,
+          end_date: endDate,
+          strict_mode: false
+        } as any).catch(() => null),
+        api.analyzeQuantileReturns({
+          factor_name: factor.name,
+          stock_codes: stockCodes,
+          start_date: startDate,
+          end_date: endDate
+        } as any).catch(() => null),
+        api.analyzeCumulativeReturns({
+          factor_name: factor.name,
+          stock_codes: stockCodes,
+          start_date: startDate,
+          end_date: endDate
+        } as any).catch(() => null),
+        api.generateTearSheet({
+          factor_name: factor.name,
+          stock_codes: stockCodes,
+          start_date: startDate,
+          end_date: endDate
+        } as any).catch(() => null)
       ])
 
       console.log('API responses:', { exposure, effectiveness, attribution, monitoring })
@@ -1894,6 +1924,18 @@ const FactorDetail: React.FC = () => {
       if (monitoring && (monitoring as any).success) {
         setMonitoringData((monitoring as any).data)
         console.log('monitoringData set:', (monitoring as any).data)
+      }
+      if (lookaheadBias && (lookaheadBias as any).success) {
+        setLookaheadBiasData((lookaheadBias as any).data)
+      }
+      if (quantileReturns && (quantileReturns as any).success) {
+        setQuantileReturnsData((quantileReturns as any).data)
+      }
+      if (cumulativeReturns && (cumulativeReturns as any).success) {
+        setCumulativeReturnsData((cumulativeReturns as any).data)
+      }
+      if (tearSheet && (tearSheet as any).success) {
+        setTearSheetData((tearSheet as any).data)
       }
 
       message.success('分析数据加载完成')
@@ -3504,6 +3546,428 @@ const FactorDetail: React.FC = () => {
                                   )}
                                 </Card>
                               </Col>
+                            </Row>
+                          )}
+                        </>
+                      )
+                    },
+                    {
+                      key: 'lookahead-bias',
+                      label: '前视偏差检测',
+                      children: (
+                        <>
+                          {!lookaheadBiasData ? (
+                            <div style={{ textAlign: 'center', padding: '60px 20px', color: '#64748b' }}>
+                              <WarningOutlined style={{ fontSize: '48px', marginBottom: '16px' }} />
+                              <p>{loadingAnalysisTabs ? '加载中...' : '请先点击"分析因子"按钮进行因子分析'}</p>
+                            </div>
+                          ) : (
+                            <Row gutter={[16, 16]}>
+                              {/* 总体风险等级 */}
+                              <Col xs={24}>
+                                <Card variant="borderless">
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '16px' }}>
+                                    <div style={{
+                                      width: '64px', height: '64px', borderRadius: '12px',
+                                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                      fontSize: '28px', fontWeight: 800,
+                                      background: lookaheadBiasData.overall_risk === 'safe' ? '#f0fdf4' :
+                                        lookaheadBiasData.overall_risk === 'low' ? '#fffbeb' :
+                                        lookaheadBiasData.overall_risk === 'medium' ? '#fef3c7' :
+                                        lookaheadBiasData.overall_risk === 'high' ? '#fee2e2' : '#fef2f2',
+                                      color: lookaheadBiasData.overall_risk === 'safe' ? '#16a34a' :
+                                        lookaheadBiasData.overall_risk === 'low' ? '#d97706' :
+                                        lookaheadBiasData.overall_risk === 'medium' ? '#ea580c' :
+                                        lookaheadBiasData.overall_risk === 'high' ? '#dc2626' : '#991b1b'
+                                    }}>
+                                      {lookaheadBiasData.overall_risk === 'safe' ? '✓' :
+                                        lookaheadBiasData.overall_risk === 'low' ? '!' :
+                                        lookaheadBiasData.overall_risk === 'medium' ? '!!' : '✗'}
+                                    </div>
+                                    <div>
+                                      <div style={{ fontSize: '20px', fontWeight: 700 }}>
+                                        综合风险等级: {
+                                          lookaheadBiasData.overall_risk === 'safe' ? '安全' :
+                                          lookaheadBiasData.overall_risk === 'low' ? '低风险' :
+                                          lookaheadBiasData.overall_risk === 'medium' ? '中风险' :
+                                          lookaheadBiasData.overall_risk === 'high' ? '高风险' : '极高风险'
+                                        }
+                                      </div>
+                                      <div style={{ color: '#64748b', fontSize: '13px' }}>
+                                        检测 {lookaheadBiasData.n_total} 个因子，{lookaheadBiasData.n_high_risk} 个高风险
+                                      </div>
+                                    </div>
+                                  </div>
+                                </Card>
+                              </Col>
+                              {/* 各因子检测详情 */}
+                              {Object.entries(lookaheadBiasData.per_factor || {}).map(([factorName, factorResult]: [string, any]) => (
+                                <Col xs={24} key={factorName}>
+                                  <Card
+                                    title={
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                        <span>{factorName}</span>
+                                        <Tag color={
+                                          factorResult.risk_level === 'safe' ? 'green' :
+                                          factorResult.risk_level === 'low' ? 'gold' :
+                                          factorResult.risk_level === 'medium' ? 'orange' :
+                                          factorResult.risk_level === 'high' ? 'red' : 'volcano'
+                                        }>
+                                          {factorResult.risk_level === 'safe' ? '安全' :
+                                           factorResult.risk_level === 'low' ? '低风险' :
+                                           factorResult.risk_level === 'medium' ? '中风险' :
+                                           factorResult.risk_level === 'high' ? '高风险' : '极高风险'}
+                                        </Tag>
+                                        <span style={{ color: '#64748b', fontSize: '12px' }}>
+                                          风险评分: {factorResult.risk_score}/100
+                                        </span>
+                                      </div>
+                                    }
+                                    variant="borderless"
+                                  >
+                                    <p style={{ color: '#374151', marginBottom: '12px' }}>{factorResult.summary}</p>
+                                    {factorResult.checks && factorResult.checks.length > 0 && (
+                                      <div>
+                                        <div style={{ fontWeight: 600, marginBottom: '8px', fontSize: '13px' }}>检测项详情:</div>
+                                        {factorResult.checks.map((check: any, idx: number) => (
+                                          <div key={idx} style={{
+                                            display: 'flex', alignItems: 'center', gap: '8px',
+                                            padding: '6px 0', borderBottom: '1px solid #f1f5f9'
+                                          }}>
+                                            <Tag color={check.passed ? 'green' : 'red'} style={{ minWidth: '40px', textAlign: 'center' }}>
+                                              {check.passed ? '通过' : '未通过'}
+                                            </Tag>
+                                            <span style={{ fontWeight: 500, fontSize: '13px' }}>{check.name}</span>
+                                            <span style={{ color: '#64748b', fontSize: '12px', marginLeft: 'auto' }}>
+                                              值: {typeof check.value === 'number' ? check.value.toFixed(4) : String(check.value)}
+                                              {' | 阈值: '}{typeof check.threshold === 'number' ? check.threshold.toFixed(4) : String(check.threshold)}
+                                            </span>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    )}
+                                    {factorResult.recommendations && factorResult.recommendations.length > 0 && (
+                                      <div style={{ marginTop: '12px' }}>
+                                        <div style={{ fontWeight: 600, marginBottom: '8px', fontSize: '13px' }}>改进建议:</div>
+                                        {factorResult.recommendations.map((rec: string, idx: number) => (
+                                          <div key={idx} style={{ color: '#3b82f6', fontSize: '13px', padding: '2px 0' }}>
+                                            • {rec}
+                                          </div>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </Card>
+                                </Col>
+                              ))}
+                            </Row>
+                          )}
+                        </>
+                      )
+                    },
+                    {
+                      key: 'quantile-returns',
+                      label: '分组收益',
+                      children: (
+                        <>
+                          {!quantileReturnsData ? (
+                            <div style={{ textAlign: 'center', padding: '60px 20px', color: '#64748b' }}>
+                              <BarChartOutlined style={{ fontSize: '48px', marginBottom: '16px' }} />
+                              <p>{loadingAnalysisTabs ? '加载中...' : '请先点击"分析因子"按钮进行因子分析'}</p>
+                            </div>
+                          ) : (
+                            <Row gutter={[16, 16]}>
+                              {/* 多空利差 */}
+                              {quantileReturnsData.spread && (
+                                <Col xs={24}>
+                                  <Card variant="borderless">
+                                    <Row gutter={[16, 16]}>
+                                      <Col xs={12} sm={6}>
+                                        <Statistic
+                                          title="多空利差"
+                                          value={quantileReturnsData.spread.spread}
+                                          precision={4}
+                                          suffix={quantileReturnsData.spread.annualized ? '(年化)' : ''}
+                                          styles={{ content: { color: quantileReturnsData.spread.spread > 0 ? '#16a34a' : '#dc2626' } }}
+                                        />
+                                      </Col>
+                                      {quantileReturnsData.spread.t_stat !== undefined && (
+                                        <Col xs={12} sm={6}>
+                                          <Statistic title="t 统计量" value={quantileReturnsData.spread.t_stat} precision={4} />
+                                        </Col>
+                                      )}
+                                      {quantileReturnsData.spread.p_value !== undefined && (
+                                        <Col xs={12} sm={6}>
+                                          <Statistic title="p 值" value={quantileReturnsData.spread.p_value} precision={6} />
+                                        </Col>
+                                      )}
+                                      {quantileReturnsData.monotonicity_test && (
+                                        <Col xs={12} sm={6}>
+                                          <Statistic
+                                            title="单调性"
+                                            value={quantileReturnsData.monotonicity_test.is_monotonic ? '通过' : '未通过'}
+                                            styles={{ content: { color: quantileReturnsData.monotonicity_test.is_monotonic ? '#16a34a' : '#dc2626' } }}
+                                          />
+                                        </Col>
+                                      )}
+                                    </Row>
+                                  </Card>
+                                </Col>
+                              )}
+                              {/* 各组收益 */}
+                              {quantileReturnsData.quantile_stats && (
+                                <Col xs={24}>
+                                  <Card title="各组统计" variant="borderless">
+                                    <div style={{ overflowX: 'auto' }}>
+                                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+                                        <thead>
+                                          <tr style={{ borderBottom: '2px solid #e2e8f0' }}>
+                                            <th style={{ padding: '8px 12px', textAlign: 'left' }}>分组</th>
+                                            <th style={{ padding: '8px 12px', textAlign: 'right' }}>平均收益</th>
+                                            <th style={{ padding: '8px 12px', textAlign: 'right' }}>中位数</th>
+                                            <th style={{ padding: '8px 12px', textAlign: 'right' }}>标准差</th>
+                                            <th style={{ padding: '8px 12px', textAlign: 'right' }}>样本数</th>
+                                          </tr>
+                                        </thead>
+                                        <tbody>
+                                          {quantileReturnsData.quantile_stats.map((q: any, idx: number) => (
+                                            <tr key={idx} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                                              <td style={{ padding: '8px 12px', fontWeight: 500 }}>
+                                                <Tag color={
+                                                  idx === 0 ? 'red' :
+                                                  idx === quantileReturnsData.quantile_stats.length - 1 ? 'green' : 'default'
+                                                }>
+                                                  Q{idx + 1}
+                                                </Tag>
+                                              </td>
+                                              <td style={{ padding: '8px 12px', textAlign: 'right', color: q.mean_return > 0 ? '#16a34a' : '#dc2626' }}>
+                                                {(q.mean_return * 100).toFixed(4)}%
+                                              </td>
+                                              <td style={{ padding: '8px 12px', textAlign: 'right' }}>
+                                                {q.median_return !== undefined ? (q.median_return * 100).toFixed(4) + '%' : '-'}
+                                              </td>
+                                              <td style={{ padding: '8px 12px', textAlign: 'right' }}>
+                                                {q.std_return !== undefined ? (q.std_return * 100).toFixed(4) + '%' : '-'}
+                                              </td>
+                                              <td style={{ padding: '8px 12px', textAlign: 'right' }}>
+                                                {q.n_obs ?? '-'}
+                                              </td>
+                                            </tr>
+                                          ))}
+                                        </tbody>
+                                      </table>
+                                    </div>
+                                  </Card>
+                                </Col>
+                              )}
+                            </Row>
+                          )}
+                        </>
+                      )
+                    },
+                    {
+                      key: 'cumulative-returns',
+                      label: '累计收益曲线',
+                      children: (
+                        <>
+                          {!cumulativeReturnsData ? (
+                            <div style={{ textAlign: 'center', padding: '60px 20px', color: '#64748b' }}>
+                              <LineChartOutlined style={{ fontSize: '48px', marginBottom: '16px' }} />
+                              <p>{loadingAnalysisTabs ? '加载中...' : '请先点击"分析因子"按钮进行因子分析'}</p>
+                            </div>
+                          ) : (
+                            <Row gutter={[16, 16]}>
+                              {/* 风险指标 */}
+                              {cumulativeReturnsData.long_short_metrics && (
+                                <Col xs={24}>
+                                  <Card variant="borderless">
+                                    <Row gutter={[16, 16]}>
+                                      {cumulativeReturnsData.long_short_metrics.total_return !== undefined && (
+                                        <Col xs={12} sm={6}>
+                                          <Statistic
+                                            title="多空总收益"
+                                            value={cumulativeReturnsData.long_short_metrics.total_return}
+                                            precision={4}
+                                            suffix="%"
+                                            styles={{ content: { color: cumulativeReturnsData.long_short_metrics.total_return > 0 ? '#16a34a' : '#dc2626' } }}
+                                          />
+                                        </Col>
+                                      )}
+                                      {cumulativeReturnsData.long_short_metrics.sharpe !== undefined && (
+                                        <Col xs={12} sm={6}>
+                                          <Statistic title="夏普比率" value={cumulativeReturnsData.long_short_metrics.sharpe} precision={4} />
+                                        </Col>
+                                      )}
+                                      {cumulativeReturnsData.long_short_metrics.max_drawdown !== undefined && (
+                                        <Col xs={12} sm={6}>
+                                          <Statistic title="最大回撤" value={cumulativeReturnsData.long_short_metrics.max_drawdown} precision={4} suffix="%" />
+                                        </Col>
+                                      )}
+                                      {cumulativeReturnsData.long_short_metrics.win_rate !== undefined && (
+                                        <Col xs={12} sm={6}>
+                                          <Statistic title="胜率" value={cumulativeReturnsData.long_short_metrics.win_rate} precision={2} suffix="%" />
+                                        </Col>
+                                      )}
+                                    </Row>
+                                  </Card>
+                                </Col>
+                              )}
+                              {/* 累计收益数据表 */}
+                              {cumulativeReturnsData.cumulative_returns && (
+                                <Col xs={24}>
+                                  <Card title="各组累计收益" variant="borderless">
+                                    <div style={{ overflowX: 'auto' }}>
+                                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+                                        <thead>
+                                          <tr style={{ borderBottom: '2px solid #e2e8f0' }}>
+                                            <th style={{ padding: '8px 12px', textAlign: 'left' }}>分组</th>
+                                            <th style={{ padding: '8px 12px', textAlign: 'right' }}>最终累计收益</th>
+                                          </tr>
+                                        </thead>
+                                        <tbody>
+                                          {Object.entries(cumulativeReturnsData.cumulative_returns).map(([key, values]: [string, any], idx: number) => {
+                                            const finalValue = Array.isArray(values) && values.length > 0 ? values[values.length - 1] : null
+                                            return (
+                                              <tr key={key} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                                                <td style={{ padding: '8px 12px', fontWeight: 500 }}>
+                                                  <Tag color={key.includes('Q1') || key.includes('1') ? 'red' : key.includes('Q5') || key.includes('5') ? 'green' : 'default'}>
+                                                    {key}
+                                                  </Tag>
+                                                </td>
+                                                <td style={{ padding: '8px 12px', textAlign: 'right', color: finalValue > 0 ? '#16a34a' : '#dc2626' }}>
+                                                  {finalValue !== null ? (finalValue * 100).toFixed(4) + '%' : '-'}
+                                                </td>
+                                              </tr>
+                                            )
+                                          })}
+                                        </tbody>
+                                      </table>
+                                    </div>
+                                  </Card>
+                                </Col>
+                              )}
+                            </Row>
+                          )}
+                        </>
+                      )
+                    },
+                    {
+                      key: 'tear-sheet',
+                      label: 'Tear Sheet',
+                      children: (
+                        <>
+                          {!tearSheetData ? (
+                            <div style={{ textAlign: 'center', padding: '60px 20px', color: '#64748b' }}>
+                              <FundOutlined style={{ fontSize: '48px', marginBottom: '16px' }} />
+                              <p>{loadingAnalysisTabs ? '加载中...' : '请先点击"分析因子"按钮进行因子分析'}</p>
+                            </div>
+                          ) : (
+                            <Row gutter={[16, 16]}>
+                              {/* 综合评分 */}
+                              {tearSheetData.summary && (
+                                <Col xs={24}>
+                                  <Card variant="borderless">
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '24px' }}>
+                                      <div style={{
+                                        width: '80px', height: '80px', borderRadius: '50%',
+                                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                        fontSize: '32px', fontWeight: 800,
+                                        background: tearSheetData.summary.grade === 'A' || tearSheetData.summary.grade === 'A+' ? '#f0fdf4' :
+                                          tearSheetData.summary.grade?.startsWith('B') ? '#fffbeb' :
+                                          tearSheetData.summary.grade?.startsWith('C') ? '#fef3c7' : '#fee2e2',
+                                        color: tearSheetData.summary.grade === 'A' || tearSheetData.summary.grade === 'A+' ? '#16a34a' :
+                                          tearSheetData.summary.grade?.startsWith('B') ? '#d97706' :
+                                          tearSheetData.summary.grade?.startsWith('C') ? '#ea580c' : '#dc2626'
+                                      }}>
+                                        {tearSheetData.summary.grade || 'N/A'}
+                                      </div>
+                                      <div>
+                                        <div style={{ fontSize: '24px', fontWeight: 700 }}>
+                                          综合评分: {tearSheetData.summary.overall_score?.toFixed(1) ?? 'N/A'} / 100
+                                        </div>
+                                        <div style={{ color: '#64748b', fontSize: '13px', marginTop: '4px' }}>
+                                          完成度: {((tearSheetData.summary.completion_rate ?? 0) * 100).toFixed(0)}%
+                                          ({tearSheetData.summary.sections_completed?.length ?? 0}/{tearSheetData.summary.n_sections_total ?? 0} 板块)
+                                        </div>
+                                      </div>
+                                      {tearSheetData.summary.score_breakdown && (
+                                        <div style={{ marginLeft: 'auto', display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
+                                          {Object.entries(tearSheetData.summary.score_breakdown).map(([key, value]: [string, any]) => (
+                                            <div key={key} style={{ textAlign: 'center' }}>
+                                              <div style={{ fontSize: '18px', fontWeight: 700, color: '#3b82f6' }}>
+                                                {typeof value === 'number' ? value.toFixed(1) : String(value)}
+                                              </div>
+                                              <div style={{ fontSize: '11px', color: '#64748b' }}>{key}</div>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      )}
+                                    </div>
+                                  </Card>
+                                </Col>
+                              )}
+                              {/* 专业解读 */}
+                              {tearSheetData.interpretation && (
+                                <Col xs={24} md={12}>
+                                  <Card title="专业解读" variant="borderless">
+                                    {typeof tearSheetData.interpretation === 'string' ? (
+                                      <p style={{ color: '#374151', lineHeight: 1.8 }}>{tearSheetData.interpretation}</p>
+                                    ) : (
+                                      <div style={{ color: '#374151', lineHeight: 1.8 }}>
+                                        {tearSheetData.interpretation.summary && <p>{tearSheetData.interpretation.summary}</p>}
+                                        {tearSheetData.interpretation.strengths && (
+                                          <div style={{ marginTop: '8px' }}>
+                                            <div style={{ fontWeight: 600, color: '#16a34a' }}>优势:</div>
+                                            {tearSheetData.interpretation.strengths.map((s: string, i: number) => (
+                                              <div key={i} style={{ paddingLeft: '12px' }}>• {s}</div>
+                                            ))}
+                                          </div>
+                                        )}
+                                        {tearSheetData.interpretation.weaknesses && (
+                                          <div style={{ marginTop: '8px' }}>
+                                            <div style={{ fontWeight: 600, color: '#dc2626' }}>不足:</div>
+                                            {tearSheetData.interpretation.weaknesses.map((w: string, i: number) => (
+                                              <div key={i} style={{ paddingLeft: '12px' }}>• {w}</div>
+                                            ))}
+                                          </div>
+                                        )}
+                                      </div>
+                                    )}
+                                  </Card>
+                                </Col>
+                              )}
+                              {/* 改进建议 */}
+                              {tearSheetData.recommendations && tearSheetData.recommendations.length > 0 && (
+                                <Col xs={24} md={12}>
+                                  <Card title="改进建议" variant="borderless">
+                                    {tearSheetData.recommendations.map((rec: string, idx: number) => (
+                                      <div key={idx} style={{
+                                        padding: '8px 12px', marginBottom: '6px',
+                                        background: '#f0f9ff', borderRadius: '6px',
+                                        fontSize: '13px', color: '#1e40af'
+                                      }}>
+                                        {idx + 1}. {rec}
+                                      </div>
+                                    ))}
+                                  </Card>
+                                </Col>
+                              )}
+                              {/* 警告 */}
+                              {tearSheetData.summary?.warnings && tearSheetData.summary.warnings.length > 0 && (
+                                <Col xs={24}>
+                                  <Alert
+                                    type="warning"
+                                    message="分析警告"
+                                    description={
+                                      <ul style={{ margin: 0, paddingLeft: '20px' }}>
+                                        {tearSheetData.summary.warnings.map((w: string, i: number) => (
+                                          <li key={i}>{w}</li>
+                                        ))}
+                                      </ul>
+                                    }
+                                    showIcon
+                                  />
+                                </Col>
+                              )}
                             </Row>
                           )}
                         </>
