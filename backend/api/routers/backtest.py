@@ -10,6 +10,7 @@ import logging
 import numpy as np
 import asyncio
 
+from backend.utils.safe_math import safe_divide
 from backend.utils.serialization import sanitize_dict
 from backend.services.vectorbt_backtest_service import (
     VectorBTBacktestService,
@@ -206,7 +207,6 @@ async def run_single_backtest(request: SingleBacktestRequest):
                 if not merged_list:
                     raise HTTPException(status_code=400, detail="没有有效的因子数据")
                 df = pd.concat(merged_list, ignore_index=True)
-                from backend.utils.safe_math import safe_divide
                 top_percentile = safe_divide(100 - request.percentile, 100.0, default=0.0)
                 result = await asyncio.to_thread(
                     backtest_service.cross_sectional_backtest,
@@ -262,7 +262,6 @@ async def run_single_backtest(request: SingleBacktestRequest):
                 else:
                     raise HTTPException(status_code=400, detail="无法计算复合因子得分")
 
-                from backend.utils.safe_math import safe_divide
                 top_percentile = safe_divide(100 - request.percentile, 100.0, default=0.0)
                 result = await asyncio.to_thread(
                     backtest_service.cross_sectional_backtest,
@@ -617,7 +616,6 @@ async def run_strategy_comparison(request: ComparisonRequest):
                             annual_return = -1.0  # 完全亏损
                         else:
                             # 规则7.32：几何复利年化
-                            from backend.utils.safe_math import safe_divide
                             n_years = safe_divide(n_days, 252, default=0.0)
                             if n_years > 0 and total_return > -1:
                                 annual_return = float((1 + total_return) ** (1 / n_years) - 1)

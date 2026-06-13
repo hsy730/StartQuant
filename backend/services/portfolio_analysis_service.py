@@ -187,6 +187,8 @@ class PortfolioAnalysisService:
         """
         sorted_values = np.sort(values)
         n = len(values)
+        if n == 0:
+            return 0.0
         cumsum = np.cumsum(sorted_values)
         if abs(cumsum[-1]) < 1e-10:
             return 0.0

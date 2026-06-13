@@ -92,7 +92,10 @@ class StatisticsService:
             # 计算置信区间
             alpha = 1 - confidence_level
             df = len(ic_clean) - 1
-            se = safe_divide(ic_clean.std(), np.sqrt(len(ic_clean)), default=0.0)
+            # 直接除法：ic_clean.std() >= 1e-10（由上方常数IC序列守卫保证），n >= 2
+            # 因此 se > 0，无需 safe_divide（规则7.34：safe_divide 的 min_threshold
+            # 可能吞掉 se < 1e-10 时的有效极大 t 统计量）
+            se = float(ic_clean.std()) / float(np.sqrt(len(ic_clean)))
             ci = stats.t.interval(confidence_level, df, loc=ic_clean.mean(), scale=se)
 
         return {
