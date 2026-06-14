@@ -394,7 +394,7 @@ const ProcessInfoDisplay: React.FC<{ info: Record<string, any> }> = ({ info }) =
           task_id: taskId,
           status: activeTask.status,
           current_generation: activeTask.current_generation || 0,
-          total_generations: activeTask.total_generations || 10,
+          total_generations: activeTask.total_generations != null ? activeTask.total_generations : 10,
           best_fitness: activeTask.best_fitness || 0,
           avg_fitness: activeTask.avg_fitness || 0,
           fitness_history: activeTask.fitness_history || { best: [], average: [] },
@@ -416,10 +416,10 @@ const ProcessInfoDisplay: React.FC<{ info: Record<string, any> }> = ({ info }) =
           }
         }, 1000);
 
-        // 恢复轮询
+        // 恢复轮询（3秒间隔，平衡实时性与性能）
         window.miningInterval = setInterval(() => {
           checkMiningProgress(taskId);
-        }, 2000);
+        }, 5000);
 
         message.info("检测到正在进行的挖掘任务，已恢复进度");
       }
@@ -434,22 +434,12 @@ const ProcessInfoDisplay: React.FC<{ info: Record<string, any> }> = ({ info }) =
 
     // 根据股票池模式获取股票代码列表
     let stockCodesList: string[] = [];
+    let stockPoolId: string | undefined = undefined;
     const stockMode = values.stock_mode || 'preset';
 
     if (stockMode === 'preset' && values.stock_pool_id) {
-      // 预设股票池模式 - 从后端获取成分股
-      setLoadingPoolStocks(true);
-      try {
-        const res = (await api.getStockPoolStocks(values.stock_pool_id)) as any;
-        if (res.success && res.data) {
-          stockCodesList = res.data.map((s: any) => s.code);
-        }
-      } catch (error) {
-        message.error("获取股票池成分股失败");
-        setLoadingPoolStocks(false);
-        return;
-      }
-      setLoadingPoolStocks(false);
+      // 预设股票池模式 - 传stock_pool_id给后端，由后端自行解析成分股
+      stockPoolId = values.stock_pool_id;
       setCurrentStockCode(values.stock_pool_id);
     } else {
       // 自定义股票代码模式
@@ -468,15 +458,16 @@ const ProcessInfoDisplay: React.FC<{ info: Record<string, any> }> = ({ info }) =
       setCurrentStockCode(rawInput.replace(/[,\n，、\s]+/g, '_').substring(0, 20));
     }
 
-    if (stockCodesList.length === 0) {
+    if (!stockPoolId && stockCodesList.length === 0) {
       message.warning("请至少选择一只股票");
       return;
     }
 
     const [startDate, endDate] = values.dateRange;
     const requestData = {
-      stock_code: stockCodesList.length === 1 ? stockCodesList[0] : stockCodesList[0],
-      stock_codes: stockCodesList,
+      stock_code: stockCodesList.length > 0 ? stockCodesList[0] : undefined,
+      stock_codes: stockCodesList.length > 0 ? stockCodesList : undefined,
+      stock_pool_id: stockPoolId,
       base_factors: selectedFactors,
       start_date: startDate.format("YYYY-MM-DD"),
       end_date: endDate.format("YYYY-MM-DD"),
@@ -552,10 +543,10 @@ const ProcessInfoDisplay: React.FC<{ info: Record<string, any> }> = ({ info }) =
           }
         }, 1000);
 
-        // 轮询获取进度
+        // 轮询获取进度（3秒间隔，平衡实时性与性能）
         window.miningInterval = setInterval(() => {
           checkMiningProgress(newTaskId);
-        }, 2000);
+        }, 5000);
 
         message.success("挖掘任务已启动");
       }
@@ -577,28 +568,14 @@ const ProcessInfoDisplay: React.FC<{ info: Record<string, any> }> = ({ info }) =
         const statusData = response.data as MiningStatus;
         setMiningStatus(statusData);
 
-        console.log(
-          "Mining status:",
-          statusData.status,
-          "Generation:",
-          statusData.current_generation,
-          "/",
-          statusData.total_generations,
-        );
-
         // 更新进化曲线 - 使用完整的历史数据
         if (
           statusData.fitness_history &&
           statusData.fitness_history.best.length > 0
         ) {
-          console.log(
-            "Updating evolution chart with history:",
-            statusData.fitness_history,
-          );
           updateEvolutionChart(statusData.fitness_history);
         } else if (statusData.current_generation > 0) {
           // 降级方案：如果没有历史数据，用当前值生成
-          console.log("Using fallback for evolution chart");
           updateEvolutionChart({
             best: Array(statusData.current_generation).fill(
               statusData.best_fitness,
@@ -611,9 +588,6 @@ const ProcessInfoDisplay: React.FC<{ info: Record<string, any> }> = ({ info }) =
 
         // 检查是否完成
         if (statusData.status === "completed") {
-          console.log(
-            "Mining completed, clearing interval and getting results",
-          );
           if (window.miningInterval) {
             clearInterval(window.miningInterval);
           }
@@ -626,11 +600,9 @@ const ProcessInfoDisplay: React.FC<{ info: Record<string, any> }> = ({ info }) =
           setMining(false);
           await getMiningResults(currentTaskId);
         } else if (statusData.status === "failed") {
-          console.log("Mining failed:", statusData.error);
           if (window.miningInterval) {
             clearInterval(window.miningInterval);
           }
-          // 清除计时器
           if (elapsedTimeIntervalRef.current) {
             clearInterval(elapsedTimeIntervalRef.current);
             elapsedTimeIntervalRef.current = null;
@@ -639,7 +611,6 @@ const ProcessInfoDisplay: React.FC<{ info: Record<string, any> }> = ({ info }) =
           setMining(false);
           message.error(`挖掘失败: ${statusData.error || "未知错误"}`);
         } else if (statusData.status === "cancelled") {
-          console.log("Mining cancelled by user");
           if (window.miningInterval) {
             clearInterval(window.miningInterval);
           }
@@ -673,15 +644,24 @@ const ProcessInfoDisplay: React.FC<{ info: Record<string, any> }> = ({ info }) =
   };
 
   // 取消挖掘任务
-  const cancelMining = async () => {
+  const cancelMining = () => {
     if (!miningStatus?.task_id) return;
-    try {
-      await api.cancelMiningTask(miningStatus.task_id);
-      message.info("正在取消挖掘任务...");
-    } catch (error) {
-      console.error("取消挖掘任务失败:", error);
-      message.error("取消挖掘任务失败");
-    }
+    Modal.confirm({
+      title: "确认取消挖掘？",
+      content: "取消后当前进度将丢失，无法恢复。",
+      okText: "确认取消",
+      okType: "danger",
+      cancelText: "继续挖掘",
+      onOk: async () => {
+        try {
+          await api.cancelMiningTask(miningStatus.task_id);
+          message.info("正在取消挖掘任务...");
+        } catch (error) {
+          console.error("取消挖掘任务失败:", error);
+          message.error("取消挖掘任务失败");
+        }
+      },
+    });
   };
 
   // 获取挖掘结果
@@ -719,103 +699,90 @@ const ProcessInfoDisplay: React.FC<{ info: Record<string, any> }> = ({ info }) =
     best: number[];
     average: number[];
   }) => {
-    console.log(
-      "updateEvolutionChart called, DOM element:",
-      evolutionChartRef.current,
-    );
-
     if (!evolutionChartRef.current) {
-      console.error("Progress chart DOM element is null");
       return;
     }
 
     let chart = chartInstanceRef.current;
     if (!chart) {
-      console.log("Initializing new progress chart instance");
       chart = echarts.init(evolutionChartRef.current);
       chartInstanceRef.current = chart;
     }
 
     const generations = fitnessHistory.best.map((_, i) => i + 1);
 
+    // 增量更新：只更新数据而非重建整个 option
+    // 使用 setOption 不带 notMerge=true，ECharts 会智能合并，
+    // 避免每3秒全量重绘（含渐变面积图等复杂渲染）
     const option = {
-      title: {
-        text: "进化曲线",
-        left: "center",
-        textStyle: { fontSize: 16, fontWeight: 600 },
-      },
-      tooltip: {
-        trigger: "axis",
-      },
-      legend: {
-        data: ["最优适应度", "平均适应度"],
-        bottom: 0,
-      },
-      grid: {
-        left: "3%",
-        right: "4%",
-        bottom: "10%",
-        containLabel: true,
-      },
       xAxis: {
-        type: "category",
-        name: "代数",
         data: generations,
       },
-      yAxis: {
-        type: "value",
-        name: "适应度",
-        scale: true,
-      },
       series: [
-        {
-          name: "最优适应度",
-          type: "line",
-          data: fitnessHistory.best,
-          smooth: true,
-          itemStyle: { color: "#3b82f6" },
-          areaStyle: {
-            color: {
-              type: "linear",
-              x: 0,
-              y: 0,
-              x2: 0,
-              y2: 1,
-              colorStops: [
-                { offset: 0, color: "rgba(59, 130, 246, 0.3)" },
-                { offset: 1, color: "rgba(59, 130, 246, 0.05)" },
-              ],
-            },
-          },
-        },
-        {
-          name: "平均适应度",
-          type: "line",
-          data: fitnessHistory.average,
-          smooth: true,
-          itemStyle: { color: "#22c55e" },
-          areaStyle: {
-            color: {
-              type: "linear",
-              x: 0,
-              y: 0,
-              x2: 0,
-              y2: 1,
-              colorStops: [
-                { offset: 0, color: "rgba(34, 197, 94, 0.3)" },
-                { offset: 1, color: "rgba(34, 197, 94, 0.05)" },
-              ],
-            },
-          },
-        },
+        { data: fitnessHistory.best },
+        { data: fitnessHistory.average },
       ],
     };
 
     try {
-      chart.setOption(option, true);
-      console.log("Progress chart updated successfully");
+      chart.setOption(option);
     } catch (error) {
-      console.error("Error updating progress chart:", error);
+      // 图表更新失败时，尝试完整重建
+      try {
+        chart.setOption(
+          {
+            title: {
+              text: "进化曲线",
+              left: "center",
+              textStyle: { fontSize: 16, fontWeight: 600 },
+            },
+            tooltip: { trigger: "axis" },
+            legend: { data: ["最优适应度", "平均适应度"], bottom: 0 },
+            grid: { left: "3%", right: "4%", bottom: "10%", containLabel: true },
+            xAxis: { type: "category", name: "代数", data: generations },
+            yAxis: { type: "value", name: "适应度", scale: true },
+            series: [
+              {
+                name: "最优适应度",
+                type: "line",
+                data: fitnessHistory.best,
+                smooth: true,
+                itemStyle: { color: "#3b82f6" },
+                areaStyle: {
+                  color: {
+                    type: "linear",
+                    x: 0, y: 0, x2: 0, y2: 1,
+                    colorStops: [
+                      { offset: 0, color: "rgba(59, 130, 246, 0.3)" },
+                      { offset: 1, color: "rgba(59, 130, 246, 0.05)" },
+                    ],
+                  },
+                },
+              },
+              {
+                name: "平均适应度",
+                type: "line",
+                data: fitnessHistory.average,
+                smooth: true,
+                itemStyle: { color: "#22c55e" },
+                areaStyle: {
+                  color: {
+                    type: "linear",
+                    x: 0, y: 0, x2: 0, y2: 1,
+                    colorStops: [
+                      { offset: 0, color: "rgba(34, 197, 94, 0.3)" },
+                      { offset: 1, color: "rgba(34, 197, 94, 0.05)" },
+                    ],
+                  },
+                },
+              },
+            ],
+          },
+          true,
+        );
+      } catch (_e) {
+        // 忽略二次失败
+      }
     }
   };
 
@@ -1298,6 +1265,8 @@ const ProcessInfoDisplay: React.FC<{ info: Record<string, any> }> = ({ info }) =
   };
 
   // 计算进度百分比
+  // total_generations = n_generations + 1（初始评估 + 进化代数）
+  // current_generation=0 表示初始评估阶段，1+ 表示进化代
   const getProgressPercent = () => {
     if (!miningStatus || miningStatus.total_generations === 0) return 0;
     return Math.round(
@@ -1343,7 +1312,13 @@ const ProcessInfoDisplay: React.FC<{ info: Record<string, any> }> = ({ info }) =
           {/* 左侧配置面板 */}
           <Col xs={24} lg={8}>
             <Card title="因子挖掘配置" className="config-card">
-              <Form form={form} layout="vertical" onFinish={startMining}>
+              <Form form={form} layout="vertical" onFinish={startMining} onFinishFailed={({ errorFields }) => {
+                const firstError = errorFields?.[0];
+                if (firstError) {
+                  message.warning(firstError.errors?.[0] || "请填写必填项");
+                  form.scrollToField(firstError.name);
+                }
+              }}>
                 {/* 基础配置 */}
                 <Divider
                   styles={{ content: { margin: 0 } }}
@@ -2109,7 +2084,7 @@ const ProcessInfoDisplay: React.FC<{ info: Record<string, any> }> = ({ info }) =
               {(mining || miningStatus) && !miningResult && (
                 <div className="mining-progress">
                   {/* 挖掘状态提示 */}
-                  {mining && (
+                  {(mining || miningStatus?.status === "running" || miningStatus?.status === "pending") && (
                     <Alert
                       message={
                         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>

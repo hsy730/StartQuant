@@ -292,11 +292,14 @@ class FactorValidationService:
         """
         result = self._validate_ic(factor_values, return_values)
         # 将结果键名映射为 rank_ic 格式
+        # 注意：result.get("ic") 在键存在但值为 None 时返回 None（规则7.41）
+        # 下游 abs(rank_ic) 需要安全处理 None
+        rank_ic_val = result.get("ic")
         return {
             "passed": result["passed"],
-            "rank_ic": result.get("ic", 0.0),
-            "t_statistic": result.get("t_statistic", 0.0),
-            "p_value": result.get("p_value", 1.0),
+            "rank_ic": rank_ic_val,
+            "t_statistic": result.get("t_statistic"),
+            "p_value": result.get("p_value"),
             "is_significant": result.get("is_significant", False),
             "threshold": self.ic_threshold,
             "message": result.get("message", ""),
@@ -660,12 +663,12 @@ class FactorValidationService:
         score = 0.0
 
         ic_result = validation_results["ic_validation"]
-        if ic_result["passed"]:
+        if ic_result["passed"] and ic_result.get("ic") is not None:
             ic_abs = abs(ic_result["ic"])
             score += min(ic_abs * 300, 25)
 
         rank_ic_result = validation_results["rank_ic_validation"]
-        if rank_ic_result["passed"]:
+        if rank_ic_result["passed"] and rank_ic_result.get("rank_ic") is not None:
             rank_ic_abs = abs(rank_ic_result["rank_ic"])
             score += min(rank_ic_abs * 300, 25)
 

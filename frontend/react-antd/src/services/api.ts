@@ -264,6 +264,7 @@ export const api = {
     use_nsga2?: boolean
     freq?: string
     period?: string
+    stock_pool_id?: string
   }) {
     return request.post('/mining/genetic', data, { timeout: 300000 }) // 5分钟超时
   },

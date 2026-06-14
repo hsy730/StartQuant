@@ -500,6 +500,30 @@ class BaseMiningService(ABC):
         return best_factors
 
     # ------------------------------------------------------------------
+    # 内存管理
+    # ------------------------------------------------------------------
+
+    def release_memory(self):
+        """释放大对象占用的内存，在挖掘任务完成后调用
+
+        设计意图：
+        - 挖掘任务完成后，服务实例仍被 mining_services 字典持有引用，
+          直到 _cleanup_old_tasks() 清理（最长24小时TTL）。
+        - 如果不主动释放，每个完成的任务实例会持续占用 15-20MB 内存，
+          100个并发任务可累积 1.5GB。
+        - 调用此方法后，服务实例不可复用（data/return_values 被设为 None）。
+        - 调用方：mining.py _run_mining() 的 finally 块。
+        """
+        self.stock_pool_data = {}
+        self.stock_pool_base_factor_values = {}
+        self.stock_pool_return_values = {}
+        self.data = None  # 注意：设为 None 后 _compute_factor_expression 等方法不可用
+        self.return_values = None
+        self.base_factor_values = {}
+        self._sampled_stock_codes = []
+        logger.info(f"[{self._service_name}] 内存已释放")
+
+    # ------------------------------------------------------------------
     # 抽象方法
     # ------------------------------------------------------------------
 

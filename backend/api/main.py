@@ -22,6 +22,8 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from backend.core.database import init_db  # noqa: E402
 from backend.services.factor_service import factor_service  # noqa: E402
+# 确保所有模型在 init_db() 前被导入，以便 create_all() 创建对应表
+import backend.models.mining_checkpoint  # noqa: F401
 
 # 导入路由
 from .routers import (  # noqa: E402

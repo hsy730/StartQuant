@@ -9,6 +9,36 @@ import os
 import signal
 from pathlib import Path
 
+
+def kill_port(port):
+    """杀死占用指定端口的进程"""
+    if os.name != "nt":
+        return
+    try:
+        result = subprocess.run(
+            ["netstat", "-ano"],
+            capture_output=True, text=True, timeout=5
+        )
+        pids = set()
+        for line in result.stdout.splitlines():
+            if f":{port}" in line and "LISTENING" in line:
+                parts = line.strip().split()
+                if parts:
+                    pid = int(parts[-1])
+                    if pid > 0:
+                        pids.add(pid)
+        for pid in pids:
+            try:
+                subprocess.run(
+                    ["taskkill", "/PID", str(pid), "/F"],
+                    capture_output=True, timeout=5
+                )
+                print(f"  已终止占用端口 {port} 的进程 (PID: {pid})")
+            except Exception:
+                pass
+    except Exception:
+        pass
+
 def get_npm_cmd():
     if os.name == "nt":
         return "npm.cmd"
@@ -79,6 +109,11 @@ def main():
     processes = []
 
     try:
+        # 先杀死占用端口的旧进程
+        print("\n检查端口占用...")
+        kill_port(8000)
+        kill_port(5173)
+
         # 启动后端 API 服务
         # 使用虚拟环境的 Python 启动
         venv_python = project_root / "venv" / "Scripts" / "python.exe"

@@ -488,14 +488,14 @@ class FactorEffectivenessService:
 
             mean_ic = float(np.mean(daily_ics)) if daily_ics else None
 
-            if len(daily_ics) >= 1:
+            if len(daily_ics) >= 1 and mean_ic is not None:
                 try:
                     decay_data.append(
                         {
                             "period": f"{period}日",
                             "period_days": period,
-                            "ic": float(mean_ic),
-                            "abs_ic": abs(float(mean_ic)),
+                            "ic": mean_ic,
+                            "abs_ic": abs(mean_ic),
                         }
                     )
                 except Exception as e:

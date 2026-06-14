@@ -73,8 +73,8 @@ class ComprehensiveScoringService:
         if ir_val is not None:
             ir_score = min(abs(ir_val) * 40, MAX_SCORE)
         elif (
-            factor_metrics.get("ic_mean") is not None
-            and abs(factor_metrics["ic_mean"]) > 1e-10
+            ic_mean_val is not None
+            and abs(ic_mean_val) > 1e-10
         ):
             # IR不可计算但IC非零 → 因子极其稳定，给予高分
             ir_score = MAX_SCORE
