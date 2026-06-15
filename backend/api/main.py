@@ -21,6 +21,8 @@ PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from backend.core.database import init_db  # noqa: E402
+from backend.core.settings import settings  # noqa: E402
+from backend.core.logging_config import setup_logging  # noqa: E402
 from backend.services.factor_service import factor_service  # noqa: E402
 # 确保所有模型在 init_db() 前被导入，以便 create_all() 创建对应表
 import backend.models.mining_checkpoint  # noqa: F401
@@ -41,17 +43,52 @@ from .routers import (  # noqa: E402
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期管理"""
+    # 初始化日志系统（控制台 + 文件双输出）
+    setup_logging(log_dir=settings.LOG_DIR, log_level=settings.LOG_LEVEL)
+
     # 启动时初始化
     logger.info("启动FastAPI服务...")
     init_db()
     factor_service.load_preset_factors()
     app.json_encoder = NumpyJSONEncoder
+
+    # 恢复中断任务：将上次重启前未完成的任务标记为 aborted
+    try:
+        from backend.core.database import get_db
+        from backend.repositories.mining_task_repository import MiningTaskRepository
+
+        with get_db() as db:
+            repo = MiningTaskRepository(db)
+            aborted_count = repo.abort_interrupted_tasks()
+            if aborted_count > 0:
+                logger.warning(f"启动恢复: 已将 {aborted_count} 个中断任务标记为 aborted")
+    except Exception as e:
+        logger.warning(f"启动恢复中断任务时出错（非致命）: {e}")
+
+    # 确保内存中的挖掘状态是干净的（新进程应该为空，但 reload 场景下可能有残留）
+    try:
+        from .routers import mining as mining_router
+        n_stale = len([t for t in mining_router.mining_tasks.values() if t.get('status') in ('running', 'pending')])
+        if n_stale > 0:
+            logger.warning(f"启动检测: 发现 {n_stale} 个残留运行中任务，正在清理...")
+            mining_router.shutdown_all_mining_tasks()
+            mining_router.mining_tasks.clear()
+            mining_router.mining_services.clear()
+            logger.info("启动检测: 残留任务已清理完毕，内存状态已重置")
+    except Exception as e:
+        logger.warning(f"启动清理残留任务时出错（非致命）: {e}")
+
     logger.info("数据库和预置因子加载完成")
 
     yield
 
-    # 关闭时清理
+    # 关闭时清理：强制取消运行中的挖掘任务，避免线程死锁
     logger.info("关闭FastAPI服务...")
+    try:
+        from .routers.mining import shutdown_all_mining_tasks
+        shutdown_all_mining_tasks()
+    except Exception as e:
+        logger.warning(f"挖掘任务清理时出错（非致命）: {e}")
 
 
 # 自定义JSON编码器来处理numpy浮点数值

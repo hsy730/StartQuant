@@ -1313,18 +1313,28 @@ class FactorService:
             cache_stats = cache_service.get_stats()
             stock_cache_count = cache_stats.get("total_count", 0)
 
-            # 检查AKShare健康状态
+            # 检查AKShare健康状态（带超时，避免卡死调用方）
             akshare_healthy = True
             try:
                 import akshare as ak
 
-                # 使用用户指定的接口验证连接
-                _stock_zh_a_daily_qfq_df = ak.stock_zh_a_daily(  # noqa: F841
-                    symbol="sz000001",
-                    start_date="20230903",
-                    end_date="20231027",
-                    adjust="qfq",
-                )
+                # 使用用户指定的接口验证连接，5秒超时
+                import concurrent.futures
+
+                def _check_akshare():
+                    ak.stock_zh_a_daily(
+                        symbol="sz000001",
+                        start_date="20230903",
+                        end_date="20231027",
+                        adjust="qfq",
+                    )
+
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                    future = executor.submit(_check_akshare)
+                    future.result(timeout=5)
+            except concurrent.futures.TimeoutError:
+                logger.warning("akshare健康检查超时(5s)")
+                akshare_healthy = False
             except Exception as e:
                 logger.warning(f"akshare健康检查失败: {e}")
                 akshare_healthy = False

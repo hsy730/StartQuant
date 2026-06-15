@@ -353,7 +353,8 @@ class FactorValidationService:
                         else:
                             ir = safe_ir(ic_mean, ic_std, default=None)
                             if ir is not None:
-                                ir = min(ir, 5.0)
+                                # IR双向截断到[-5, 5]（业界合理范围）
+                                ir = max(min(ir, 5.0), -5.0)
 
                         # t检验
                         n = len(ic_series)
@@ -425,7 +426,8 @@ class FactorValidationService:
         else:
             ir = safe_ir(float(ic_mean), float(ic_std), default=None)
             if ir is not None:
-                ir = min(ir, 5.0)
+                # IR双向截断到[-5, 5]（业界合理范围）
+                ir = max(min(ir, 5.0), -5.0)
 
         passed = ir is not None and ir >= self.ir_threshold
 

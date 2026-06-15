@@ -23,6 +23,7 @@ import {
   ClockCircleOutlined,
   ExperimentOutlined,
   StopOutlined,
+  WarningOutlined,
   InfoCircleOutlined,
 } from "@ant-design/icons";
 import * as echarts from "echarts";
@@ -91,6 +92,7 @@ const statusConfig: Record<string, { color: string; icon: React.ReactNode; label
   completed: { color: "success", icon: <CheckCircleOutlined />, label: "已完成" },
   failed: { color: "error", icon: <CloseCircleOutlined />, label: "失败" },
   cancelled: { color: "warning", icon: <StopOutlined />, label: "已取消" },
+  aborted: { color: "error", icon: <WarningOutlined />, label: "已中止" },
 };
 
 // 挖掘过程信息展示组件（适配不同算法）
@@ -176,6 +178,7 @@ const MiningHistory: React.FC = () => {
   const [detailVisible, setDetailVisible] = useState(false);
   const [detail, setDetail] = useState<MiningHistoryDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [modalOpen, setModalOpen] = useState(false);
   const chartRef = useRef<HTMLDivElement>(null);
   const chartInstanceRef = useRef<echarts.ECharts | null>(null);
 
@@ -211,15 +214,13 @@ const MiningHistory: React.FC = () => {
 
   const viewDetail = async (taskId: string) => {
     setDetailVisible(true);
+    setModalOpen(false);
     setDetailLoading(true);
+    setDetail(null);
     try {
       const response = (await api.getMiningHistoryDetail(taskId)) as any;
       if (response.success) {
         setDetail(response.data);
-        // 绘制进化曲线
-        if (response.data.fitness_history && response.data.fitness_history.best?.length > 0) {
-          setTimeout(() => renderChart(response.data.fitness_history), 200);
-        }
       }
     } catch (error) {
       console.error("获取挖掘详情失败:", error);
@@ -228,6 +229,17 @@ const MiningHistory: React.FC = () => {
       setDetailLoading(false);
     }
   };
+
+  // 当 Modal 动画完成且 detail 数据就绪时，渲染进化曲线
+  useEffect(() => {
+    if (!modalOpen || !detail?.fitness_history || !detail.fitness_history.best?.length) return;
+
+    // 使用 requestAnimationFrame 确保 DOM 已完成布局
+    const timer = requestAnimationFrame(() => {
+      renderChart(detail.fitness_history!);
+    });
+    return () => cancelAnimationFrame(timer);
+  }, [modalOpen, detail]);
 
   const deleteRecord = async (taskId: string) => {
     try {
@@ -243,7 +255,10 @@ const MiningHistory: React.FC = () => {
   };
 
   const renderChart = (fitnessHistory: { best: number[]; average: number[] }) => {
-    if (!chartRef.current) return;
+    if (!chartRef.current) {
+      console.warn("[进化曲线] chartRef 尚未挂载，跳过渲染");
+      return;
+    }
 
     let chart = chartInstanceRef.current;
     if (!chart) {
@@ -343,7 +358,7 @@ const MiningHistory: React.FC = () => {
       render: (val: number, record: MiningHistoryItem) =>
         record.status === "completed" ? (
           <Progress percent={100} size="small" status="success" />
-        ) : record.status === "failed" ? (
+        ) : record.status === "failed" || record.status === "aborted" ? (
           <Progress percent={val} size="small" status="exception" />
         ) : (
           <Progress percent={val} size="small" status="active" />
@@ -482,12 +497,20 @@ const MiningHistory: React.FC = () => {
           </Space>
         }
         open={detailVisible}
+        afterOpenChange={(open) => setModalOpen(open)}
         onCancel={() => {
           setDetailVisible(false);
+          setModalOpen(false);
           setDetail(null);
+          // 销毁 ECharts 实例，防止内存泄漏
+          if (chartInstanceRef.current) {
+            chartInstanceRef.current.dispose();
+            chartInstanceRef.current = null;
+          }
         }}
         footer={null}
         width={800}
+        destroyOnHidden  // 关闭时销毁内容，避免残留状态
       >
         {detailLoading ? (
           <div style={{ textAlign: "center", padding: "40px 0" }}>

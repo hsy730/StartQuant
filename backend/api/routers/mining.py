@@ -63,6 +63,8 @@ class GeneticMiningRequest(BaseModel):
     use_extended_primitives: bool = True
     max_tree_depth: int = 17
     use_nsga2: bool = True
+    # ---- Factor pool sampling ----
+    max_base_factors: int = 30  # 0=use all; >0=randomly sample this many from pool
     # ---- Algorithm selection ----
     algorithm: str = "genetic"
     # ---- PySR parameters ----
@@ -123,6 +125,32 @@ MAX_FITNESS_HISTORY_ENTRIES = 1000
 mining_tasks = {}
 # 挖掘服务实例引用（用于取消）
 mining_services = {}
+
+
+def shutdown_all_mining_tasks():
+    """强制取消所有运行中的挖掘任务（服务关闭时调用）
+
+    设置每个服务的 _cancel_flag，释放 stock_pool_data 等大内存对象，
+    避免服务关闭时因等待后台线程而 deadlock。
+    """
+    cancelled = 0
+    for task_id, service in list(mining_services.items()):
+        if hasattr(service, '_cancel_flag'):
+            service._cancel_flag = True
+        if hasattr(service, 'stock_pool_data') and service.stock_pool_data:
+            service.stock_pool_data.clear()
+            service.stock_pool_base_factor_values.clear()
+            service.stock_pool_return_values.clear()
+        cancelled += 1
+        logger.warning(f"[shutdown] 已标记任务 {task_id} 为取消状态")
+
+    # 清空任务状态
+    running_ids = [tid for tid, t in mining_tasks.items() if t.get('status') == 'running']
+    for tid in running_ids:
+        mining_tasks[tid]['status'] = 'cancelled'
+
+    logger.info(f"[shutdown] 已清理 {cancelled} 个挖掘服务实例，{len(running_ids)} 个运行中任务已标记取消")
+    mining_services.clear()
 
 
 def _cleanup_old_tasks():
@@ -331,6 +359,9 @@ async def _run_mining(task_id: str, request: GeneticMiningRequest):
         # 同步更新数据库状态（含started_at）
         _sync_task_to_db(task_id, status="running", started_at=datetime.now())
 
+        # 阶段1: 加载数据（单只股票行情）
+        _set_phase(task_id, "loading_data", 1, logger)
+
         if request.freq.upper() != "D":
             minute_period = (
                 (request.period or request.freq)
@@ -362,7 +393,9 @@ async def _run_mining(task_id: str, request: GeneticMiningRequest):
 
         if "close" in data.columns:
             data = data.copy()
-            data["return"] = data["close"].pct_change()
+            # shift(-1): 因子值在 t 时刻，预测 t→t+1 的未来收益
+            # 避免 data leakage：不能使用当期 pct_change（因子和收益同源 close[t]）
+            data["return"] = data["close"].pct_change().shift(-1)
 
         base_factor_codes = []
         if request.base_factors and len(request.base_factors) > 0:
@@ -417,6 +450,9 @@ async def _run_mining(task_id: str, request: GeneticMiningRequest):
         else:
             logger.info(f"Using {len(base_factor_codes)} base factor codes")
 
+        # 阶段2: 预计算基础因子值（创建算法服务实例时会触发 _precompute_base_factors）
+        _set_phase(task_id, "precomputing_factors", 10, logger)
+
         try:
             # ---- 通过算法注册表创建服务实例 ----
             # 新增算法只需在 mining_algorithm_registry.py 中注册，
@@ -425,7 +461,11 @@ async def _run_mining(task_id: str, request: GeneticMiningRequest):
                 create_algorithm,
             )
 
-            service = create_algorithm(
+            # create_algorithm 内部会调用 BaseMiningService.__init__ → _precompute_base_factors()
+            # 同步阻塞函数，在线程池中执行避免阻塞事件循环（否则前端进度轮询超时）
+            logger.info(f"Task {task_id}: [诊断] 开始创建算法服务...")
+            service = await asyncio.to_thread(
+                create_algorithm,
                 algorithm,
                 task_id=task_id,
                 request=request,
@@ -435,13 +475,15 @@ async def _run_mining(task_id: str, request: GeneticMiningRequest):
                 stock_codes=stock_codes,
                 logger=logger,
             )
+            logger.info(f"Task {task_id}: [诊断] 算法服务创建完成, type={type(service).__name__}")
 
             if service is None:
                 # 未注册的算法回退到遗传算法
                 logger.warning(
                     f"Unknown algorithm '{algorithm}', falling back to genetic"
                 )
-                service = create_algorithm(
+                service = await asyncio.to_thread(
+                    create_algorithm,
                     "genetic",
                     task_id, request, data, base_factor_codes,
                     factor_service, stock_codes, logger,
@@ -450,13 +492,17 @@ async def _run_mining(task_id: str, request: GeneticMiningRequest):
             # 设置股票池（注册表工厂已设置 progress_callback 和 _task_id）
             # set_stock_pool 内部有同步网络IO（get_multiple_stocks_data），
             # 必须在线程池中执行，避免阻塞事件循环
+            # 阶段3: 设置股票池（加载多只股票数据 + 计算每只股票的因子值）
             if len(stock_codes) >= 2:
+                logger.info(f"Task {task_id}: [诊断] 开始设置股票池 ({len(stock_codes)} 只股票)...")
+                _set_phase(task_id, "setting_stock_pool", 30, logger)
                 await asyncio.to_thread(
                     service.set_stock_pool,
                     stock_codes=stock_codes,
                     start_date=request.start_date,
                     end_date=request.end_date,
                 )
+                logger.info(f"Task {task_id}: [诊断] 股票池设置完成")
 
             # 设置进度回调（统一入口，避免各算法工厂重复实现）
             def _progress_callback(gen, total_gen, best_fitness, avg_fitness, **kwargs):
@@ -473,6 +519,9 @@ async def _run_mining(task_id: str, request: GeneticMiningRequest):
 
             # 注册到 mining_services（用于取消任务）
             mining_services[task_id] = service
+
+            # 阶段4: 开始进化挖掘（此后的进度由 _update_progress 通过回调驱动）
+            _set_phase(task_id, "evolving", 50, logger)
 
             # mine_factors() 是同步阻塞函数，在线程池中执行避免阻塞事件循环
             result = await asyncio.to_thread(service.mine_factors)
@@ -866,26 +915,50 @@ def _collect_process_info(result: dict, request: GeneticMiningRequest) -> dict:
     return info
 
 
+def _set_phase(task_id: str, phase: str, progress: int, logger):
+    """设置任务的当前执行阶段和预估进度（用于进化循环前的阻塞阶段）。
+
+    进化循环开始后由 _update_progress 接管进度驱动，phase 字段会被清除。
+    """
+    mining_tasks[task_id]["progress"] = progress
+    mining_tasks[task_id]["phase"] = phase
+    _sync_task_to_db(task_id, progress=progress)
+    logger.info(f"Task {task_id} phase: {phase} ({progress}%)")
+
+
 def _update_progress(
     task_id, gen, total_gen, best_fitness, avg_fitness, algorithm, logger
 ):
     """Update mining task progress in the shared task store.
 
     进度计算说明：
-    - gen=0, total_gen=N+1: 初始种群评估阶段（占总进度的 1/(N+1)）
-    - gen=1..N, total_gen=N+1: 进化代阶段
+    - gen=0: 初始种群评估阶段
+    - gen=1..N: 进化代阶段（N = 用户设定的 n_generations）
+    - gen=N+1: 验证候选因子阶段
 
-    初始评估阶段 progress 从 0% 逐步增长到 ~1/(N+1)*100%，
-    进化阶段从 ~1/(N+1)*100% 增长到 100%。
-    这样前端在初始评估期间也能看到进度变化，不会长时间停留在 0%。
+    total_gen 内部值为 N+1（含初始评估），但对外展示时：
+      - total_generations 字段存用户设定的 N（如 10）
+      - gen <= N 时显示 "Gen X/N"
+      - gen > N 时设置 phase="validating"
     """
+    # 对外展示：total_generations = 用户设定的迭代次数（不含初始评估）
+    user_n_gen = total_gen - 1 if total_gen > 1 else total_gen
     progress = int(gen / max(total_gen, 1) * 100)
-    mining_tasks[task_id]["progress"] = progress
-    mining_tasks[task_id]["current_generation"] = gen
-    mining_tasks[task_id]["total_generations"] = total_gen
+    mining_tasks[task_id]["progress"] = min(progress, 99)  # 验证阶段不超过99%
+
+    # 验证阶段（gen > user_n_gen）截断 current_generation，避免显示 11/10
+    # 由 phase="validating" 区分状态
+    mining_tasks[task_id]["current_generation"] = min(gen, user_n_gen)
+    mining_tasks[task_id]["total_generations"] = user_n_gen  # 对外展示用用户设定值
     mining_tasks[task_id]["best_fitness"] = _safe_float(best_fitness)
     mining_tasks[task_id]["avg_fitness"] = _safe_float(avg_fitness)
     mining_tasks[task_id]["current_algorithm"] = algorithm
+
+    # 进化完成后进入验证阶段，设置 phase 标记
+    if gen > user_n_gen:
+        mining_tasks[task_id]["phase"] = "validating"
+    else:
+        mining_tasks[task_id].pop("phase", None)
 
     if "fitness_history" not in mining_tasks[task_id]:
         mining_tasks[task_id]["fitness_history"] = {"best": [], "average": []}
@@ -908,7 +981,7 @@ def _update_progress(
             task_id,
             progress=progress,
             current_generation=gen,
-            total_generations=total_gen,
+            total_generations=user_n_gen,  # 对外展示用用户设定值
             best_fitness=_safe_float(best_fitness),
             avg_fitness=_safe_float(avg_fitness),
             fitness_history=mining_tasks[task_id]["fitness_history"],
@@ -974,6 +1047,8 @@ def _unified_validate_factor(
             ir_val = validation.get("ir_validation", {})
             ic = abs(float(ic_val.get("ic")) if ic_val.get("ic") is not None else 0.0)
             ir_capped = float(ir_val.get("ir")) if ir_val.get("ir") is not None else 0.0
+            # IR双向截断到[-5, 5]（防御性保护）
+            ir_capped = max(min(ir_capped, 5.0), -5.0)
             score = (
                 float(validation.get("score"))
                 if validation.get("score") is not None
@@ -1269,6 +1344,7 @@ async def get_mining_status(task_id: str):
         response_data = {
             "status": task["status"],
             "progress": task.get("progress", 0),
+            "phase": task.get("phase"),  # 进化循环前的阻塞阶段标记
             "error": task.get("error"),
             "algorithm": task.get("algorithm", "genetic"),
             "started_at": started_at,
@@ -1328,6 +1404,7 @@ async def get_mining_status(task_id: str):
                 "task_id": task_id,
                 "status": task_record.status,
                 "progress": task_record.progress or 0,
+                "phase": None,  # DB 中不存储 phase，仅内存中的运行中任务有
                 "error": task_record.error,
                 "algorithm": task_record.algorithm,
                 "started_at": task_record.started_at.isoformat()

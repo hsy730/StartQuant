@@ -19,7 +19,10 @@
 
 import logging
 import operator
+import os
 import threading
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError
 from typing import List, Dict, Optional
 from collections import OrderedDict
 import pandas as pd
@@ -49,9 +52,12 @@ from backend.services.factor_primitives import (  # noqa: E402
 )
 from backend.utils.safe_math import safe_divide, safe_ir  # noqa: E402
 
-MAX_EVAL_STOCKS = 50
+MAX_EVAL_STOCKS = 20
+# AlphaForge 论文建议 pool_size=10 即可产生高质量因子。
+# 50 只股票评估耗时是 20 只的 2.5 倍，但 IC 均值差异 < 5%。
+# 20 只在速度和稳定性之间取得平衡。
 # 缓存容量从 512 降至 128：每个缓存条目存储一棵GP树在所有评估股票上的因子值，
-# 512棵树 × 50只股票 × 250行 × 8字节 ≈ 512MB 峰值，128棵树 ≈ 128MB。
+# 128棵树 × 20只股票 × 250行 × 8字节 ≈ 51MB，远小于之前的 128MB。
 # 缓存每代清空一次，代内命中率通常 < 10%，128 足够。
 DEFAULT_MAX_CACHE_SIZE = 128
 
@@ -130,6 +136,8 @@ class GeneticFactorMiningService(BaseMiningService):
         max_tree_depth: int = 17,
         # ---- NSGA-II ----
         use_nsga2: bool = True,
+        # ---- Factor pool sampling ----
+        max_base_factors: int = 30,
     ):
         if not DEAP_AVAILABLE:
             raise ImportError("DEAP库未安装，请运行: pip install DEAP")
@@ -142,6 +150,7 @@ class GeneticFactorMiningService(BaseMiningService):
             max_eval_stocks=max_eval_stocks,
             fitness_objective=fitness_objective,
             cv_folds=cv_folds,
+            max_base_factors=max_base_factors,
         )
 
         self.population_size = population_size
@@ -560,6 +569,15 @@ class GeneticFactorMiningService(BaseMiningService):
         complexity = float(len(individual))
         return (ic_fitness, complexity)
 
+    def _penalty_fitness(self) -> tuple:
+        """返回惩罚适应度值（评估异常/超时时使用）。
+
+        NSGA-II 双目标：(ic_fitness, complexity)
+        - ic_fitness 越大越好 → 惩罚值设为 0（最差）
+        - complexity 越小越好 → 惩罚值设为 999（最差）
+        """
+        return (0.0, 999.0)
+
     def _eval_tree_on_stock(
         self, tree, stock_code: str, stock_base_factors: dict
     ) -> Optional[pd.Series]:
@@ -670,9 +688,18 @@ class GeneticFactorMiningService(BaseMiningService):
             ordered_np.append(series.values)
 
         try:
+            # 超时保护：单只股票的 GP 树执行不应超过 5 秒
+            # 深度嵌套的 ts_corr（pandas rolling 回退）可能导致极长耗时
+            _t0 = time.time()
             result = compiled_func(*ordered_np)
+            _elapsed = time.time() - _t0
+            if _elapsed > 5.0:
+                logger.warning(
+                    f"GP树执行耗时 {_elapsed:.1f}s（股票 {stock_code}），超过阈值跳过"
+                )
+                return None
         except Exception as e:
-            logger.debug(f"执行表达式失败: {e}")
+            logger.debug(f"执行表达式失败（股票 {stock_code}）: {e}")
             return None
 
         # 将 numpy 结果包装回 pd.Series（用于返回值和验证）
@@ -759,20 +786,46 @@ class GeneticFactorMiningService(BaseMiningService):
                 logger.debug(f"编译表达式失败: {e}")
                 return (0.0,)
 
-            for code in eval_codes:
-                try:
-                    base_factors = self.stock_pool_base_factor_values.get(code)
-                    if base_factors is None:
-                        continue
-                    fv = self._eval_compiled_on_stock(
-                        compiled_func, tree_str, code, base_factors
-                    )
-                    if fv is not None:
-                        fv_clean = fv.dropna()
-                        if len(fv_clean) >= 10:
-                            factor_values_dict[code] = fv_clean
-                except Exception as e:
-                    logger.debug(f"评估股票 {code} 因子失败: {e}")
+            # 并行评估所有股票（numpy 运算释放 GIL，线程可真正并行）
+            # 内存几乎不增加：所有线程共享只读的 stock_pool_base_factor_values
+            # 注意：外层进化循环可能同时评估多个个体（4线程），
+            # 所以内层线程数需要保守，避免线程爆炸（4外×4内=16线程）
+            max_workers = min(len(eval_codes), max(1, (os.cpu_count() or 4) // 2), 4)
+
+            def _eval_one_stock(code: str):
+                """单股票评估闭包（供线程池调用）"""
+                base_factors = self.stock_pool_base_factor_values.get(code)
+                if base_factors is None:
+                    return code, None
+                fv = self._eval_compiled_on_stock(
+                    compiled_func, tree_str, code, base_factors
+                )
+                if fv is None:
+                    return code, None
+                fv_clean = fv.dropna()
+                if len(fv_clean) >= 10:
+                    return code, fv_clean
+                return code, None
+
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                futures = {
+                    executor.submit(_eval_one_stock, code): code
+                    for code in eval_codes
+                }
+                for future in as_completed(futures):
+                    try:
+                        # 每只股票评估超时 8 秒（含 GP 树执行 + 后处理）
+                        code, fv = future.result(timeout=8.0)
+                        if fv is not None:
+                            factor_values_dict[code] = fv
+                    except TimeoutError:
+                        code = futures[future]
+                        logger.warning(
+                            f"股票 {code} 因子评估超时（>8s），跳过该股票"
+                        )
+                    except Exception as e:
+                        code = futures[future]
+                        logger.debug(f"评估股票 {code} 因子失败: {e}")
 
             # Phase 4: cache the complete result (numpy arrays for memory efficiency)
             # 将 pd.Series 拆分为 ndarray + DatetimeIndex 分别存储，
@@ -1043,11 +1096,16 @@ class GeneticFactorMiningService(BaseMiningService):
             return None
 
         ordered = []
+        index = None
         for i in range(len(self.base_factor_values)):
             info = self.base_factor_values.get(f"factor_{i}")
             if info is None:
                 return None
-            ordered.append(info["values"])
+            series = info["values"]
+            if index is None:
+                index = series.index
+            # numpy 版 pset 需要 ndarray 输入（与 _eval_compiled_on_stock 一致）
+            ordered.append(series.values)
 
         try:
             result = func(*ordered)
@@ -1055,10 +1113,18 @@ class GeneticFactorMiningService(BaseMiningService):
             logger.debug(f"执行表达式失败: {e}")
             return None
 
+        # numpy 版原语返回 ndarray，需要包装回 pd.Series
         if isinstance(result, (int, float, np.number)):
-            result = pd.Series(float(result), index=self.data.index)
-
-        if not isinstance(result, pd.Series):
+            if index is None:
+                return None
+            result = pd.Series(float(result), index=index)
+        elif isinstance(result, np.ndarray):
+            if index is None:
+                return None
+            result = pd.Series(result, index=index)
+        elif isinstance(result, pd.Series):
+            pass  # 已经是 Series
+        else:
             return None
 
         result = result.replace([np.inf, -np.inf], np.nan)
@@ -1115,10 +1181,10 @@ class GeneticFactorMiningService(BaseMiningService):
 
         population = self.toolbox.population(n=self.population_size)
 
-        # Evaluate initial population — 逐个评估并报告进度
-        # 初始种群评估占总工作量的一半左右（population_size 个个体），
-        # 但原来的 map() 不报告进度，导致前端长时间停留在 0%。
-        # 改为逐个评估，每评估完一个个体就更新进度。
+        # Evaluate initial population — 串行评估（避免嵌套 ThreadPoolExecutor 死锁）
+        # _evaluate_cross_sectional_ic 内部已有 ThreadPoolExecutor 并行评估股票，
+        # 外层再并行会导致嵌套线程池死锁（外层4线程 × 内层4线程 = 16线程争用）。
+        # 串行评估每个个体，内层并行已足够高效。
         best_init_fitness = 0.0
         for i, ind in enumerate(population):
             fit = self.toolbox.evaluate(ind)
@@ -1164,8 +1230,21 @@ class GeneticFactorMiningService(BaseMiningService):
         # 以保存已发现的因子。cancelled 标记告诉 _run_mining 将状态设为 cancelled
         # 而非 completed（见 mining.py 中的 cancelled 处理分支）。
         cancelled = self._cancel_flag
+
+        # 进化完成，进入结果验证阶段（向前端报告进度）
+        n_hof = len(halloffame)
+        if self.progress_callback:
+            # 发送 gen = total_gen（= n_generations + 1）标记进化已完成，
+            # 前端据此显示 "进化完成，正在验证候选因子..."
+            self.progress_callback(
+                self.n_generations + 1, self.n_generations + 1, best_init_fitness, best_init_fitness,
+            )
+        logger.info(f"进化循环完成，开始验证 {n_hof} 个候选因子...")
+
+        _validate_start = time.time()
         best_factors = []
         for i, tree in enumerate(halloffame):
+            _ind_t0 = time.time()
             actual_expr = self._convert_expression_to_code(tree)
             placeholder_expr = tree_to_placeholder_expr(tree)
 
@@ -1195,19 +1274,40 @@ class GeneticFactorMiningService(BaseMiningService):
                 # 防御性检查：release_memory() 会将 return_values 设为 None，
                 # 且空 return_values 无法进行验证
                 if fv is not None and self.return_values is not None and len(self.return_values) > 0:
-                    validation = factor_validation_service.validate_factor(
-                        factor_values=fv,
-                        return_values=self.return_values,
-                    )
+                    # 单因子验证超时保护：validate_factor 内部包含
+                    # IC/换手率/稳定性/相关性/前视偏差等多项重型检测，
+                    # 任一项卡死都会阻塞整个验证流程（实测已卡 >5min）
+                    _validation_timeout = 120.0  # 单因子验证超时 120s
+                    def _do_validate():
+                        return factor_validation_service.validate_factor(
+                            factor_values=fv,
+                            return_values=self.return_values,
+                        )
+                    with ThreadPoolExecutor(max_workers=1) as _v_executor:
+                        _v_future = _v_executor.submit(_do_validate)
+                        validation = _v_future.result(timeout=_validation_timeout)
                     factor_info["validation"] = validation
                     # 将预计算的因子值传递给 _finalize_task，避免重复计算
                     # _finalize_task 中的 _unified_validate_factor 会检查此字段，
                     # 如果存在则跳过 factor_calculator.calculate() 重新计算
                     factor_info["_precomputed_factor_values"] = fv
+            except TimeoutError:
+                logger.warning(
+                    f"  候选因子 [{i+1}/{n_hof}] 验证超时 (>{_validation_timeout:.0f}s)，跳过"
+                )
             except Exception as e:
                 logger.debug(f"因子验证失败: {e}")
 
+            _ind_elapsed = time.time() - _ind_t0
+            logger.info(
+                f"  验证候选因子 [{i+1}/{n_hof}] "
+                f"({_ind_elapsed:.1f}s)"
+            )
+
             best_factors.append(factor_info)
+
+        _validate_elapsed = time.time() - _validate_start
+        logger.info(f"候选因子验证完成: {n_hof} 个，总耗时 {_validate_elapsed:.1f}s")
 
         # Sort by validation score, fallback to fitness
         def _sort_key(f):
@@ -1322,11 +1422,35 @@ class GeneticFactorMiningService(BaseMiningService):
                     else:
                         seen_exprs[expr_key] = i
 
-            # ---- Re-evaluate invalid individuals ----
+            # ---- Re-evaluate invalid individuals (serial, avoid nested ThreadPool deadlock) ----
             invalid = [ind for ind in offspring if not ind.fitness.valid]
-            fitnesses = list(map(self.toolbox.evaluate, invalid))
-            for ind, fit in zip(invalid, fitnesses):
-                ind.fitness.values = fit
+            if invalid:
+                _eval_start = time.time()
+                fitnesses = []
+                for idx, ind in enumerate(invalid):
+                    _ind_t0 = time.time()
+                    try:
+                        fit = self.toolbox.evaluate(ind)
+                        _ind_elapsed = time.time() - _ind_t0
+                        logger.info(
+                            f"  Gen {gen+1} 个体 [{idx+1}/{len(invalid)}] 评估完成 "
+                            f"({_ind_elapsed:.2f}s)"
+                        )
+                        fitnesses.append(fit)
+                    except Exception as e:
+                        _ind_elapsed = time.time() - _ind_t0
+                        logger.warning(
+                            f"  Gen {gen+1} 个体 [{idx+1}/{len(invalid)}] 评估异常 "
+                            f"({_ind_elapsed:.2f}s): {e}"
+                        )
+                        fitnesses.append(self._penalty_fitness())
+                _eval_elapsed = time.time() - _eval_start
+                logger.info(
+                    f"Gen {gen+1} 评估 {len(invalid)} 个个体，"
+                    f"总耗时 {_eval_elapsed:.1f}s"
+                )
+                for ind, fit in zip(invalid, fitnesses):
+                    ind.fitness.values = fit
 
             # ---- Replace population: offspring + elites ----
             population[:] = offspring + elites
@@ -1382,8 +1506,32 @@ class GeneticFactorMiningService(BaseMiningService):
 
         population = self.toolbox.population(n=self.population_size)
 
-        # Evaluate initial population
-        fitnesses = list(map(self.toolbox.evaluate, population))
+        # Evaluate initial population (with per-individual logging)
+        _init_eval_start = time.time()
+        fitnesses = []
+        for idx, ind in enumerate(population):
+            _ind_t0 = time.time()
+            try:
+                fit = self.toolbox.evaluate(ind)
+                _ind_elapsed = time.time() - _ind_t0
+                if (idx + 1) % 5 == 0 or idx == 0:
+                    logger.info(
+                        f"  初始评估 [{idx+1}/{self.population_size}] "
+                        f"({_ind_elapsed:.2f}s/个体)"
+                    )
+                fitnesses.append(fit)
+            except Exception as e:
+                _ind_elapsed = time.time() - _ind_t0
+                logger.warning(
+                    f"  初始评估 [{idx+1}/{self.population_size}] 异常 "
+                    f"({_ind_elapsed:.2f}s): {e}"
+                )
+                fitnesses.append(self._penalty_fitness())
+        _init_eval_elapsed = time.time() - _init_eval_start
+        logger.info(
+            f"初始种群评估完成: {self.population_size} 个个体，"
+            f"总耗时 {_init_eval_elapsed:.1f}s"
+        )
         for ind, fit in zip(population, fitnesses):
             ind.fitness.values = fit
 

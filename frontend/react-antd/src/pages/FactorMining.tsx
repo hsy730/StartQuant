@@ -34,6 +34,7 @@ import {
   ClockCircleOutlined,
   StopOutlined,
   SearchOutlined,
+  EditOutlined,
 } from "@ant-design/icons";
 import * as echarts from "echarts";
 import { api } from "@/services/api";
@@ -42,6 +43,15 @@ import "./FactorMining.css";
 
 const { Option } = Select;
 const { RangePicker } = DatePicker;
+
+/** 进化循环前/后各阶段的中文标签 */
+const PHASE_LABELS: Record<string, string> = {
+  loading_data: "正在加载数据...",
+  precomputing_factors: "正在预计算基础因子值...",
+  setting_stock_pool: "正在设置股票池（加载多只股票数据）...",
+  evolving: "正在执行进化挖掘...",
+  validating: "正在验证候选因子...",
+};
 
 interface Factor {
   id: number;
@@ -66,7 +76,7 @@ interface MinedFactor {
 
 interface MiningStatus {
   task_id: string;
-  status: "pending" | "running" | "completed" | "failed" | "cancelled";
+  status: "pending" | "running" | "completed" | "failed" | "cancelled" | "aborted";
   current_generation: number;
   total_generations: number;
   best_fitness: number;
@@ -77,6 +87,7 @@ interface MiningStatus {
   };
   started_at?: string | null;
   error?: string;
+  phase?: string;  // 进化循环前的阻塞阶段标记
 }
 
 interface MiningResult {
@@ -393,6 +404,8 @@ const ProcessInfoDisplay: React.FC<{ info: Record<string, any> }> = ({ info }) =
         setMiningStatus({
           task_id: taskId,
           status: activeTask.status,
+          progress: activeTask.progress || 0,
+          phase: (activeTask as any).phase || undefined,
           current_generation: activeTask.current_generation || 0,
           total_generations: activeTask.total_generations != null ? activeTask.total_generations : 10,
           best_fitness: activeTask.best_fitness || 0,
@@ -621,6 +634,17 @@ const ProcessInfoDisplay: React.FC<{ info: Record<string, any> }> = ({ info }) =
           miningStartTimeRef.current = null;
           setMining(false);
           message.warning("挖掘任务已取消");
+        } else if (statusData.status === "aborted") {
+          if (window.miningInterval) {
+            clearInterval(window.miningInterval);
+          }
+          if (elapsedTimeIntervalRef.current) {
+            clearInterval(elapsedTimeIntervalRef.current);
+            elapsedTimeIntervalRef.current = null;
+          }
+          miningStartTimeRef.current = null;
+          setMining(false);
+          message.warning("挖掘任务已被中止（服务重启导致中断）");
         }
       }
     } catch (error) {
@@ -715,12 +739,10 @@ const ProcessInfoDisplay: React.FC<{ info: Record<string, any> }> = ({ info }) =
     // 使用 setOption 不带 notMerge=true，ECharts 会智能合并，
     // 避免每3秒全量重绘（含渐变面积图等复杂渲染）
     const option = {
-      xAxis: {
-        data: generations,
-      },
+      xAxis: { data: generations },
       series: [
-        { data: fitnessHistory.best },
-        { data: fitnessHistory.average },
+        { name: "最优适应度", type: "line", data: fitnessHistory.best },
+        { name: "平均适应度", type: "line", data: fitnessHistory.average },
       ],
     };
 
@@ -1265,13 +1287,11 @@ const ProcessInfoDisplay: React.FC<{ info: Record<string, any> }> = ({ info }) =
   };
 
   // 计算进度百分比
-  // total_generations = n_generations + 1（初始评估 + 进化代数）
-  // current_generation=0 表示初始评估阶段，1+ 表示进化代
+  // 后端直接计算并返回 progress（0~99），验证阶段不超过99%
   const getProgressPercent = () => {
-    if (!miningStatus || miningStatus.total_generations === 0) return 0;
-    return Math.round(
-      (miningStatus.current_generation / miningStatus.total_generations) * 100,
-    );
+    if (!miningStatus) return 0;
+    if (miningStatus.progress != null) return miningStatus.progress;
+    return 0;
   };
 
   // 格式化挖掘时长
@@ -2090,7 +2110,17 @@ const ProcessInfoDisplay: React.FC<{ info: Record<string, any> }> = ({ info }) =
                         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                           <Space>
                             <SyncOutlined spin />
-                            <span>挖掘进行中...</span>
+                            <span>
+                              {miningStatus?.phase
+                                ? PHASE_LABELS[miningStatus.phase] || `正在准备 (${miningStatus.phase})...`
+                                : miningStatus?.current_generation != null && miningStatus?.total_generations != null
+                                  ? miningStatus.current_generation === 0
+                                    ? "挖掘进行中... 初始评估中..."
+                                    : miningStatus.current_generation > miningStatus.total_generations
+                                      ? "进化完成，正在验证候选因子..."
+                                      : `挖掘进行中... Gen ${miningStatus.current_generation}/${miningStatus.total_generations}`
+                                  : "挖掘进行中..."}
+                            </span>
                             <ClockCircleOutlined />
                             <span style={{ color: "#64748b" }}>
                               已用时: {formatElapsedTime(elapsedTime)}

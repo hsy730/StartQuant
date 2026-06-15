@@ -7,6 +7,7 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import List, Optional
+import asyncio
 import logging
 
 from backend.services.factor_service import factor_service
@@ -241,7 +242,7 @@ async def get_factors(category: Optional[str] = None, source: Optional[str] = No
 async def get_factor_stats():
     """获取因子统计信息"""
     try:
-        stats = factor_service.get_factor_stats()
+        stats = await asyncio.to_thread(factor_service.get_factor_stats)
         return {"success": True, "data": stats}
     except Exception as e:
         logger.error(f"获取因子统计失败: {e}", exc_info=True)

@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any, Dict, List, Optional
 
 import numpy as np
@@ -70,17 +71,55 @@ class FactorAnalyzer:
             前端格式的结果字典，包含 discovered_factors 和算法元数据
         """
         discovered_factors = []
+        n_candidates = len(mining_result.candidates)
+        _validation_timeout = 120.0  # 单因子验证超时 120s
+        _total_validation_start = time.time()
+
+        logger.info(f"开始统一验证 {n_candidates} 个候选因子...")
 
         with get_db() as db:
             repo = GeneratedFactorRepository(db)
 
             try:
                 for idx, candidate in enumerate(mining_result.candidates, 1):
-                    factor_result = self._analyze_candidate(
-                        candidate, repo, source, idx
-                    )
+                    _expr_short = candidate.expression[:60] + ("..." if len(candidate.expression) > 60 else "")
+                    _cand_start = time.time()
+                    logger.info(f"  验证候选因子 [{idx}/{n_candidates}] {_expr_short}")
+
+                    try:
+                        # 单因子超时保护：在线程中执行，超时返回空结果
+                        import concurrent.futures
+
+                        def _do_analyze():
+                            return self._analyze_candidate(
+                                candidate, repo, source, idx
+                            )
+
+                        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                            future = executor.submit(_do_analyze)
+                            factor_result = future.result(timeout=_validation_timeout)
+                    except concurrent.futures.TimeoutError:
+                        elapsed = time.time() - _cand_start
+                        logger.warning(
+                            f"  候选因子 [{idx}/{n_candidates}] 验证超时 ({elapsed:.1f}s > {_validation_timeout}s)，跳过: {_expr_short}"
+                        )
+                        factor_result = None
+                    except Exception as e:
+                        elapsed = time.time() - _cand_start
+                        logger.warning(
+                            f"  候选因子 [{idx}/{n_candidates}] 验证失败 ({elapsed:.1f}s): {e}"
+                        )
+                        factor_result = None
+
                     if factor_result:
                         discovered_factors.append(factor_result)
+
+                    _elapsed = time.time() - _cand_start
+                    _total_elapsed = time.time() - _total_validation_start
+                    logger.info(
+                        f"  候选因子 [{idx}/{n_candidates}] 完成 ({_elapsed:.1f}s), "
+                        f"累计 {_total_elapsed:.1f}s, 已发现 {len(discovered_factors)} 个有效因子"
+                    )
             except Exception as e:
                 db.rollback()
                 logger.warning(f"保存挖掘结果到 generated_factors 表失败: {e}")
@@ -224,6 +263,8 @@ class FactorAnalyzer:
                     if ir_val.get("ir") is not None
                     else 0.0
                 )
+                # IR双向截断到[-5, 5]（防御性保护，正常由_validate_ir截断）
+                ir_capped = max(min(ir_capped, 5.0), -5.0)
                 score = (
                     float(validation.get("score"))
                     if validation.get("score") is not None

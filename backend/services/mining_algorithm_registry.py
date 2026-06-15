@@ -109,6 +109,7 @@ def _register_builtin_algorithms():
             use_extended_primitives=request.use_extended_primitives,
             max_tree_depth=request.max_tree_depth,
             use_nsga2=request.use_nsga2,
+            max_base_factors=request.max_base_factors,
         )
 
     # PySR 符号回归

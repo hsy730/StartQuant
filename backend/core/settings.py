@@ -51,6 +51,12 @@ class Settings(BaseSettings):
     DEFAULT_START_DATE: str = "2020-01-01"
     DEFAULT_END_DATE: str = "2024-12-31"
 
+    # 日志配置
+    LOG_DIR: Path = BASE_DIR / "logs"
+    LOG_LEVEL: str = "INFO"  # DEBUG/INFO/WARNING/ERROR
+    LOG_FILE_MAX_BYTES: int = 10 * 1024 * 1024  # 单文件最大10MB
+    LOG_FILE_BACKUP_COUNT: int = 5  # 保留5个备份
+
     # 滚动窗口配置
     ROLLING_WINDOW: int = 252  # 一年交易日
 
@@ -62,6 +68,7 @@ class Settings(BaseSettings):
         self.DB_DIR.mkdir(parents=True, exist_ok=True)
         self.REPORTS_DIR.mkdir(parents=True, exist_ok=True)
         self.AKSHARE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        self.LOG_DIR.mkdir(parents=True, exist_ok=True)
 
         # 检测数据库文件是否存在，若不存在则从样本文件复制
         db_file = self.DB_DIR / "factorflow.db"

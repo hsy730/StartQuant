@@ -147,6 +147,43 @@ class MiningTaskRepository:
         self.db.refresh(task)
         return task
 
+    def abort_interrupted_tasks(self) -> int:
+        """将所有 running/pending 状态的任务标记为 aborted（服务重启时调用）
+
+        后端重启后，之前未完成的任务实际上已被中断，
+        需要将状态从 running/pending 更新为 aborted，避免前端误显示为"进行中"。
+
+        Returns:
+            被更新的任务数量
+        """
+        from datetime import datetime
+
+        interrupted = list(
+            self.db.scalars(
+                select(MiningTaskModel)
+                .where(MiningTaskModel.status.in_(["pending", "running"]))
+            ).all()
+        )
+        if not interrupted:
+            return 0
+
+        count = 0
+        for task in interrupted:
+            task.status = "aborted"
+            task.error = "服务重启导致任务中断"
+            task.completed_at = datetime.now()
+            count += 1
+
+        try:
+            self.db.commit()
+        except Exception as e:
+            self.db.rollback()
+            logger.error(f"批量更新中断任务状态失败: {e}")
+            raise
+
+        logger.info(f"已将 {count} 个中断任务状态更新为 aborted")
+        return count
+
     def delete(self, id: int) -> bool:
         """删除挖掘任务记录"""
         task = self.get_by_id(id)

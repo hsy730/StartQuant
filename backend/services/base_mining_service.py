@@ -11,8 +11,11 @@
 """
 
 import logging
+import os
 import random
+import time
 from abc import ABC, abstractmethod
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Dict, Optional, Tuple
 
 import pandas as pd
@@ -23,6 +26,85 @@ logger = logging.getLogger(__name__)
 
 from backend.services.data_service import data_service  # noqa: E402
 from backend.utils.safe_math import safe_divide, safe_ir  # noqa: E402
+
+# ======================================================================
+# 基础因子值 LRU 缓存（模块级，所有挖掘服务实例共享）
+# ======================================================================
+# 缓存同一 (date_range, factor_code) 的预计算结果，
+# 避免同一次运行中相同股票+日期+因子的重复计算。
+# key = (index_start, index_end, row_count, factor_code)
+# value = pd.Series（因子值）
+
+from collections import OrderedDict
+
+_BASE_FACTOR_CACHE: OrderedDict[tuple, "pd.Series"] = OrderedDict()
+_BASE_FACTOR_CACHE_MAX_SIZE = 256  # 覆盖 ~50股 × 5因子 + 余量
+
+_cache_hits = 0
+_cache_misses = 0
+
+
+def _make_data_fingerprint(df: pd.DataFrame) -> str:
+    """生成 DataFrame 的轻量指纹。
+
+    对于 OHLCV 金融时序数据，相同的日期范围 + 相同行数 → 相同的确定性因子计算结果。
+    """
+    if df is None or len(df) == 0:
+        return "empty"
+    idx = df.index
+    return f"{idx[0]}|{idx[-1]}|{len(idx)}"
+
+
+def _get_cached_factor(
+    df: pd.DataFrame, factor_code: str, calculator,
+) -> Optional["pd.Series"]:
+    """查询或计算并缓存基础因子值。
+
+    Returns:
+        因子值 Series（缓存命中的副本），或 None（计算失败/无有效值）
+    """
+    global _cache_hits, _cache_misses
+    fp = (_make_data_fingerprint(df), factor_code)
+
+    if fp in _BASE_FACTOR_CACHE:
+        _BASE_FACTOR_CACHE.move_to_end(fp)  # 标记为最近使用
+        _cache_hits += 1
+        return _BASE_FACTOR_CACHE[fp].copy()  # 返回副本防止调用方就地修改
+
+    # 缓存未命中，执行实际计算
+    _cache_misses += 1
+    result = calculator.calculate(df, factor_code)
+
+    if result is not None and len(result.dropna()) > 0:
+        _BASE_FACTOR_CACHE[fp] = result.copy()
+        # LRU 淘汰
+        while len(_BASE_FACTOR_CACHE) > _BASE_FACTOR_CACHE_MAX_SIZE:
+            _BASE_FACTOR_CACHE.popitem(last=False)
+
+    return result
+
+
+def clear_base_factor_cache() -> None:
+    """清空基础因子缓存（测试或内存压力时调用）"""
+    global _cache_hits, _cache_misses
+    _BASE_FACTOR_CACHE.clear()
+    _cache_hits = 0
+    _cache_misses = 0
+
+
+def get_base_factor_cache_stats() -> dict:
+    """返回缓存统计信息（用于监控和日志）"""
+    return {
+        "size": len(_BASE_FACTOR_CACHE),
+        "max_size": _BASE_FACTOR_CACHE_MAX_SIZE,
+        "hits": _cache_hits,
+        "misses": _cache_misses,
+        "hit_rate": (
+            round(_cache_hits / max(_cache_hits + _cache_misses, 1), 4)
+            if (_cache_hits + _cache_misses) > 0
+            else 0.0
+        ),
+    }
 
 
 class BaseMiningService(ABC):
@@ -60,8 +142,17 @@ class BaseMiningService(ABC):
         fitness_objective: str = "ic_mean",
         cv_folds: int = 0,
         naming_pattern: str = "factor_{i}",
+        max_base_factors: int = 30,
     ):
         self.base_factor_codes = base_factors
+        self.max_base_factors = max_base_factors
+
+        # 因子池随机抽样：当因子数超过 max_base_factors 时，随机选取子集
+        if max_base_factors > 0 and len(base_factors) > max_base_factors:
+            self.base_factor_codes = random.sample(base_factors, max_base_factors)
+            logger.info(
+                f"[{self._service_name}] 因子池抽样: {len(base_factors)} → {max_base_factors} 个因子"
+            )
         self.data = data.copy() if data is not None else None
         self.return_column = return_column
         self.factor_calculator = factor_calculator
@@ -83,13 +174,13 @@ class BaseMiningService(ABC):
         self.stock_pool_base_factor_values: Dict[str, dict] = {}
         self._sampled_stock_codes: List[str] = []
 
+        # 进度控制（必须在 _precompute_base_factors 之前初始化）
+        self.progress_callback = None
+        self._cancel_flag = False
+
         # 预计算基础因子值
         self.base_factor_values: Dict[str, dict] = {}
         self._precompute_base_factors()
-
-        # 进度控制
-        self.progress_callback = None
-        self._cancel_flag = False
 
         # Z-Score 归一化状态
         self._gen_ic_values: List[float] = []
@@ -117,39 +208,90 @@ class BaseMiningService(ABC):
     # ------------------------------------------------------------------
 
     def _precompute_base_factors(self):
-        """预计算基础因子值"""
+        """预计算基础因子值（多线程并行，支持取消）"""
         if self.factor_calculator is None:
             from backend.services.factor_service import factor_service
 
             self.factor_calculator = factor_service.calculator
 
+        n_factors = len(self.base_factor_codes)
         logger.info(
-            f"[{self._service_name}] 预计算 {len(self.base_factor_codes)} 个基础因子..."
+            f"[{self._service_name}] 预计算 {n_factors} 个基础因子..."
         )
 
-        for i, factor_code in enumerate(self.base_factor_codes):
+        max_workers = min(n_factors, os.cpu_count() or 4)
+
+        def _compute_one(idx_and_code):
+            i, factor_code = idx_and_code
+            # 检查取消标志
+            if self._cancel_flag:
+                return (i, "cancelled", factor_code, None, None, 0.0)
+            t0 = time.time()
             try:
-                fv = self.factor_calculator.calculate(self.data, factor_code)
+                fv = _get_cached_factor(self.data, factor_code, self.factor_calculator)
+                elapsed = time.time() - t0
                 if fv is not None and len(fv.dropna()) > 0:
                     var_name = self._make_var_name(i)
+                    return (i, "ok", factor_code, var_name, fv, elapsed)
+                else:
+                    return (i, "empty", factor_code, None, None, elapsed)
+            except Exception as e:
+                elapsed = time.time() - t0
+                return (i, "error", factor_code, None, None, elapsed, str(e))
+
+        t_total_start = time.time()
+        completed = 0
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {
+                executor.submit(_compute_one, (i, fc)): (i, fc)
+                for i, fc in enumerate(self.base_factor_codes)
+            }
+            for future in as_completed(futures):
+                # 检查取消：如果已取消，不再等待剩余 future
+                if self._cancel_flag:
+                    logger.warning(
+                        f"[{self._service_name}] 预计算被取消，已完成 {completed}/{n_factors}"
+                    )
+                    break
+                result = future.result()
+                completed += 1
+                status = result[1]
+                factor_code = result[2]
+                elapsed = result[5]
+
+                if status == "ok":
+                    _, _, _, var_name, fv, _ = result
                     self.base_factor_values[var_name] = {
                         "code": factor_code,
                         "values": fv,
                     }
                     logger.info(
-                        f"  [{i + 1}/{len(self.base_factor_codes)}] {factor_code}: {len(fv.dropna())} 个有效值"
+                        f"  [{completed}/{n_factors}] {factor_code}: "
+                        f"{len(fv.dropna())} 个有效值 ({elapsed:.2f}s)"
                     )
-                else:
+                elif status == "empty":
                     logger.warning(
-                        f"  [{i + 1}/{len(self.base_factor_codes)}] {factor_code}: 计算失败或无有效值"
+                        f"  [{completed}/{n_factors}] {factor_code}: "
+                        f"无有效值 ({elapsed:.2f}s)"
                     )
-            except Exception as e:
-                logger.warning(
-                    f"  [{i + 1}/{len(self.base_factor_codes)}] {factor_code}: 计算出错 - {e}"
-                )
+                elif status == "cancelled":
+                    logger.warning(
+                        f"  [{completed}/{n_factors}] {factor_code}: 已取消"
+                    )
+                else:  # error
+                    err_msg = result[6] if len(result) > 6 else "?"
+                    logger.warning(
+                        f"  [{completed}/{n_factors}] {factor_code}: "
+                        f"计算出错 - {err_msg} ({elapsed:.2f}s)"
+                    )
 
+        total_elapsed = time.time() - t_total_start
+        cache_stats = get_base_factor_cache_stats()
         logger.info(
-            f"[{self._service_name}] 成功预计算 {len(self.base_factor_values)} 个基础因子"
+            f"[{self._service_name}] 成功预计算 {len(self.base_factor_values)}/{n_factors} 个基础因子"
+            f"（耗时 {total_elapsed:.1f}s，线程数={max_workers}，"
+            f"缓存命中={cache_stats['hits']}，未命中={cache_stats['misses']}）"
         )
 
     # ------------------------------------------------------------------
@@ -157,7 +299,7 @@ class BaseMiningService(ABC):
     # ------------------------------------------------------------------
 
     def set_stock_pool(self, stock_codes: List[str], start_date: str, end_date: str):
-        """设置股票池用于截面IC评估"""
+        """设置股票池用于截面IC评估（多线程并行，支持取消）"""
         self.stock_codes = stock_codes
         raw_data = data_service.get_multiple_stocks_data(
             stock_codes, start_date, end_date
@@ -165,22 +307,38 @@ class BaseMiningService(ABC):
         # 规则3：防御性copy，避免就地修改data_service返回的DataFrame
         self.stock_pool_data = {k: v.copy() for k, v in raw_data.items()}
 
-        for code, df in self.stock_pool_data.items():
+        n_stocks = len(self.stock_pool_data)
+        n_factors = len(self.base_factor_codes)
+        logger.info(
+            f"[{self._service_name}] 预计算股票池因子: {n_stocks} 只股票 × {n_factors} 个因子"
+        )
+
+        if self.factor_calculator is None:
+            from backend.services.factor_service import factor_service
+
+            self.factor_calculator = factor_service.calculator
+
+        # 每只股票的因子计算独立，并行处理
+        # 线程数基于股票数（而非因子数），因为每只股票的计算是独立的
+        factor_workers = min(n_stocks, os.cpu_count() or 4, 8)
+
+        def _compute_stock_factors(args):
+            code, df = args
+            if self._cancel_flag:
+                return code, None, {}
             if "close" in df.columns:
-                df["return"] = df["close"].pct_change()
-            self.stock_pool_return_values[code] = (
+                df["return"] = df["close"].pct_change().shift(-1)
+
+            return_val = (
                 df[self.return_column] if self.return_column in df.columns else None
             )
 
-            if self.factor_calculator is None:
-                from backend.services.factor_service import factor_service
-
-                self.factor_calculator = factor_service.calculator
-
             stock_base_factors = {}
             for i, factor_code in enumerate(self.base_factor_codes):
+                if self._cancel_flag:
+                    break
                 try:
-                    fv = self.factor_calculator.calculate(df, factor_code)
+                    fv = _get_cached_factor(df, factor_code, self.factor_calculator)
                     if fv is not None and len(fv.dropna()) > 0:
                         var_name = self._make_var_name(i)
                         stock_base_factors[var_name] = {
@@ -191,7 +349,39 @@ class BaseMiningService(ABC):
                     logger.warning(
                         f"Stock {code} factor {factor_code} compute error: {e}"
                     )
-            self.stock_pool_base_factor_values[code] = stock_base_factors
+
+            return code, return_val, stock_base_factors
+
+        t_start = time.time()
+        completed = 0
+
+        with ThreadPoolExecutor(max_workers=factor_workers) as executor:
+            futures = {
+                executor.submit(_compute_stock_factors, (code, df)): code
+                for code, df in self.stock_pool_data.items()
+            }
+            for future in as_completed(futures):
+                if self._cancel_flag:
+                    logger.warning(
+                        f"[{self._service_name}] 股票池预计算被取消，已完成 {completed}/{n_stocks}"
+                    )
+                    break
+                code, return_val, stock_base_factors = future.result()
+                completed += 1
+                self.stock_pool_return_values[code] = return_val
+                self.stock_pool_base_factor_values[code] = stock_base_factors
+
+                if completed % 10 == 0 or completed == n_stocks:
+                    logger.info(
+                        f"[{self._service_name}] 预计算进度: {completed}/{n_stocks} 只股票完成"
+                    )
+
+        elapsed = time.time() - t_start
+        cache_stats = get_base_factor_cache_stats()
+        logger.info(
+            f"[{self._service_name}] 股票池预计算完成: {n_stocks} 只股票 × {n_factors} 个因子 "
+            f"（耗时 {elapsed:.1f}s，缓存命中={cache_stats['hits']}，未命中={cache_stats['misses']}）"
+        )
 
         self._refresh_stock_sample()
         logger.info(

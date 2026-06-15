@@ -11,31 +11,52 @@ from pathlib import Path
 
 
 def kill_port(port):
-    """杀死占用指定端口的进程"""
-    if os.name != "nt":
-        return
+    """杀死占用指定端口的进程（包括子进程树）"""
     try:
-        result = subprocess.run(
-            ["netstat", "-ano"],
-            capture_output=True, text=True, timeout=5
-        )
-        pids = set()
-        for line in result.stdout.splitlines():
-            if f":{port}" in line and "LISTENING" in line:
-                parts = line.strip().split()
-                if parts:
-                    pid = int(parts[-1])
-                    if pid > 0:
-                        pids.add(pid)
-        for pid in pids:
+        if os.name == "nt":
+            # Windows: 使用 netstat 查找 PID，taskkill /T 杀进程树
+            result = subprocess.run(
+                ["netstat", "-ano"],
+                capture_output=True, text=True, timeout=5
+            )
+            pids = set()
+            for line in result.stdout.splitlines():
+                if f":{port}" in line and "LISTENING" in line:
+                    parts = line.strip().split()
+                    if parts:
+                        pid = int(parts[-1])
+                        if pid > 0:
+                            pids.add(pid)
+            for pid in pids:
+                try:
+                    # /T 杀进程树（uvicorn reload 会产生子进程）
+                    subprocess.run(
+                        ["taskkill", "/PID", str(pid), "/F", "/T"],
+                        capture_output=True, timeout=5
+                    )
+                    print(f"  已终止占用端口 {port} 的进程 (PID: {pid})")
+                except Exception:
+                    pass
+        else:
+            # Linux/macOS: 使用 lsof 或 fuser
             try:
                 subprocess.run(
-                    ["taskkill", "/PID", str(pid), "/F"],
+                    ["fuser", "-k", f"{port}/tcp"],
                     capture_output=True, timeout=5
                 )
-                print(f"  已终止占用端口 {port} 的进程 (PID: {pid})")
-            except Exception:
-                pass
+                print(f"  已终止占用端口 {port} 的进程")
+            except FileNotFoundError:
+                try:
+                    result = subprocess.run(
+                        ["lsof", "-ti", f":{port}"],
+                        capture_output=True, text=True, timeout=5
+                    )
+                    for pid in result.stdout.strip().split():
+                        if pid:
+                            subprocess.run(["kill", "-9", pid], capture_output=True, timeout=3)
+                    print(f"  已终止占用端口 {port} 的进程")
+                except Exception:
+                    pass
     except Exception:
         pass
 
@@ -110,9 +131,11 @@ def main():
 
     try:
         # 先杀死占用端口的旧进程
-        print("\n检查端口占用...")
+        print("\n清理旧进程...")
         kill_port(8000)
         kill_port(5173)
+        # 等待端口释放（TCP TIME_WAIT 需要几秒）
+        time.sleep(2)
 
         # 启动后端 API 服务
         # 使用虚拟环境的 Python 启动

@@ -377,3 +377,158 @@ class TestCalculateICEdgeCases:
         result = calculate_ic(factor, returns, method="pearson")
         # np.inf 的 notna() 返回 True，inf不被排除，参与corr计算导致NaN
         assert result is None or (result is not None and np.isnan(result))
+
+
+class TestRollingICSpearmanVectorized:
+    """向量化滚动 Spearman IC 正确性验证
+
+    核心思路：用 scipy.stats.spearmanr 逐窗口计算作为参考实现，
+    验证向量化版本（sliding_window_view + argsort排名）输出一致。
+    """
+
+    @staticmethod
+    def _reference_rolling_spearman(factor, returns, window):
+        """参考实现：逐窗口调用 spearmanr（慢但正确）"""
+        from scipy.stats import spearmanr
+        aligned = pd.DataFrame({"f": factor, "r": returns}).dropna()
+        min_periods = max(2, window // 2)
+        result = np.full(len(aligned), np.nan)
+
+        for i in range(window - 1, len(aligned)):
+            f_win = aligned["f"].iloc[i - window + 1:i + 1].values
+            r_win = aligned["r"].iloc[i - window + 1:i + 1].values
+            valid = ~(np.isnan(f_win) | np.isnan(r_win))
+            if valid.sum() >= min_periods:
+                ic, _ = spearmanr(f_win[valid], r_win[valid])
+                result[i] = ic if not np.isnan(ic) else np.nan
+        return pd.Series(result, index=aligned.index)
+
+    def test_vectorized_matches_reference_perfect_correlation(self):
+        """完全正相关数据：向量化结果应与逐窗口 spearmanr 一致"""
+        n = 50
+        factor = pd.Series(np.arange(n, dtype=float))
+        returns = pd.Series(np.arange(n, dtype=float))
+        window = 10
+
+        vec_result = calculate_rolling_ic(factor, returns, window=window, method="spearman")
+        ref_result = self._reference_rolling_spearman(factor, returns, window)
+
+        valid_mask = ref_result.notna()
+        assert valid_mask.sum() > 0, "参考实现应有有效值"
+        diff = (vec_result[valid_mask] - ref_result[valid_mask]).abs()
+        assert diff.max() < 1e-10, f"向量化与参考实现差异过大: max_diff={diff.max()}"
+
+    def test_vectorized_matches_reference_negative_correlation(self):
+        """完全负相关数据：向量化结果应与参考实现一致"""
+        n = 50
+        factor = pd.Series(np.arange(n, dtype=float))
+        returns = pd.Series(np.arange(n - 1, -1, -1, dtype=float))
+        window = 15
+
+        vec_result = calculate_rolling_ic(factor, returns, window=window, method="spearman")
+        ref_result = self._reference_rolling_spearman(factor, returns, window)
+
+        valid_mask = ref_result.notna()
+        assert valid_mask.sum() > 0
+        diff = (vec_result[valid_mask] - ref_result[valid_mask]).abs()
+        assert diff.max() < 1e-10, f"负相关场景差异过大: max_diff={diff.max()}"
+
+    def test_vectorized_matches_reference_random_data(self):
+        """随机数据（真实场景模拟）：向量化结果应与参考实现一致"""
+        np.random.seed(123)
+        n = 100
+        factor = pd.Series(np.random.randn(n).cumsum())  # 有趋势的随机游走
+        returns = pd.Series(np.random.randn(n).cumsum())
+        window = 20
+
+        vec_result = calculate_rolling_ic(factor, returns, window=window, method="spearman")
+        ref_result = self._reference_rolling_spearman(factor, returns, window)
+
+        valid_mask = ref_result.notna()
+        assert valid_mask.sum() > 20, "随机数据应有足够多的有效窗口"
+        diff = (vec_result[valid_mask] - ref_result[valid_mask]).abs()
+        assert diff.max() < 1e-10, f"随机数据差异过大: max_diff={diff.max()}, mean_diff={diff.mean()}"
+
+    def test_vectorized_matches_reference_with_nans(self):
+        """含 NaN 数据：向量化应正确处理窗口内缺失值"""
+        np.random.seed(456)
+        n = 60
+        factor = pd.Series(np.random.randn(n))
+        returns = pd.Series(np.random.randn(n))
+        # 随机插入 ~10% 的 NaN
+        nan_idx_f = np.random.choice(n, size=6, replace=False)
+        nan_idx_r = np.random.choice(n, size=6, replace=False)
+        factor.iloc[nan_idx_f] = np.nan
+        returns.iloc[nan_idx_r] = np.nan
+        window = 15
+
+        vec_result = calculate_rolling_ic(factor, returns, window=window, method="spearman")
+        ref_result = self._reference_rolling_spearman(factor, returns, window)
+
+        valid_mask = ref_result.notna()
+        if valid_mask.sum() > 0:
+            diff = (vec_result[valid_mask] - ref_result[valid_mask]).abs()
+            assert diff.max() < 1e-10, f"含NaN场景差异过大: max_diff={diff.max()}"
+
+    def test_vectorized_matches_reference_monotonic_nonlinear(self):
+        """单调非线性关系（Spearman 强项）：向量化结果应接近 1.0 且与参考一致"""
+        n = 40
+        factor = pd.Series(np.arange(n, dtype=float))
+        returns = pd.Series(np.arange(n, dtype=float) ** 2)  # y = x^2 单调递增
+        window = 12
+
+        vec_result = calculate_rolling_ic(factor, returns, window=window, method="spearman")
+        ref_result = self._reference_rolling_spearman(factor, returns, window)
+
+        valid_mask = ref_result.notna()
+        assert valid_mask.sum() > 0
+        # 单调非线性关系的 Spearman IC 应接近 1.0
+        assert ref_result[valid_mask].min() > 0.99, "单调关系的滚动 Spearman IC 应接近 1"
+        diff = (vec_result[valid_mask] - ref_result[valid_mask]).abs()
+        assert diff.max() < 1e-10, f"单调非线性差异过大: max_diff={diff.max()}"
+
+    def test_vectorized_output_length_and_index_preserved(self):
+        """向量化输出长度和索引应与输入一致"""
+        np.random.seed(789)
+        n = 80
+        idx = pd.date_range("2024-01-01", periods=n, freq="B")
+        factor = pd.Series(np.random.randn(n), index=idx)
+        returns = pd.Series(np.random.randn(n), index=idx)
+
+        result = calculate_rolling_ic(factor, returns, window=20, method="spearman")
+
+        assert len(result) == n, f"长度不匹配: {len(result)} != {n}"
+        assert result.index.equals(idx), "索引未被保留"
+
+    def test_vectorized_small_window_edge_case(self):
+        """小窗口（window=3）：边界条件下的正确性"""
+        n = 15
+        factor = pd.Series(np.arange(n, dtype=float))
+        returns = pd.Series(np.arange(n, dtype=float) * 2.0)
+        window = 3
+
+        vec_result = calculate_rolling_ic(factor, returns, window=window, method="spearman")
+        ref_result = self._reference_rolling_spearman(factor, returns, window)
+
+        valid_mask = ref_result.notna()
+        if valid_mask.sum() > 0:
+            diff = (vec_result[valid_mask] - ref_result[valid_mask]).abs()
+            assert diff.max() < 1e-10, f"小窗口差异过大: max_diff={diff.max()}"
+
+    def test_vectorized_performance_sanity_check(self):
+        """性能基准：向量化应在合理时间内完成（100点/窗口=20，<1秒）"""
+        import time
+        np.random.seed(999)
+        n = 250  # 接近实际因子挖掘中的数据量
+        factor = pd.Series(np.random.randn(n).cumsum())
+        returns = pd.Series(np.random.randn(n).cumsum())
+
+        t0 = time.perf_counter()
+        result = calculate_rolling_ic(factor, returns, window=20, method="spearman")
+        elapsed = time.perf_counter() - t0
+
+        assert isinstance(result, pd.Series)
+        assert len(result) == n
+        assert elapsed < 2.0, f"向量化耗时过长: {elapsed:.3f}s（预期 < 0.1s）"
+        # 至少应有部分有效值
+        assert result.notna().sum() > 0, "250个点的滚动IC应有有效值"
