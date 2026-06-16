@@ -1673,20 +1673,43 @@ class FactorService:
         # 获取股票数据
         df = data_service.get_stock_data(stock_code, start_date, end_date)
 
-        # 获取因子定义
+        # 获取因子定义：先查 factors 表，再查 generated_factors 表
         with get_db() as db:
             repo = FactorRepository(db)
             factors = []
             for name in factor_names:
-                factor = repo.get_by_name(name)
+                factor = repo.get_by_name(name, include_inactive=True)
                 if factor:
                     factors.append(factor)
 
-        if not factors:
-            raise ValueError("未找到有效的因子")
+        # 计算因子：factors 表中的因子用 calculate_multiple
+        if factors:
+            factor_df = self.calculator.calculate_multiple(df, factors)
+        else:
+            factor_df = pd.DataFrame(index=df.index)
 
-        # 计算因子
-        factor_df = self.calculator.calculate_multiple(df, factors)
+        # 对于 factors 表中不存在的因子，尝试从 generated_factors 表查找并计算
+        found_names = {f.name for f in factors}
+        missing_names = [n for n in factor_names if n not in found_names]
+
+        if missing_names:
+            from backend.repositories.generated_factor_repository import GeneratedFactorRepository
+            with get_db() as db:
+                gen_repo = GeneratedFactorRepository(db)
+                gen_factors = {gf.factor_name: gf.expression for gf in gen_repo.get_all()}
+
+            for name in missing_names:
+                expression = gen_factors.get(name)
+                if expression:
+                    try:
+                        series = self.calculator.calculate(df, expression)
+                        factor_df[name] = series
+                    except Exception as e:
+                        logger.warning(f"计算生成因子 {name} 失败: {e}")
+                        factor_df[name] = np.nan
+
+        if factor_df.empty:
+            raise ValueError("未找到有效的因子")
 
         # 滚动标准化
         if rolling_window:

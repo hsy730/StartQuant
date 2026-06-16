@@ -27,7 +27,7 @@ import {
   WarningOutlined,
   InfoCircleOutlined,
   ThunderboltOutlined,
-  ShieldOutlined,
+  SafetyOutlined,
   RocketOutlined,
   StockOutlined,
   ExperimentOutlined
@@ -99,7 +99,7 @@ const DEFAULT_CONFIG: PreprocessingConfig = {
 
 const PRESET_ICONS: Record<string, React.ReactNode> = {
   auto: <RobotOutlined />,
-  shield: <ShieldOutlined />,
+  shield: <SafetyOutlined />,
   rocket: <RocketOutlined />,
   machine_learning: <ExperimentOutlined />,
   stock: <StockOutlined />

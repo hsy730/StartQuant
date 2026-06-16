@@ -615,7 +615,7 @@ const MiningHistory: React.FC = () => {
             chartInstanceRef.current = null;
           }
         }}
-        width={960}
+        size="large"
         destroyOnClose
       >
         {detailLoading ? (

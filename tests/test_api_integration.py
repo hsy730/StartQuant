@@ -133,7 +133,7 @@ def test_effectiveness_api():
 def test_stability_api():
     body = {
         "factor_name": "distance_to_high_20",
-        "stock_codes": ["000001", "600519"],
+        "stock_codes": ["000001", "000002", "600519"],
         "start_date": "2024-01-01",
         "end_date": "2024-06-30",
     }

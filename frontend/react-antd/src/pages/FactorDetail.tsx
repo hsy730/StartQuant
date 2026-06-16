@@ -2729,7 +2729,7 @@ const FactorDetail: React.FC = () => {
                 value={preprocessingConfig}
                 onChange={setPreprocessingConfig}
                 stockCodes={stockCodes}
-                factorNames={factor ? [factor.code] : []}
+                factorNames={factor ? [factor.name] : []}
                 startDate={customStartDate || undefined}
                 endDate={customEndDate || undefined}
               />

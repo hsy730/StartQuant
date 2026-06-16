@@ -26,6 +26,40 @@ from backend.services.factor_monitoring_service import factor_monitoring_service
 router = APIRouter()
 
 
+def _resolve_factor_code(factor_name: str) -> str:
+    """从 factors 表或 generated_factors 表解析因子代码/表达式
+
+    Args:
+        factor_name: 因子名称
+
+    Returns:
+        因子代码（expression 或 code）
+
+    Raises:
+        HTTPException: 因子不存在时返回 404
+    """
+    from backend.repositories.factor_repository import FactorRepository
+    from backend.repositories.generated_factor_repository import GeneratedFactorRepository
+    from backend.core.database import get_db
+
+    # 先查 factors 表（包含已停用的因子，因为前端可能查看历史因子）
+    with get_db() as db:
+        repo = FactorRepository(db)
+        factor = repo.get_by_name(factor_name, include_inactive=True)
+
+    if factor:
+        return factor.code
+
+    # 再查 generated_factors 表
+    with get_db() as db:
+        gen_repo = GeneratedFactorRepository(db)
+        for gf in gen_repo.get_all():
+            if gf.factor_name == factor_name:
+                return gf.expression
+
+    raise HTTPException(status_code=404, detail=f"因子 '{factor_name}' 不存在")
+
+
 # ========== 数据模型 ==========
 
 
@@ -83,20 +117,11 @@ async def calculate_factor(request: CalculateRequest):
     try:
         from backend.services.data_service import data_service
         from backend.services.factor_service import factor_service
-        from backend.repositories.factor_repository import FactorRepository
-        from backend.core.database import get_db
 
-        # 获取因子定义
-        with get_db() as db:
-            repo = FactorRepository(db)
-            factor = repo.get_by_name(request.factor_name)
+        # 获取因子代码（支持 factors 表和 generated_factors 表）
+        factor_code = _resolve_factor_code(request.factor_name)
 
-        if not factor:
-            raise HTTPException(
-                status_code=404, detail=f"因子 '{request.factor_name}' 不存在"
-            )
-
-        logger.info(f"开始计算因子: {request.factor_name}, 代码: {factor.code}")
+        logger.info(f"开始计算因子: {request.factor_name}, 代码: {factor_code}")
 
         # 获取数据并计算因子
         result_data = {}
@@ -133,8 +158,8 @@ async def calculate_factor(request: CalculateRequest):
                 logger.info(f"股票 {stock_code} 获取到 {len(data)} 条数据")
 
                 # 使用 calculator 计算因子
-                logger.info(f"开始计算因子值，因子代码: {factor.code}")
-                factor_series = factor_service.calculator.calculate(data, factor.code)
+                logger.info(f"开始计算因子值，因子代码: {factor_code}")
+                factor_series = factor_service.calculator.calculate(data, factor_code)
 
                 if factor_series is None:
                     logger.warning(f"股票 {stock_code} 因子计算返回 None")
@@ -311,6 +336,8 @@ async def stability_test(request: StabilityRequest):
         )
 
         return sanitize_dict({"success": True, "data": result})
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"稳定性检验失败: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
@@ -340,19 +367,10 @@ async def decay_analysis(request: ICAnalysisRequest):
     try:
         from backend.services.data_service import data_service
         from backend.services.factor_service import factor_service
-        from backend.repositories.factor_repository import FactorRepository
-        from backend.core.database import get_db
         import numpy as np
 
-        # 获取因子定义
-        with get_db() as db:
-            repo = FactorRepository(db)
-            factor = repo.get_by_name(request.factor_name)
-
-        if not factor:
-            raise HTTPException(
-                status_code=404, detail=f"因子 '{request.factor_name}' 不存在"
-            )
+        # 获取因子代码（支持 factors 表和 generated_factors 表）
+        factor_code = _resolve_factor_code(request.factor_name)
 
         # 计算因子在不同周期的IC（衰减分析）
         decay_periods = [1, 3, 5, 10, 20]  # 1日, 3日, 5日, 10日, 20日
@@ -381,7 +399,7 @@ async def decay_analysis(request: ICAnalysisRequest):
             if data is not None and len(data) > 0:
                 data = data.copy()
                 # 预计算因子值（同一因子只需计算一次）
-                factor_series = factor_service.calculator.calculate(data, factor.code)
+                factor_series = factor_service.calculator.calculate(data, factor_code)
                 if factor_series is not None:
                     data[request.factor_name] = factor_series
                     stock_data_cache[stock_code] = data
@@ -423,22 +441,13 @@ async def exposure_analysis(request: CalculateRequest):
 
     try:
         from backend.services.factor_service import factor_service
-        from backend.repositories.factor_repository import FactorRepository
-        from backend.core.database import get_db
 
         logger.info(
             f"开始因子暴露度分析: {request.factor_name}, 股票: {request.stock_codes}"
         )
 
-        # 获取因子定义
-        with get_db() as db:
-            repo = FactorRepository(db)
-            factor = repo.get_by_name(request.factor_name)
-
-        if not factor:
-            raise HTTPException(
-                status_code=404, detail=f"因子 '{request.factor_name}' 不存在"
-            )
+        # 获取因子代码（支持 factors 表和 generated_factors 表）
+        factor_code = _resolve_factor_code(request.factor_name)
 
         # 获取因子数据
         factor_data = factor_service.calculate_factors_for_stocks(
@@ -470,22 +479,13 @@ async def effectiveness_analysis(request: ICAnalysisRequest):
 
     try:
         from backend.services.factor_service import factor_service
-        from backend.repositories.factor_repository import FactorRepository
-        from backend.core.database import get_db
 
         logger.info(
             f"开始因子有效性分析: {request.factor_name}, 股票: {request.stock_codes}"
         )
 
-        # 获取因子定义
-        with get_db() as db:
-            repo = FactorRepository(db)
-            factor = repo.get_by_name(request.factor_name)
-
-        if not factor:
-            raise HTTPException(
-                status_code=404, detail=f"因子 '{request.factor_name}' 不存在"
-            )
+        # 获取因子代码（支持 factors 表和 generated_factors 表）
+        factor_code = _resolve_factor_code(request.factor_name)
 
         # 获取因子数据
         factor_data = factor_service.calculate_factors_for_stocks(
@@ -519,22 +519,13 @@ async def attribution_analysis(request: ICAnalysisRequest):
 
     try:
         from backend.services.factor_service import factor_service
-        from backend.repositories.factor_repository import FactorRepository
-        from backend.core.database import get_db
 
         logger.info(
             f"开始因子贡献度分解: {request.factor_name}, 股票: {request.stock_codes}"
         )
 
-        # 获取因子定义
-        with get_db() as db:
-            repo = FactorRepository(db)
-            factor = repo.get_by_name(request.factor_name)
-
-        if not factor:
-            raise HTTPException(
-                status_code=404, detail=f"因子 '{request.factor_name}' 不存在"
-            )
+        # 获取因子代码（支持 factors 表和 generated_factors 表）
+        factor_code = _resolve_factor_code(request.factor_name)
 
         # 获取因子数据
         factor_data = factor_service.calculate_factors_for_stocks(
@@ -568,22 +559,13 @@ async def monitoring_analysis(request: ICAnalysisRequest):
 
     try:
         from backend.services.factor_service import factor_service
-        from backend.repositories.factor_repository import FactorRepository
-        from backend.core.database import get_db
 
         logger.info(
             f"开始时间序列动态监测: {request.factor_name}, 股票: {request.stock_codes}"
         )
 
-        # 获取因子定义
-        with get_db() as db:
-            repo = FactorRepository(db)
-            factor = repo.get_by_name(request.factor_name)
-
-        if not factor:
-            raise HTTPException(
-                status_code=404, detail=f"因子 '{request.factor_name}' 不存在"
-            )
+        # 获取因子代码（支持 factors 表和 generated_factors 表）
+        factor_code = _resolve_factor_code(request.factor_name)
 
         # 获取因子数据
         factor_data = factor_service.calculate_factors_for_stocks(
@@ -870,22 +852,14 @@ async def quantile_returns_analysis(request: QuantileReturnsRequest):
 
     try:
         from backend.services.factor_service import factor_service
-        from backend.repositories.factor_repository import FactorRepository
-        from backend.core.database import get_db
 
         logger.info(
             f"开始因子分组收益分析: {request.factor_name}, "
             f"股票数={len(request.stock_codes)}"
         )
 
-        with get_db() as db:
-            repo = FactorRepository(db)
-            factor = repo.get_by_name(request.factor_name)
-
-        if not factor:
-            raise HTTPException(
-                status_code=404, detail=f"因子 '{request.factor_name}' 不存在"
-            )
+        # 获取因子代码（支持 factors 表和 generated_factors 表）
+        factor_code = _resolve_factor_code(request.factor_name)
 
         factor_data = factor_service.calculate_factors_for_stocks(
             request.stock_codes,
@@ -952,19 +926,11 @@ async def cumulative_returns_analysis(request: QuantileReturnsRequest):
 
     try:
         from backend.services.factor_service import factor_service
-        from backend.repositories.factor_repository import FactorRepository
-        from backend.core.database import get_db
 
         logger.info(f"开始累计收益曲线分析: {request.factor_name}")
 
-        with get_db() as db:
-            repo = FactorRepository(db)
-            factor = repo.get_by_name(request.factor_name)
-
-        if not factor:
-            raise HTTPException(
-                status_code=404, detail=f"因子 '{request.factor_name}' 不存在"
-            )
+        # 获取因子代码（支持 factors 表和 generated_factors 表）
+        factor_code = _resolve_factor_code(request.factor_name)
 
         factor_data = factor_service.calculate_factors_for_stocks(
             request.stock_codes,
@@ -1028,19 +994,11 @@ async def turnover_analysis(request: ICAnalysisRequest):
 
     try:
         from backend.services.factor_service import factor_service
-        from backend.repositories.factor_repository import FactorRepository
-        from backend.core.database import get_db
 
         logger.info(f"开始换手率分析: {request.factor_name}")
 
-        with get_db() as db:
-            repo = FactorRepository(db)
-            factor = repo.get_by_name(request.factor_name)
-
-        if not factor:
-            raise HTTPException(
-                status_code=404, detail=f"因子 '{request.factor_name}' 不存在"
-            )
+        # 获取因子代码（支持 factors 表和 generated_factors 表）
+        factor_code = _resolve_factor_code(request.factor_name)
 
         factor_data = factor_service.calculate_factors_for_stocks(
             request.stock_codes,
@@ -1106,19 +1064,11 @@ async def full_tear_sheet(request: QuantileReturnsRequest):
 
     try:
         from backend.services.factor_service import factor_service
-        from backend.repositories.factor_repository import FactorRepository
-        from backend.core.database import get_db
 
         logger.info(f"🎯 开始生成Tear Sheet全貌报告: {request.factor_name}")
 
-        with get_db() as db:
-            repo = FactorRepository(db)
-            factor = repo.get_by_name(request.factor_name)
-
-        if not factor:
-            raise HTTPException(
-                status_code=404, detail=f"因子 '{request.factor_name}' 不存在"
-            )
+        # 获取因子代码（支持 factors 表和 generated_factors 表）
+        factor_code = _resolve_factor_code(request.factor_name)
 
         factor_data = factor_service.calculate_factors_for_stocks(
             request.stock_codes,
