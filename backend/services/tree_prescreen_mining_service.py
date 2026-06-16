@@ -723,10 +723,12 @@ class TreePrescreenMiningService(BaseMiningService):
             top = result["best_factors"][0]
             fitness_val = top.get("fitness")
             complexity_val = top.get("complexity")
+            fitness_str = f"{fitness_val:.4f}" if fitness_val is not None else "N/A"
+            complexity_str = f"{complexity_val:.1f}" if complexity_val is not None else "N/A"
             logger.info(
                 f"  Top-1: expression={top.get('expression', 'N/A')}, "
-                f"fitness={fitness_val:.4f if fitness_val is not None else 'N/A'}, "
-                f"complexity={complexity_val:.1f if complexity_val is not None else 'N/A'}"
+                f"fitness={fitness_str}, "
+                f"complexity={complexity_str}"
             )
         logger.info("=" * 60)
 

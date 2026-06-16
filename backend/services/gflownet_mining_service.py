@@ -60,12 +60,6 @@ MAX_EVAL_STOCKS = 50
 UNARY_OPS = ["neg", "abs", "log", "sqrt", "rank"]
 # 二元算子（arity=2）
 BINARY_OPS = ["add", "sub", "mul", "div"]
-# 所有算子
-ALL_OPS = UNARY_OPS + BINARY_OPS
-
-# 算子元数映射
-OP_ARITY = {op: 1 for op in UNARY_OPS}
-OP_ARITY.update({op: 2 for op in BINARY_OPS})
 
 # 扩展算子（可选，用于更丰富的表达式）
 EXTENDED_UNARY_OPS = [
@@ -89,6 +83,15 @@ EXTENDED_BINARY_OPS = [
     "max",
     "min",
 ]
+
+# 所有算子
+ALL_OPS = UNARY_OPS + BINARY_OPS + EXTENDED_UNARY_OPS + EXTENDED_BINARY_OPS
+
+# 算子元数映射
+OP_ARITY = {op: 1 for op in UNARY_OPS}
+OP_ARITY.update({op: 2 for op in BINARY_OPS})
+OP_ARITY.update({op: 1 for op in EXTENDED_UNARY_OPS})
+OP_ARITY.update({op: 2 for op in EXTENDED_BINARY_OPS})
 
 # ---------------------------------------------------------------------------
 # 表达式树节点
@@ -119,12 +122,14 @@ class ExprNode:
 
     @property
     def is_complete(self) -> bool:
-        """节点是否完整（有足够子节点）"""
+        """节点是否完整（有足够子节点，且所有子节点也完整）"""
         if self.is_empty:
             return False
         if self.is_leaf:
             return True
-        return len(self.children) == self.arity
+        if len(self.children) != self.arity:
+            return False
+        return all(c.is_complete for c in self.children)
 
     def depth(self) -> int:
         if self.is_leaf or self.is_empty:

@@ -255,14 +255,11 @@ class FactorAnalyzer:
                 )
                 ic_val = validation.get("ic_validation", {})
                 ir_val = validation.get("ir_validation", {})
-                ic = abs(
-                    float(ic_val.get("ic")) if ic_val.get("ic") is not None else 0.0
-                )
-                ir_capped = (
-                    float(ir_val.get("ir"))
-                    if ir_val.get("ir") is not None
-                    else 0.0
-                )
+                # IC和IR保持符号一致：若取abs则两者都取abs
+                ic_raw = float(ic_val.get("ic")) if ic_val.get("ic") is not None else 0.0
+                ir_raw = float(ir_val.get("ir")) if ir_val.get("ir") is not None else 0.0
+                ic = abs(ic_raw)
+                ir_capped = abs(ir_raw)
                 # IR双向截断到[-5, 5]（防御性保护，正常由_validate_ir截断）
                 ir_capped = max(min(ir_capped, 5.0), -5.0)
                 score = (

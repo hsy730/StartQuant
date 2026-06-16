@@ -799,6 +799,7 @@ class DeepFactorMiningService:
                 "validation": validation,
                 "source": "deep_implicit",
                 "factor_type": "implicit",
+                "_precomputed_factor_values": fv,
                 "model_architecture": (
                     f"TransformerEncoder(d_model={self.d_model}, n_heads={self.n_heads}, "
                     f"n_layers={self.n_layers}, d_ff={self.d_ff}, "

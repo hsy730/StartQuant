@@ -117,8 +117,10 @@ def _register_builtin_algorithms():
                      factor_service, stock_codes, logger):
         from backend.services.pysr_factor_mining_service import PySRFactorMiningService
         return PySRFactorMiningService(
+            base_factors=base_factor_codes,
             data=data,
-            base_factor_codes=base_factor_codes,
+            return_column="return",
+            factor_calculator=factor_service.calculator,
             niterations=request.n_generations,
             populations=request.population_size or 5,
         )
@@ -128,11 +130,42 @@ def _register_builtin_algorithms():
                         factor_service, stock_codes, logger):
         from backend.services.dual_mining_service import DualMiningService
         return DualMiningService(
+            base_factors=base_factor_codes,
             data=data,
-            base_factor_codes=base_factor_codes,
+            return_column="return",
+            factor_calculator=factor_service.calculator,
             algorithm=request.algorithm,
             n_generations=request.n_generations,
             population_size=request.population_size,
+            # Tree Prescreen
+            tree_model_type=getattr(request, "tree_model_type", "auto"),
+            top_k=getattr(request, "top_k", 0),
+            importance_threshold=getattr(request, "importance_threshold", 0.01),
+            tree_n_estimators=getattr(request, "tree_n_estimators", 100),
+            tree_max_depth=getattr(request, "tree_max_depth", 5),
+            downstream_algorithm=getattr(request, "downstream_algorithm", "genetic"),
+            # GFlowNet
+            gflownet_n_trajectories=getattr(request, "gflownet_n_trajectories", 200),
+            gflownet_n_iterations=getattr(request, "gflownet_n_iterations", 50),
+            gflownet_hidden_dim=getattr(request, "gflownet_hidden_dim", 128),
+            gflownet_learning_rate=getattr(request, "gflownet_learning_rate", 1e-3),
+            gflownet_max_expression_depth=getattr(request, "gflownet_max_expression_depth", 5),
+            gflownet_temperature=getattr(request, "gflownet_temperature", 1.0),
+            gflownet_reward_scale=getattr(request, "gflownet_reward_scale", 10.0),
+            gflownet_buffer_size=getattr(request, "gflownet_buffer_size", 1000),
+            # Deep Factor
+            deep_d_model=getattr(request, "deep_d_model", 64),
+            deep_n_heads=getattr(request, "deep_n_heads", 4),
+            deep_n_layers=getattr(request, "deep_n_layers", 3),
+            deep_d_ff=getattr(request, "deep_d_ff", 256),
+            deep_n_latent_factors=getattr(request, "deep_n_latent_factors", 5),
+            deep_dropout=getattr(request, "deep_dropout", 0.1),
+            deep_seq_length=getattr(request, "deep_seq_length", 20),
+            deep_learning_rate=getattr(request, "deep_learning_rate", 1e-4),
+            deep_n_epochs=getattr(request, "deep_n_epochs", 50),
+            deep_batch_size=getattr(request, "deep_batch_size", 32),
+            deep_weight_decay=getattr(request, "deep_weight_decay", 1e-5),
+            deep_early_stopping_patience=getattr(request, "deep_early_stopping_patience", 5),
         )
 
     register_algorithm("genetic", genetic_factory)

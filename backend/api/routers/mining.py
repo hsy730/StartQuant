@@ -943,7 +943,9 @@ def _update_progress(
     # 对外展示：total_generations = 用户设定的迭代次数（不含初始评估）
     user_n_gen = total_gen - 1 if total_gen > 1 else total_gen
     progress = int(gen / max(total_gen, 1) * 100)
-    mining_tasks[task_id]["progress"] = min(progress, 99)  # 验证阶段不超过99%
+    # 防止进度倒退（如 _set_phase 预设了50%，后续回调不应低于该值）
+    current_progress = mining_tasks[task_id].get("progress", 0)
+    mining_tasks[task_id]["progress"] = max(min(progress, 99), current_progress)
 
     # 验证阶段（gen > user_n_gen）截断 current_generation，避免显示 11/10
     # 由 phase="validating" 区分状态
