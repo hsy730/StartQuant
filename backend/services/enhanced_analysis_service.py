@@ -8,13 +8,13 @@ from typing import Dict, List, Any
 import logging
 
 from scipy import stats
-from scipy.stats import spearmanr
 
 from backend.services.factor_neutralization_service import factor_neutralization_service
 from backend.services.factor_stability_service import factor_stability_service
 from backend.services.factor_summary_service import factor_summary_service
 from backend.utils.safe_math import safe_ir, safe_divide
 from backend.constants import STATISTICAL_SIGNIFICANCE_ALPHA, HIGHLY_SIGNIFICANT_ALPHA
+from backend.utils.ic_calculator import calculate_cross_sectional_ic_from_panel
 
 logger = logging.getLogger(__name__)
 
@@ -67,34 +67,48 @@ class EnhancedAnalysisService:
             date_col = valid_data["date"]
 
         if date_col is not None:
-            ic_list = []
-            for date, group in valid_data.groupby(date_col):
-                if len(group) < 5:
-                    continue
-                ic_val, _ = spearmanr(group["factor"], group["return"])
-                if not np.isnan(ic_val):
-                    ic_list.append(ic_val)
+            # 使用统一入口计算横截面IC（规则5：代码复用，规则7.1：横截面Spearman）
+            panel_for_ic = valid_data.copy()
+            if isinstance(date_col, pd.DatetimeIndex):
+                panel_for_ic["_date"] = date_col
+            elif isinstance(valid_data.index, pd.MultiIndex):
+                panel_for_ic["_date"] = valid_data.index.get_level_values(0)
+            else:
+                panel_for_ic["_date"] = date_col
 
-            if len(ic_list) < 2:
+            ic_result = calculate_cross_sectional_ic_from_panel(
+                panel_for_ic,
+                factor_column="factor",
+                return_column="return",
+                date_column="_date",
+                min_stocks=5,
+                min_dates=2,
+                method="spearman",
+            )
+
+            if ic_result is None:
                 return {
                     "ic": None,
                     "p_value": None,
                     "is_significant": False,
                     "method": "spearman",
                     "n_samples": len(valid_data),
-                    "n_cross_sections": len(ic_list),
+                    "n_cross_sections": 0,
                     "error": "有效截面不足（至少需要2个截面）",
                 }
 
-            ic_series = pd.Series(ic_list)
-            mean_ic = float(ic_series.mean())
+            ic_series = pd.Series(ic_result["ic_list"])
+            mean_ic = ic_result["mean_ic"]
+            n_cross = ic_result["n_dates"]
+
+            # 使用 scipy.stats.ttest_1samp 替代手动 t 检验（规则0：开源库优先）
             t_stat, p_value = stats.ttest_1samp(ic_series.dropna(), 0)
 
             # 计算置信区间
             alpha = 1 - confidence_level
-            t_critical = stats.t.ppf(1 - alpha / 2, df=len(ic_series) - 1)
+            t_critical = stats.t.ppf(1 - alpha / 2, df=n_cross - 1)
             se = safe_divide(
-                ic_series.std(ddof=1), np.sqrt(len(ic_series)), default=None
+                ic_series.std(ddof=1), np.sqrt(n_cross), default=None
             )
             if se is not None:
                 ci_lower = mean_ic - t_critical * se
@@ -120,7 +134,7 @@ class EnhancedAnalysisService:
                     "level": confidence_level,
                 },
                 "n_samples": len(valid_data),
-                "n_cross_sections": len(ic_list),
+                "n_cross_sections": n_cross,
                 "method": "spearman_cross_sectional",
                 "interpretation": (
                     f"横截面IC均值在{confidence_level * 100:.0f}%置信区间为[{ci_lower:.4f}, {ci_upper:.4f}]"
@@ -153,13 +167,7 @@ class EnhancedAnalysisService:
         """
         计算横截面Spearman IC（规则7.1：禁止池化Spearman）
 
-        按日期分组，每个截面独立计算spearmanr，再取均值。
-        如果无日期信息，返回None（池化相关违反独立性假设）。
-
-        注意：此方法与 ic_calculator.calculate_ic 功能不同。
-        calculate_ic 计算单期IC（两个Series之间的相关系数），
-        而此方法按日期截面逐个计算IC再取均值（面板数据专用）。
-        单期场景应优先使用 ic_calculator.calculate_ic。
+        委托 ic_calculator.calculate_cross_sectional_ic_from_panel 统一入口（规则5：代码复用）
 
         Args:
             factor_values: 因子值序列
@@ -175,26 +183,29 @@ class EnhancedAnalysisService:
             logger.warning("无日期信息，无法计算横截面IC")
             return None
 
-        ic_list = []
-        # Reset to integer index to avoid .loc inflating sample size with duplicate DatetimeIndex
-        factor_values_reset = factor_values.reset_index(drop=True)
-        return_values_reset = return_values.reset_index(drop=True)
-        date_series_reset = date_series.reset_index(drop=True)
+        panel = pd.DataFrame({
+            "factor": factor_values.reset_index(drop=True),
+            "return": return_values.reset_index(drop=True),
+        })
+        if isinstance(date_series, pd.Series):
+            panel["_date"] = date_series.reset_index(drop=True)
+        else:
+            panel["_date"] = pd.Series(date_series).reset_index(drop=True)
 
-        for date, group_idx in date_series_reset.groupby(date_series_reset):
-            factor_group = factor_values_reset.iloc[group_idx.index]
-            return_group = return_values_reset.iloc[group_idx.index]
-            valid = factor_group.notna() & return_group.notna()
-            if valid.sum() < 5:
-                continue
-            ic_val, _ = spearmanr(factor_group[valid], return_group[valid])
-            if not np.isnan(ic_val):
-                ic_list.append(ic_val)
+        result = calculate_cross_sectional_ic_from_panel(
+            panel,
+            factor_column="factor",
+            return_column="return",
+            date_column="_date",
+            min_stocks=5,
+            min_dates=1,
+            method="spearman",
+        )
 
-        if len(ic_list) < 1:
+        if result is None:
             return None
 
-        return float(np.mean(ic_list))
+        return result["mean_ic"]
 
     def analyze_enhanced(
         self,
@@ -269,28 +280,29 @@ class EnhancedAnalysisService:
 
             if panel_data:
                 panel_df = pd.concat(panel_data)
-                # 按日期分组计算横截面IC
-                daily_ics = []
-                for date, group in panel_df.groupby(panel_df.index):
-                    if len(group) < 3:  # 截面至少3只股票才有意义
-                        continue
-                    ic_val = group[factor_name].corr(
-                        group["future_return"], method="spearman"
-                    )
-                    if not np.isnan(ic_val):
-                        daily_ics.append(ic_val)
+                # 使用统一入口计算横截面IC（规则5：代码复用，规则7.1：横截面Spearman）
+                ic_result = calculate_cross_sectional_ic_from_panel(
+                    panel_df,
+                    factor_column=factor_name,
+                    return_column="future_return",
+                    date_column=None,  # 使用DataFrame索引作为日期
+                    min_stocks=3,
+                    min_dates=1,
+                    method="spearman",
+                )
 
-                if daily_ics:
-                    mean_ic = float(np.mean(daily_ics))
-                    ic_std = (
-                        float(np.std(daily_ics, ddof=1)) if len(daily_ics) > 1 else 0.0
-                    )
-                    n_days = len(daily_ics)
-                    # t检验：IC均值是否显著不为0
-                    if ic_std > 1e-10:
-                        se = safe_divide(ic_std, np.sqrt(n_days), default=None)
-                        t_stat = safe_divide(mean_ic, se, default=0.0) if se is not None else 0.0
-                        p_value = 2 * (1 - stats.t.cdf(abs(t_stat), df=n_days - 1))
+                if ic_result is not None:
+                    mean_ic = ic_result["mean_ic"]
+                    ic_std = ic_result["ic_std"]
+                    n_days = ic_result["n_dates"]
+                    daily_ics = ic_result["ic_list"]
+
+                    # 使用 scipy.stats.ttest_1samp 替代手动 t 检验（规则0：开源库优先）
+                    if ic_std > 1e-10 and len(daily_ics) > 1:
+                        ic_series_for_test = pd.Series(daily_ics)
+                        t_stat, p_value = stats.ttest_1samp(ic_series_for_test, 0)
+                        t_stat = float(t_stat)
+                        p_value = float(p_value)
                         is_significant = p_value < 0.05
                     else:
                         # IC标准差接近0时（规则7.10/7.15）

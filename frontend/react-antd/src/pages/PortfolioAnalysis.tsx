@@ -158,14 +158,19 @@ const PortfolioAnalysis: React.FC = () => {
     }
 
     const [startDate, endDate] = values.dateRange
-    const requestData = {
-      stock_code: values.stock_code || '000001', // 添加必需的 stock_code 字段
+    const requestData: Record<string, any> = {
+      stock_code: values.stock_code || '000001',
       factors: selectedFactors,
       start_date: startDate.format('YYYY-MM-DD'),
       end_date: endDate.format('YYYY-MM-DD'),
       method: values.method,
-      rebalance_freq: values.rebalance_frequency // 使用正确的字段名
+      rebalance_freq: values.rebalance_frequency
     }
+    // 传递用户配置的可选参数
+    if (values.risk_free_rate != null) requestData.risk_free_rate = values.risk_free_rate
+    if (values.min_weight != null) requestData.min_weight = values.min_weight
+    if (values.max_weight != null) requestData.max_weight = values.max_weight
+    if (values.target_return != null) requestData.target_return = values.target_return
 
     try {
       setLoading(true)
@@ -831,8 +836,8 @@ ${factorNames.map(name => `    ${name}: ${(weights[name] * 100).toFixed(2)}%`).j
     chart.clear()
 
     const methods = Object.keys(results)
-    const returnData = methods.map(m => ((results[m].annual_return || 0) * 100).toFixed(2))
-    const sharpeData = methods.map(m => (results[m].sharpe_ratio || 0).toFixed(2))
+    const returnData = methods.map(m => ((results[m].ic_mean || 0) * 100).toFixed(2))
+    const irData = methods.map(m => (results[m].ir || 0).toFixed(2))
 
     const option = {
       title: {
@@ -899,10 +904,10 @@ ${factorNames.map(name => `    ${name}: ${(weights[name] * 100).toFixed(2)}%`).j
           }
         },
         {
-          name: 'IR',
+          name: 'IR (信息比率)',
           type: 'line',
           yAxisIndex: 1,
-          data: sharpeData,
+          data: irData,
           itemStyle: {
             color: '#10b981'
           }
@@ -925,20 +930,19 @@ ${factorNames.map(name => `    ${name}: ${(weights[name] * 100).toFixed(2)}%`).j
         max_return: '最大收益',
         min_variance: '最小方差'
       }
-      const annualReturn = metrics.annual_return || 0
-      const icMean = metrics.ic_mean || 0
+      const icMeanValue = metrics.ic_mean || 0
       const icStd = metrics.ic_std || 0
       const ir = metrics.ir || 0
 
       return {
         key: method,
         method: methodMap[method] || method,
-        return_rate: (annualReturn * 100).toFixed(2) + '%',
+        return_rate: (icMeanValue * 100).toFixed(2) + '%',
         volatility: (icStd * 100).toFixed(4),
-        sharpe_ratio: ir.toFixed(4),
-        return_value: annualReturn,
-        sharpe_value: ir,
-        ic_mean: icMean.toFixed(4),
+        ir: ir.toFixed(4),
+        return_value: icMeanValue,
+        ir_value: ir,
+        ic_mean: icMeanValue.toFixed(4),
         ic_std: icStd.toFixed(4)
       }
     })
@@ -969,14 +973,14 @@ ${factorNames.map(name => `    ${name}: ${(weights[name] * 100).toFixed(2)}%`).j
     },
     {
       title: 'IR (信息比率)',
-      dataIndex: 'sharpe_ratio',
-      key: 'sharpe_ratio',
+      dataIndex: 'ir',
+      key: 'ir',
       render: (text: string, record: any) => (
-        <Tag color={record.sharpe_value > 1 ? 'green' : record.sharpe_value > 0.5 ? 'blue' : 'orange'}>
+        <Tag color={record.ir_value > 1 ? 'green' : record.ir_value > 0.5 ? 'blue' : 'orange'}>
           {text}
         </Tag>
       ),
-      sorter: (a: any, b: any) => a.sharpe_value - b.sharpe_value
+      sorter: (a: any, b: any) => a.ir_value - b.ir_value
     }
   ]
 

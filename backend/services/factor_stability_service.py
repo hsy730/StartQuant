@@ -11,7 +11,7 @@ from statsmodels.tsa.stattools import adfuller
 
 from backend.utils.returns import calculate_future_returns
 from backend.utils.safe_math import safe_divide, safe_ir
-from backend.utils.ic_calculator import calculate_rolling_ic
+from backend.utils.ic_calculator import calculate_rolling_ic, calculate_cross_sectional_ic_from_panel
 from backend.services.data_service import data_service
 from backend.services.factor_service import factor_service
 from backend.repositories.factor_repository import FactorRepository
@@ -340,7 +340,7 @@ class FactorStabilityService:
         # 找到regime变化的边界点
         regime_change = regime_series != regime_series.shift(1)
         group_ids = regime_change.cumsum()
-        # 对每个连续区间计算IC
+        # 对每个连续区间计算IC（使用统一入口，规则5：代码复用）
         regime_performance = {}
         for group_id, group_indices in regime_series.groupby(group_ids).groups.items():
             regime = regime_series.loc[group_indices[0]]
@@ -350,16 +350,18 @@ class FactorStabilityService:
             regime_data = factor_data.iloc[start_idx:end_idx]
 
             if factor_name in regime_data.columns and return_col in regime_data.columns:
-                from scipy.stats import spearmanr
-
-                valid = (
-                    regime_data[factor_name].notna() & regime_data[return_col].notna()
-                )
-                if valid.sum() >= 5:
-                    ic, _ = spearmanr(
-                        regime_data.loc[valid.index[valid], factor_name],
-                        regime_data.loc[valid.index[valid], return_col],
+                valid_data = regime_data[[factor_name, return_col]].dropna()
+                if len(valid_data) >= 5:
+                    ic_result = calculate_cross_sectional_ic_from_panel(
+                        valid_data,
+                        factor_column=factor_name,
+                        return_column=return_col,
+                        date_column=None,
+                        min_stocks=5,
+                        min_dates=1,
+                        method="spearman",
                     )
+                    ic = ic_result["mean_ic"] if ic_result is not None else np.nan
                 else:
                     ic = np.nan
 
@@ -504,19 +506,26 @@ class FactorStabilityService:
                     panel_frames.append(stock_df)
                 panel_df = pd.concat(panel_frames)
 
-                # 对每个日期截面计算Spearman IC（按日期分组向量化）
-                from scipy.stats import spearmanr
-
-                ic_dates = []
-                ic_values = []
-                for date, group in panel_df.groupby(panel_df.index):
-                    if len(group) >= 3:  # 至少3只股票才有统计意义
-                        ic, _ = spearmanr(
-                            group["factor"].values, group["future_return"].values
-                        )
-                        if not np.isnan(ic):
-                            ic_dates.append(date)
-                            ic_values.append(ic)
+                # 使用统一入口计算横截面IC（规则5：代码复用，规则7.1：横截面Spearman）
+                ic_result = calculate_cross_sectional_ic_from_panel(
+                    panel_df,
+                    factor_column="factor",
+                    return_column="future_return",
+                    date_column=None,  # 使用索引作为日期
+                    min_stocks=3,
+                    min_dates=1,
+                    method="spearman",
+                )
+                if ic_result is not None:
+                    ic_values = ic_result["ic_list"]
+                    # 从有效截面中提取日期标签
+                    ic_dates = [
+                        date for date, group in panel_df.groupby(panel_df.index)
+                        if len(group) >= 3
+                    ][:len(ic_values)]
+                else:
+                    ic_values = []
+                    ic_dates = []
 
                 if len(ic_values) > 0:
                     all_ic_series = [pd.Series(ic_values, index=ic_dates)]

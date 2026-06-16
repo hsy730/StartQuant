@@ -305,7 +305,7 @@ export const PreprocessingConfigPanel: React.FC<PreprocessingConfigPanelProps> =
                             marginLeft: 4
                           }}
                         >
-                          {(recommendation.confidence * 100).toFixed(0)}%
+                          {((recommendation.confidence ?? 0) * 100).toFixed(0)}%
                         </Text>
                       </div>
                     </Col>
@@ -372,7 +372,7 @@ export const PreprocessingConfigPanel: React.FC<PreprocessingConfigPanelProps> =
                       <Col span={12}>
                         <Text type="secondary">因子波动率：</Text>
                         <Text strong>
-                          {recommendation.data_characteristics.factor_volatility.toFixed(4)}
+                          {recommendation.data_characteristics.factor_volatility?.toFixed(4) ?? 'N/A'}
                         </Text>
                       </Col>
                       <Col span={12}>
@@ -384,7 +384,7 @@ export const PreprocessingConfigPanel: React.FC<PreprocessingConfigPanelProps> =
                       <Col span={12}>
                         <Text type="secondary">异常值比例：</Text>
                         <Text strong>
-                          {(recommendation.data_characteristics.outlier_ratio * 100).toFixed(2)}%
+                          {((recommendation.data_characteristics.outlier_ratio ?? 0) * 100).toFixed(2)}%
                         </Text>
                       </Col>
                       <Col span={12}>

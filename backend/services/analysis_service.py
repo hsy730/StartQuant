@@ -44,7 +44,6 @@ from backend.utils.ic_calculator import calculate_rolling_ic  # noqa: E402
 from backend.constants import (  # noqa: E402
     ANNUAL_TRADING_DAYS,
     ROLLING_IC_WINDOW,
-    MIN_SAMPLE_SIZE_FOR_IC,
 )
 
 
@@ -472,152 +471,20 @@ class AnalysisService:
             return result
 
         # 多股票模式：使用Alphalens（业界金标准）
-        try:
-            result = self._calculate_multi_stock_ic_alphalens(
-                factor_data_copy, factor_names, stock_codes
-            )
-            if result.get("ic_stats"):
-                logger.info("Alphalens多股票IC计算成功")
-                return result
-            else:
-                logger.warning("Alphalens返回空结果，尝试手动回退方法")
-        except Exception as e:
-            logger.warning(f"Alphalens多股票IC计算失败: {e}，尝试手动回退方法")
+        # 规则0：开源库是本地依赖，不存在不可用的情况，不做fallback
+        result = self._calculate_multi_stock_ic_alphalens(
+            factor_data_copy, factor_names, stock_codes
+        )
+        if result.get("ic_stats"):
+            logger.info("Alphalens多股票IC计算成功")
+            return result
 
-        # Alphalens失败时，回退到手动横截面IC计算
-        try:
-            result = self._calculate_multi_stock_ic_manual(
-                factor_data_copy, factor_names, stock_codes
-            )
-            if result.get("ic_stats"):
-                logger.info("手动横截面IC计算成功（Alphalens回退）")
-                return result
-        except Exception as e:
-            logger.error(f"手动横截面IC计算也失败: {e}", exc_info=True)
-
-        logger.error("Alphalens和手动方法均失败，无法进行横截面IC分析")
+        logger.warning("Alphalens多股票IC计算返回空结果，请检查因子数据质量")
         return {
             "ic_stats": {},
             "monthly_ic": {},
             "rolling_ir": {},
-            "error": "Alphalens和手动方法均失败",
-        }
-
-    def _calculate_multi_stock_ic_manual(
-        self,
-        factor_data: Dict[str, pd.DataFrame],
-        factor_names: List[str],
-        stock_codes: Optional[List[str]] = None,
-    ) -> Dict[str, Any]:
-        """手动多股票横截面IC计算（当Alphalens不可用时的回退方案）
-
-        使用Spearman秩相关（业界标准）+ 向量化groupby操作
-        """
-        from scipy import stats as scipy_stats
-
-        codes = stock_codes or list(factor_data.keys())
-
-        ic_series = {}
-        for factor_name in factor_names:
-            # 向量化构建横截面数据：拼接所有股票，用groupby计算每日IC
-            all_rows = []
-            for stock_code in codes:
-                df = factor_data.get(stock_code)
-                if df is None:
-                    continue
-                if factor_name not in df.columns or "future_return_1" not in df.columns:
-                    continue
-
-                stock_data = df[[factor_name, "future_return_1"]].copy()
-                stock_data["stock_code"] = stock_code
-                # 保留日期信息
-                if isinstance(df.index, pd.DatetimeIndex):
-                    stock_data["date"] = df.index
-                elif "date" in df.columns:
-                    stock_data["date"] = df["date"]
-                else:
-                    stock_data["date"] = df.index
-                all_rows.append(stock_data)
-
-            if not all_rows:
-                continue
-
-            merged = pd.concat(all_rows, ignore_index=True)
-            merged["date"] = pd.to_datetime(merged["date"])
-
-            # 清理无效值
-            valid_mask = (
-                merged[factor_name].notna()
-                & merged["future_return_1"].notna()
-                & ~np.isinf(merged[factor_name])
-                & ~np.isinf(merged["future_return_1"])
-            )
-            merged = merged[valid_mask]
-
-            if len(merged) < MIN_SAMPLE_SIZE_FOR_IC:
-                continue
-
-            # 向量化：按日期分组计算Spearman秩相关IC
-            def _spearman_ic(group):
-                if len(group) < 2:
-                    return np.nan
-                return scipy_stats.spearmanr(
-                    group[factor_name], group["future_return_1"]
-                ).correlation
-
-            daily_ic = merged.groupby("date").apply(_spearman_ic)
-            daily_ic = daily_ic.dropna()
-
-            if len(daily_ic) > 5:
-                ic_series[factor_name] = daily_ic
-
-        # 计算统计指标
-        ic_stats = {}
-        for factor_name, ic_s in ic_series.items():
-            ic_mean = float(ic_s.mean())
-            ic_std = float(ic_s.std()) if len(ic_s) > 1 else 0.0
-            ir = safe_ir(ic_mean, ic_std, default=None)
-
-            n = len(ic_s)
-            # 规则7.10：ic_std≈0但ic_mean显著非零时，因子极其稳定，t_stat→∞
-            if ic_std < 1e-10:
-                if abs(ic_mean) > 1e-10:
-                    t_stat = float("inf")
-                    p_value = 0.0
-                else:
-                    t_stat = 0.0
-                    p_value = 1.0
-            else:
-                t_stat = (
-                    safe_divide(ic_mean * np.sqrt(n), ic_std, default=0.0)
-                    if n > 1
-                    else 0.0
-                )
-                p_value = (
-                    float(2 * (1 - scipy_stats.t.cdf(abs(t_stat), df=n - 1)))
-                    if n > 1
-                    else 1.0
-                )
-
-            ic_stats[factor_name] = {
-                "IC均值": ic_mean,
-                "IC标准差": ic_std,
-                "IR": ir,
-                "IC>0占比": float((ic_s > 0).mean()),
-                "IC绝对值均值": float(abs(ic_s).mean()),
-                "IC序列": ic_s.to_dict(),
-                "IC类型": "横截面IC（手动计算）",
-                "t统计量": t_stat if np.isfinite(t_stat) else None,
-                "p值": p_value if np.isfinite(p_value) else None,
-            }
-
-        return {
-            "ic_stats": ic_stats,
-            "monthly_ic": self._calculate_monthly_ic(ic_series),
-            "rolling_ir": self._calculate_rolling_ir(
-                ic_series, window=ROLLING_IC_WINDOW
-            ),
-            "warning": "使用手动横截面IC计算（Alphalens不可用或返回空结果）",
+            "warning": "Alphalens分析未返回有效结果，请检查因子数据是否包含足够有效值",
         }
 
     def _calculate_single_stock_ic(

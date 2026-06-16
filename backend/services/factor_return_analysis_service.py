@@ -22,6 +22,7 @@ from enum import Enum
 import logging
 from scipy import stats as scipy_stats
 from scipy.stats import spearmanr
+import empyrical
 
 from backend.utils.safe_math import safe_divide
 from backend.services.risk_metrics import calculate_sharpe, calculate_risk_metrics
@@ -655,34 +656,32 @@ class FactorReturnAnalysisService:
                 "interpretation": self._interpret_spread(spread, 1.0),
             }
 
-        # Welch's t-test: t = spread / sqrt(std_top^2/n_top + std_bottom^2/n_bottom)
+        # 使用 scipy.stats.ttest_ind_from_stats 替代手动 Welch's t 检验
+        # （规则0：开源库优先，规则7.16：Welch's t 检验无交叉项）
         se = (
             np.sqrt(std_top**2 / n_top + std_bottom**2 / n_bottom)
             if n_top > 0 and n_bottom > 0
             else 0.0
         )
 
-        if se > 1e-10:
-            t_stat = float(spread) / float(se)  # se guaranteed positive (Rule 7.34)
-        elif se > 0:
-            # se is very small but positive → extremely significant
-            t_stat = float("inf") if abs(spread) > 1e-10 else 0.0
+        if n_top > 1 and n_bottom > 1:
+            t_stat_result, p_value = scipy_stats.ttest_ind_from_stats(
+                mean1=top_avg, std1=std_top, nobs1=n_top,
+                mean2=bottom_avg, std2=std_bottom, nobs2=n_bottom,
+                equal_var=False,  # Welch's t-test
+            )
+            t_stat = float(t_stat_result)
+            p_value = float(p_value)
+        elif n_top > 0 and n_bottom > 0:
+            # 样本不足时用简化计算
+            if se > 1e-10:
+                t_stat = float(spread) / float(se)
+            else:
+                t_stat = float("inf") if abs(spread) > 1e-10 else 0.0
+            p_value = float(2 * (1 - scipy_stats.t.cdf(abs(t_stat), df=max(n_top + n_bottom - 2, 1))))
         else:
             t_stat = 0.0
-
-        # Welch-Satterthwaite degrees of freedom
-        if se > 0 and n_top > 1 and n_bottom > 1:
-            var_top = top_group["std_return"] ** 2
-            var_bottom = bottom_group["std_return"] ** 2
-            numerator = (var_top / n_top + var_bottom / n_bottom) ** 2
-            denominator = (var_top / n_top) ** 2 / (n_top - 1) + (
-                var_bottom / n_bottom
-            ) ** 2 / (n_bottom - 1)
-            df = safe_divide(numerator, denominator, default=n_top + n_bottom - 2)
-        else:
-            df = max(n_top + n_bottom - 2, 1)
-
-        p_value = 2 * (1 - scipy_stats.t.cdf(abs(t_stat), df=df))
+            p_value = 1.0
 
         return {
             "long_short_spread": float(spread),
@@ -869,11 +868,11 @@ class FactorReturnAnalysisService:
             dd = metrics.get("max_drawdown")
             return abs(float(dd)) if dd is not None else None
 
-        # 数据不足，手动计算
-        wealth_index = pd.Series(returns).add(1).cumprod()
-        peak = wealth_index.expanding().max()
-        drawdown = safe_divide(wealth_index - peak, peak, default=0.0)
-        return abs(float(drawdown.min())) if len(drawdown) > 0 else 0.0
+        # 数据不足时使用 empyrical（规则0：开源库优先）
+        try:
+            return abs(float(empyrical.max_drawdown(daily_returns, period="daily")))
+        except Exception:
+            return 0.0
 
     def _calculate_sharpe_ratio(
         self, returns: pd.Series, risk_free_rate: float = 0.03

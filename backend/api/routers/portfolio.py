@@ -5,7 +5,7 @@
 import logging
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from typing import List
+from typing import List, Optional
 
 from backend.utils.serialization import safe_numeric_value, sanitize_dict
 from backend.utils.safe_math import safe_divide, safe_ir, safe_series_divide
@@ -32,6 +32,10 @@ class OptimizeWeightsRequest(BaseModel):
     end_date: str
     method: str = "equal_weight"
     rebalance_freq: str = "monthly"
+    risk_free_rate: Optional[float] = None
+    min_weight: Optional[float] = None
+    max_weight: Optional[float] = None
+    target_return: Optional[float] = None
 
 
 class CompositeScoreRequest(BaseModel):
@@ -240,6 +244,9 @@ async def optimize_weights(request: OptimizeWeightsRequest):
         result["composite_score"] = composite_score
         result["composite_stats"] = composite_stats
 
+        # 权重优化迭代历史（当前优化器为解析解，无迭代过程）
+        result["weights_history"] = []
+
         # 转换 numpy 类型为 Python 原生类型，以避免 JSON 序列化错误
         result = sanitize_dict(result)
 
@@ -434,6 +441,8 @@ async def compare_weight_methods(request: CompareMethodsRequest):
                         "ic_mean": float(ic_mean),
                         "ic_std": float(ic_std),
                         "ir": float(ir) if ir is not None else None,
+                        "annual_return": float(ic_mean),  # 前端兼容：年化IC收益率
+                        "sharpe_ratio": float(ir) if ir is not None else None,  # 前端兼容：IR
                         "ir_annualized": float(ir * np.sqrt(252))
                         if ir is not None
                         else None,
@@ -446,6 +455,8 @@ async def compare_weight_methods(request: CompareMethodsRequest):
                         "ic_mean": None,
                         "ic_std": None,
                         "ir": None,
+                        "annual_return": None,
+                        "sharpe_ratio": None,
                         "ic_annualized": None,
                         "ic_volatility_annualized": None,
                         "information_ratio": None,
@@ -460,6 +471,8 @@ async def compare_weight_methods(request: CompareMethodsRequest):
                     "ic_mean": None,
                     "ic_std": None,
                     "ir": None,
+                    "annual_return": None,
+                    "sharpe_ratio": None,
                     "ic_annualized": None,
                     "ic_volatility_annualized": None,
                     "information_ratio": None,

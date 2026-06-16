@@ -347,11 +347,7 @@ const FactorDetail: React.FC = () => {
       } as any) as any
 
       if (response.success && response.data) {
-        let icStats = response.data.ic_stats || response.data?.metadata?.ic_stats || {}
-
-        if (icStats.ic_stats) {
-          icStats = icStats.ic_stats
-        }
+        let icStats = response.data.ic_stats || {}
 
         const factorNames = Object.keys(icStats)
         if (factorNames.length === 0) {

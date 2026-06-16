@@ -10,7 +10,7 @@ from scipy.stats import spearmanr
 
 from backend.utils.returns import calculate_future_returns
 from backend.utils.safe_math import safe_ir
-from backend.utils.ic_calculator import calculate_rolling_ic
+from backend.utils.ic_calculator import calculate_rolling_ic, calculate_cross_sectional_ic_from_panel
 
 logger = logging.getLogger(__name__)
 
@@ -86,8 +86,7 @@ class FactorEffectivenessService:
 
         # 多股票时使用横截面IC（规则7.1），单股票时池化是唯一选择
         if len(factor_data) >= 2:
-            cross_sectional_ics = []
-            # 合并所有股票数据，按日期分组计算横截面IC
+            # 使用统一入口计算横截面IC（规则5：代码复用）
             panel_frames = []
             for stock_code, df in factor_data.items():
                 if factor_name in df.columns and "close" in df.columns:
@@ -102,17 +101,17 @@ class FactorEffectivenessService:
 
             if panel_frames:
                 panel_df = pd.concat(panel_frames)
-                for date, group in panel_df.groupby(panel_df.index):
-                    if len(group) < 3:
-                        continue
-                    ic_val, p_val = spearmanr(
-                        group[factor_name], group["future_return_1"]
-                    )
-                    if not np.isnan(ic_val):
-                        cross_sectional_ics.append(ic_val)
-
-                if cross_sectional_ics:
-                    correlation = float(np.mean(cross_sectional_ics))
+                ic_result = calculate_cross_sectional_ic_from_panel(
+                    panel_df,
+                    factor_column=factor_name,
+                    return_column="future_return_1",
+                    date_column=None,  # 使用索引作为日期
+                    min_stocks=3,
+                    min_dates=1,
+                    method="spearman",
+                )
+                if ic_result is not None:
+                    correlation = ic_result["mean_ic"]
                     p_value = None  # 横截面IC均值无单一p值
                 else:
                     correlation, p_value = spearmanr(factor_values, returns)
@@ -136,9 +135,12 @@ class FactorEffectivenessService:
         num_stocks = len(factor_data)
 
         if num_stocks >= 2:
+            # 规则0：开源库是本地依赖，不做fallback
             al_result = self._calc_ic_via_alphalens(factor_data, factor_name)
-            if al_result and "error" not in al_result:
+            if al_result is not None:
                 return al_result
+            # Alphalens返回None（数据不足等），继续用横截面IC
+            logger.info("Alphalens IC不可用，使用横截面IC计算")
 
         all_data = []
         for stock_code, df in factor_data.items():
@@ -269,42 +271,38 @@ class FactorEffectivenessService:
     def _calculate_cross_sectional_ic(
         self, df: pd.DataFrame, factor_name: str
     ) -> Dict[str, Any]:
-        """计算横截面IC（适用于多只股票）"""
-        ic_values = []
-        dates = []
+        """计算横截面IC（适用于多只股票）— 委托统一入口（规则5：代码复用）"""
+        ic_result = calculate_cross_sectional_ic_from_panel(
+            df,
+            factor_column=factor_name,
+            return_column="future_return",
+            date_column=None,  # 使用索引(level=0)作为日期
+            min_stocks=2,
+            min_dates=1,
+            method="spearman",
+        )
 
-        grouped = df.groupby(level=0)
-        for date, group in grouped:
-            if len(group) < 2:
-                continue
-            # 直接在group内dropna，避免重复索引下loc返回错误行数
-            valid = group[[factor_name, "future_return"]].dropna()
-            if len(valid) < 2:
-                continue
-            try:
-                # 使用Spearman秩相关（业界标准），与Alphalens一致
-                ic, _ = spearmanr(valid[factor_name], valid["future_return"])
-                if not np.isnan(ic) and not np.isinf(ic):
-                    ic_values.append(float(ic))
-                    dates.append(str(date))
-            except Exception as e:
-                logger.debug(f"IC计算失败: {e}")
-                continue
-
-        if not ic_values:
+        if ic_result is None:
             return {"error": "无法计算IC序列"}
 
-        ic_series = pd.Series(ic_values)
-        ic_std = float(ic_series.std()) if len(ic_series) > 1 else None
+        ic_values = ic_result["ic_list"]
+        ic_std = ic_result["ic_std"]
+        # 日期标签：从有效截面中提取
+        dates = [
+            str(date)
+            for date, group in df.groupby(level=0)
+            if len(group[[factor_name, "future_return"]].dropna()) >= 2
+        ][:len(ic_values)]
+
         return {
             "dates": dates,
             "ic_values": [float(v) for v in ic_values],
-            "ic_mean": float(ic_series.mean()),
-            "ic_std": ic_std,
-            "ir": safe_ir(float(ic_series.mean()), ic_std, default=None)
-            if ic_std is not None
+            "ic_mean": ic_result["mean_ic"],
+            "ic_std": ic_std if ic_std > 0 else None,
+            "ir": safe_ir(ic_result["mean_ic"], ic_std, default=None)
+            if ic_std is not None and ic_std > 0
             else None,
-            "ic_positive_ratio": float((ic_series > 0).mean()),
+            "ic_positive_ratio": ic_result["ic_positive_ratio"],
         }
 
     def _analyze_event_response(
@@ -443,9 +441,11 @@ class FactorEffectivenessService:
         因子衰减分析 - 计算不同持有期的IC（优先使用Alphalens多周期IC）
         """
         if len(factor_data) >= 2:
+            # 规则0：开源库是本地依赖，不做fallback
             al_decay = self._calc_decay_via_alphalens(factor_data, factor_name, periods)
-            if al_decay and "error" not in al_decay:
+            if al_decay is not None and "error" not in al_decay:
                 return al_decay
+            logger.info("Alphalens衰减分析不可用，使用横截面IC计算")
 
         decay_data = []
         for period in periods:
@@ -478,13 +478,20 @@ class FactorEffectivenessService:
                 combined = pd.concat(combined_frames, ignore_index=True)
                 combined = combined.dropna(subset=["factor", "return"])
 
-                for date, group in combined.groupby("date"):
-                    if len(group) >= 5:  # 最少5只股票
-                        ic_val, _ = spearmanr(
-                            group["factor"], group["return"]
-                        )
-                        if not np.isnan(ic_val) and not np.isinf(ic_val):
-                            daily_ics.append(ic_val)
+                # 使用统一入口计算横截面IC（规则5：代码复用）
+                ic_result = calculate_cross_sectional_ic_from_panel(
+                    combined,
+                    factor_column="factor",
+                    return_column="return",
+                    date_column="date",
+                    min_stocks=5,
+                    min_dates=1,
+                    method="spearman",
+                )
+                if ic_result is not None:
+                    daily_ics = ic_result["ic_list"]
+                else:
+                    daily_ics = []
 
             mean_ic = float(np.mean(daily_ics)) if daily_ics else None
 

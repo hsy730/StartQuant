@@ -16,6 +16,7 @@ from backend.services.risk_metrics import (
     calculate_relative_metrics,
 )
 from backend.utils.safe_math import safe_divide
+from backend.utils.ic_calculator import calculate_cross_sectional_ic_from_panel
 from backend.constants import ANNUAL_TRADING_DAYS, RISK_FREE_RATE
 
 logger = logging.getLogger(__name__)
@@ -134,12 +135,8 @@ class FactorAttributionService:
                 "contribution_ratio": float     # 因子贡献比例
             }
         """
-        # 按日期计算横截面IC（业界标准方法）
-        from scipy.stats import spearmanr
-
-        # 构建日期-股票的因子值和未来收益面板
-        factor_panel = {}
-        return_panel = {}
+        # 构建面板数据，使用统一入口计算横截面IC（规则5：代码复用，规则7.1：横截面Spearman）
+        panel_frames = []
         for stock_code, df in factor_data.items():
             if factor_name in df.columns and "close" in df.columns:
                 df_copy = df.copy()
@@ -148,22 +145,25 @@ class FactorAttributionService:
                 )
                 valid = df_copy[[factor_name, "future_return"]].dropna()
                 valid = valid[~np.isinf(valid["future_return"])]
-                for date, group in valid.groupby(valid.index):
-                    if date not in factor_panel:
-                        factor_panel[date] = []
-                        return_panel[date] = []
-                    factor_panel[date].extend(group[factor_name].tolist())
-                    return_panel[date].extend(group["future_return"].tolist())
+                if len(valid) > 0:
+                    valid = valid.copy()
+                    valid["_stock_code"] = stock_code
+                    panel_frames.append(valid)
 
-        # 每日横截面Rank IC
         daily_ics = []
-        for date in sorted(factor_panel.keys()):
-            fv = factor_panel[date]
-            rv = return_panel[date]
-            if len(fv) >= 5 and np.std(fv) >= 1e-10:
-                ic, _ = spearmanr(fv, rv)
-                if not np.isnan(ic):
-                    daily_ics.append(ic)
+        if panel_frames:
+            panel = pd.concat(panel_frames)
+            ic_result = calculate_cross_sectional_ic_from_panel(
+                panel,
+                factor_column=factor_name,
+                return_column="future_return",
+                date_column=None,  # 使用索引作为日期
+                min_stocks=5,
+                min_dates=1,
+                method="spearman",
+            )
+            if ic_result is not None:
+                daily_ics = ic_result["ic_list"]
 
         if len(daily_ics) < 3:
             return {"error": "数据不足以计算贡献度"}
@@ -175,19 +175,20 @@ class FactorAttributionService:
         # 横截面分组收益计算（每日期独立计算分位数阈值，避免池化违反独立性）
         daily_high_returns = []
         daily_low_returns = []
-        for date in sorted(factor_panel.keys()):
-            fv = pd.Series(factor_panel[date])
-            rv = pd.Series(return_panel[date])
-            if len(fv) < 5:
-                continue
-            high_threshold = fv.quantile(0.7)
-            low_threshold = fv.quantile(0.3)
-            high_mask = fv >= high_threshold
-            low_mask = fv <= low_threshold
-            if high_mask.sum() > 0:
-                daily_high_returns.append(rv[high_mask].mean())
-            if low_mask.sum() > 0:
-                daily_low_returns.append(rv[low_mask].mean())
+        if panel_frames:
+            for date, group in panel.groupby(panel.index):
+                fv = group[factor_name]
+                rv = group["future_return"]
+                if len(fv) < 5:
+                    continue
+                high_threshold = fv.quantile(0.7)
+                low_threshold = fv.quantile(0.3)
+                high_mask = fv >= high_threshold
+                low_mask = fv <= low_threshold
+                if high_mask.sum() > 0:
+                    daily_high_returns.append(rv[high_mask].mean())
+                if low_mask.sum() > 0:
+                    daily_low_returns.append(rv[low_mask].mean())
 
         high_return = float(np.mean(daily_high_returns)) if daily_high_returns else None
         low_return = float(np.mean(daily_low_returns)) if daily_low_returns else None
@@ -202,7 +203,7 @@ class FactorAttributionService:
         contribution_ratio = ic**2 if not np.isnan(ic) else None
 
         # 总样本量
-        total_samples = sum(len(v) for v in factor_panel.values())
+        total_samples = len(panel) if panel_frames else 0
 
         return {
             "ic": float(ic) if not np.isnan(ic) else None,

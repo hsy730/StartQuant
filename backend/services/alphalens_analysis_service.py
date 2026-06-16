@@ -248,10 +248,11 @@ class AlphalensAnalysisService:
             ic_std = float(ic_series.std()) if n > 1 else 0.0
             ir = safe_ir(float(ic_mean), float(ic_std), default=None)
 
+            # 使用 scipy.stats.ttest_1samp 替代手动 t 检验（规则0：开源库优先）
             if n > 1 and ic_std > 1e-10:
-                se = float(ic_std) / np.sqrt(n)
-                t_stat = float(ic_mean) / se  # se guaranteed positive (Rule 7.34)
-                p_value = float(2 * (1 - scipy_stats.t.cdf(abs(t_stat), df=n - 1)))
+                t_stat, p_value = scipy_stats.ttest_1samp(ic_series, 0)
+                t_stat = float(t_stat)
+                p_value = float(p_value)
             elif n > 1 and ic_std <= 1e-10 and abs(ic_mean) > 1e-10:
                 # 规则7.10：ic_std≈0但ic_mean显著非零时，因子极其稳定，t_stat→∞
                 t_stat = float("inf")

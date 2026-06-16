@@ -205,59 +205,112 @@ def calculate_cross_sectional_ic(
         }
         如果有效截面不足，返回 None
     """
-    ic_list = []
-    all_dates = set()
+    # 向量化构建面板数据，替代三层嵌套循环
+    all_rows = []
     for code, df in factor_data.items():
-        if factor_name in df.columns and return_column in df.columns:
-            if isinstance(df.index, pd.DatetimeIndex):
-                all_dates.update(df.index.tolist())
-            elif "date" in df.columns:
-                all_dates.update(df["date"].tolist())
-
-    for date in sorted(all_dates):
-        factor_vals = []
-        return_vals = []
-        for code, df in factor_data.items():
-            if factor_name not in df.columns or return_column not in df.columns:
-                continue
-            if isinstance(df.index, pd.DatetimeIndex):
-                if date in df.index:
-                    row = df.loc[date]
-                    if isinstance(row, pd.DataFrame):
-                        for _, r in row.iterrows():
-                            f, ret = r.get(factor_name), r.get(return_column)
-                            if pd.notna(f) and pd.notna(ret):
-                                factor_vals.append(f)
-                                return_vals.append(ret)
-                    else:
-                        f, ret = row.get(factor_name), row.get(return_column)
-                        if pd.notna(f) and pd.notna(ret):
-                            factor_vals.append(f)
-                            return_vals.append(ret)
-            elif "date" in df.columns:
-                date_rows = df[df["date"] == date]
-                for _, r in date_rows.iterrows():
-                    f, ret = r.get(factor_name), r.get(return_column)
-                    if pd.notna(f) and pd.notna(ret):
-                        factor_vals.append(f)
-                        return_vals.append(ret)
-
-        if len(factor_vals) < min_stocks:
+        if factor_name not in df.columns or return_column not in df.columns:
             continue
+        stock_data = df[[factor_name, return_column]].copy()
+        stock_data["_stock_code"] = code
+        if isinstance(df.index, pd.DatetimeIndex):
+            stock_data["_date"] = df.index
+        elif "date" in df.columns:
+            stock_data["_date"] = df["date"]
+        else:
+            stock_data["_date"] = df.index
+        all_rows.append(stock_data)
 
-        fv = np.array(factor_vals)
-        rv = np.array(return_vals)
+    if not all_rows:
+        return None
+
+    panel = pd.concat(all_rows, ignore_index=False)
+    panel["_date"] = pd.to_datetime(panel["_date"])
+
+    # 清理无效值
+    valid_mask = (
+        panel[factor_name].notna()
+        & panel[return_column].notna()
+        & ~np.isinf(panel[factor_name])
+        & ~np.isinf(panel[return_column])
+    )
+    panel = panel[valid_mask]
+
+    return _calculate_cross_sectional_ic_from_panel(
+        panel, factor_name, return_column, date_column="_date",
+        min_stocks=min_stocks, min_dates=min_dates, method=method,
+    )
+
+
+def calculate_cross_sectional_ic_from_panel(
+    panel_df: pd.DataFrame,
+    factor_column: str,
+    return_column: str,
+    date_column: Optional[str] = None,
+    min_stocks: int = 5,
+    min_dates: int = 2,
+    method: str = "spearman",
+) -> Optional[dict]:
+    """
+    从面板DataFrame计算横截面IC（统一入口）
+
+    当调用方已经构建好面板DataFrame时，直接使用此函数，
+    避免再经过 dict → panel 的转换开销。
+
+    Args:
+        panel_df: 面板DataFrame，包含因子列、收益率列和日期信息
+        factor_column: 因子列名
+        return_column: 收益率列名
+        date_column: 日期列名，None时使用DataFrame索引
+        min_stocks: 每个截面最少股票数
+        min_dates: 最少有效截面数
+        method: "spearman" 或 "pearson"
+
+    Returns:
+        同 calculate_cross_sectional_ic
+    """
+    panel = panel_df.copy()
+    if date_column is not None and date_column in panel.columns:
+        panel["_date"] = pd.to_datetime(panel[date_column])
+    else:
+        panel["_date"] = pd.to_datetime(panel.index)
+
+    return _calculate_cross_sectional_ic_from_panel(
+        panel, factor_column, return_column, date_column="_date",
+        min_stocks=min_stocks, min_dates=min_dates, method=method,
+    )
+
+
+def _calculate_cross_sectional_ic_from_panel(
+    panel: pd.DataFrame,
+    factor_column: str,
+    return_column: str,
+    date_column: str = "_date",
+    min_stocks: int = 5,
+    min_dates: int = 2,
+    method: str = "spearman",
+) -> Optional[dict]:
+    """内部实现：从面板DataFrame向量化计算横截面IC"""
+    # 按日期分组，向量化计算每日IC
+    ic_list = []
+
+    def _daily_ic(group):
+        if len(group) < min_stocks:
+            return np.nan
+        fv = group[factor_column].values
+        rv = group[return_column].values
         # 规则7.6/7.40：零标准差阈值统一使用 1e-10
         if np.std(fv) < 1e-10 or np.std(rv) < 1e-10:
-            continue
-
+            return np.nan
         if method == "spearman":
             ic_val, _ = spearmanr(fv, rv)
         else:
             ic_val = np.corrcoef(fv, rv)[0, 1]
+        return ic_val if not np.isnan(ic_val) else np.nan
 
-        if not np.isnan(ic_val):
-            ic_list.append(float(ic_val))
+    daily_ic = panel.groupby(date_column).apply(_daily_ic)
+    daily_ic = daily_ic.dropna()
+
+    ic_list = daily_ic.tolist()
 
     if len(ic_list) < min_dates:
         return None

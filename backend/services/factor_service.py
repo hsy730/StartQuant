@@ -102,6 +102,15 @@ class FactorCalculator:
         ast.Del,
         ast.arg,
         ast.arguments,
+        # 允许 import（会在后续检查中限制只允许 pandas/numpy）
+        ast.Import,
+        ast.ImportFrom,
+        ast.alias,
+        # 允许 try/except（代码模式常用）
+        ast.Try,
+        ast.ExceptHandler,
+        ast.Raise,
+        ast.keyword,
     }
 
     # 禁止访问的属性名（防止沙箱逃逸）
@@ -163,6 +172,19 @@ class FactorCalculator:
                 if node.id in self._FORBIDDEN_ATTRS:
                     raise ValueError(
                         f"因子代码禁止访问: {node.id}，不允许使用反射和系统调用"
+                    )
+
+            # 检查 import 是否只允许 pandas/numpy
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name not in ("pandas", "numpy", "pd", "np"):
+                        raise ValueError(
+                            f"因子代码禁止导入模块: {alias.name}，仅允许 pandas 和 numpy"
+                        )
+            if isinstance(node, ast.ImportFrom):
+                if node.module not in ("pandas", "numpy"):
+                    raise ValueError(
+                        f"因子代码禁止从模块导入: {node.module}，仅允许 pandas 和 numpy"
                     )
 
             # 检查函数名是否安全
@@ -492,6 +514,49 @@ class FactorCalculator:
             result = talib.WMA(series.values, timeperiod=n)
             return pd.Series(result, index=series.index)
 
+        # GFlowNet / 遗传规划生成的表达式常用函数
+        def ts_delay(series, n=1):
+            return series.shift(n) if isinstance(series, pd.Series) else pd.Series(series).shift(n)
+
+        def ts_delta(series, n=1):
+            s = series if isinstance(series, pd.Series) else pd.Series(series)
+            return s - s.shift(n)
+
+        def ts_mean(series, n=5):
+            s = series if isinstance(series, pd.Series) else pd.Series(series)
+            return s.rolling(window=n, min_periods=1).mean()
+
+        def ts_std(series, n=5):
+            s = series if isinstance(series, pd.Series) else pd.Series(series)
+            return s.rolling(window=n, min_periods=1).std()
+
+        def ts_corr(x, y, n=5):
+            xs = x if isinstance(x, pd.Series) else pd.Series(x)
+            ys = y if isinstance(y, pd.Series) else pd.Series(y)
+            return xs.rolling(window=n, min_periods=2).corr(ys)
+
+        def neg(x):
+            return -x
+
+        def sigmoid(x):
+            return 1 / (1 + np.exp(-x))
+
+        def add(x, y):
+            return x + y
+
+        def sub(x, y):
+            return x - y
+
+        def mul(x, y):
+            return x * y
+
+        def div(x, y):
+            return safe_series_divide(x, y)
+
+        def rank(x):
+            s = x if isinstance(x, pd.Series) else pd.Series(x)
+            return s.rank(pct=True)
+
         return {
             "SMA": SMA,
             "MA": MA,
@@ -526,6 +591,36 @@ class FactorCalculator:
             "TS_ARGMIN": TS_ARGMIN,
             "SCALE": SCALE,
             "DECAY_LINEAR": DECAY_LINEAR,
+            # GFlowNet / 遗传规划函数映射（支持带下划线的命名形式）
+            "ts_delay": ts_delay,
+            "ts_delay_1": lambda s: ts_delay(s, 1),
+            "ts_delay_5": lambda s: ts_delay(s, 5),
+            "ts_delta": ts_delta,
+            "ts_delta_1": lambda s: ts_delta(s, 1),
+            "ts_delta_5": lambda s: ts_delta(s, 5),
+            "ts_mean": ts_mean,
+            "ts_mean_5": lambda s: ts_mean(s, 5),
+            "ts_mean_10": lambda s: ts_mean(s, 10),
+            "ts_mean_20": lambda s: ts_mean(s, 20),
+            "ts_std": ts_std,
+            "ts_std_5": lambda s: ts_std(s, 5),
+            "ts_std_10": lambda s: ts_std(s, 10),
+            "ts_std_20": lambda s: ts_std(s, 20),
+            "ts_corr": ts_corr,
+            "ts_corr_5": lambda x, y: ts_corr(x, y, 5),
+            "ts_corr_10": lambda x, y: ts_corr(x, y, 10),
+            "ts_corr_20": lambda x, y: ts_corr(x, y, 20),
+            "neg": neg,
+            "sigmoid": sigmoid,
+            "tanh": np.tanh,
+            "add": add,
+            "sub": sub,
+            "mul": mul,
+            "div": div,
+            "rank": rank,
+            "abs": abs,
+            "log": np.log,
+            "sqrt": np.sqrt,
         }
 
     def calculate(self, df: pd.DataFrame, factor_code: str) -> pd.Series:
@@ -552,6 +647,47 @@ class FactorCalculator:
             # 函数形式：使用 exec 执行函数定义，然后调用函数
             # 先通过 AST 检查代码安全性，拒绝危险操作
             self._validate_code_safety(factor_code)
+
+            # 预处理：移除 pandas/numpy 的 import 语句（已由 global_vars 提供）
+            # 避免 exec 时因 __builtins__ 不含 __import__ 而失败
+            import re
+
+            preprocessed_code = re.sub(
+                r"^\s*import\s+pandas\s+as\s+pd\s*$",
+                "",
+                factor_code,
+                flags=re.MULTILINE,
+            )
+            preprocessed_code = re.sub(
+                r"^\s*import\s+numpy\s+as\s+np\s*$",
+                "",
+                preprocessed_code,
+                flags=re.MULTILINE,
+            )
+            preprocessed_code = re.sub(
+                r"^\s*import\s+pandas\s*$",
+                "",
+                preprocessed_code,
+                flags=re.MULTILINE,
+            )
+            preprocessed_code = re.sub(
+                r"^\s*import\s+numpy\s*$",
+                "",
+                preprocessed_code,
+                flags=re.MULTILINE,
+            )
+            preprocessed_code = re.sub(
+                r"^\s*from\s+pandas\s+import\s+.*$",
+                "",
+                preprocessed_code,
+                flags=re.MULTILINE,
+            )
+            preprocessed_code = re.sub(
+                r"^\s*from\s+numpy\s+import\s+.*$",
+                "",
+                preprocessed_code,
+                flags=re.MULTILINE,
+            )
 
             # 提供完整的全局变量，包括 pandas, numpy 和常见函数
             global_vars = {
@@ -583,6 +719,7 @@ class FactorCalculator:
                     "isinstance": isinstance,
                     "str": str,
                     "set": set,
+                    "Exception": Exception,
                 },
                 "pd": pd,
                 "np": np,
@@ -598,7 +735,7 @@ class FactorCalculator:
                 # 执行因子函数定义
                 # 安全说明：global_vars 已限制可用内置函数（仅数学/科学计算），
                 # 且 _validate_expression_safety() 已在调用前校验表达式安全性
-                exec(factor_code, global_vars, local_vars)  # nosec B102
+                exec(preprocessed_code, global_vars, local_vars)  # nosec B102
 
                 # 调用函数（函数可能在 global_vars 或 local_vars 中）
                 calc_func = local_vars.get("calculate_factor") or global_vars.get(

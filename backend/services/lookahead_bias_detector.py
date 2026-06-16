@@ -32,7 +32,7 @@ import logging
 from scipy.stats import spearmanr
 
 from backend.utils.safe_math import safe_divide, safe_ir
-from backend.utils.ic_calculator import calculate_rolling_ic
+from backend.utils.ic_calculator import calculate_rolling_ic, calculate_cross_sectional_ic_from_panel
 
 logger = logging.getLogger(__name__)
 
@@ -278,45 +278,37 @@ class LookaheadBiasDetector:
         if len(merged) < 50:
             return self._insufficient_data_result(factor_name, len(merged))
 
-        # 逐日计算横截面 IC
-        daily_ics = []
-        daily_rank_ics = []
-        daily_spreads = []  # Q1 vs Q5 的收益差
+        # 使用统一入口计算横截面IC（规则5：代码复用，规则7.25：Spearman）
+        factor_col = factor_name if factor_name in merged.columns else merged.columns[2]
+        return_col = "return" if "return" in merged.columns else merged.columns[3]
 
+        ic_result = calculate_cross_sectional_ic_from_panel(
+            merged,
+            factor_column=factor_col,
+            return_column=return_col,
+            date_column=date_column,
+            min_stocks=5,
+            min_dates=1,
+            method="spearman",
+        )
+
+        daily_ics = ic_result["ic_list"] if ic_result is not None else []
+        daily_rank_ics = daily_ics  # Spearman IS rank correlation（规则7.25）
+
+        # 计算分层收益差（仍需逐日循环，因为这是业务逻辑而非IC计算）
+        daily_spreads = []
         for date, group in merged.groupby(date_column):
             if len(group) < 5:
                 continue
-
-            fv = (
-                group[factor_name] if factor_name in group.columns else group.iloc[:, 2]
-            )
-            ret = group["return"] if "return" in group.columns else group.iloc[:, 3]
-
+            fv = group[factor_col] if factor_col in group.columns else group.iloc[:, 2]
+            ret = group[return_col] if return_col in group.columns else group.iloc[:, 3]
             valid = fv.notna() & ret.notna()
             if valid.sum() < 5:
                 continue
-
             fv_valid = fv[valid]
             ret_valid = ret[valid]
-
-            # 防止常数值导致 corr 返回 NaN
             if fv_valid.nunique() < 2 or ret_valid.nunique() < 2:
                 continue
-
-            try:
-                ic_result = spearmanr(fv_valid, ret_valid)
-                ic = ic_result[0] if not np.isnan(ic_result[0]) else np.nan
-                rank_ic = ic  # Spearman IS rank correlation（规则7.25）
-            except Exception as e:
-                logger.debug(f"IC计算异常: {e}")
-                continue
-
-            if pd.notna(ic) and not np.isinf(ic):
-                daily_ics.append(ic)
-            if pd.notna(rank_ic) and not np.isinf(rank_ic):
-                daily_rank_ics.append(rank_ic)
-
-            # 计算当日分层收益差
             try:
                 q5_ret = ret_valid[fv_valid.rank(pct=True) >= 0.8].mean()
                 q1_ret = ret_valid[fv_valid.rank(pct=True) <= 0.2].mean()
