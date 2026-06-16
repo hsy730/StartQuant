@@ -36,7 +36,7 @@ import {
 import { WarningOutlined } from '@ant-design/icons'
 import * as echarts from 'echarts'
 import { api } from '@/services/api'
-import PreprocessingConfigPanel, { PreprocessingConfig } from '@/components/PreprocessingConfigPanel'
+import PreprocessingConfigPanel, { type PreprocessingConfig } from '@/components/PreprocessingConfigPanel'
 import './FactorDetail.css'
 import dayjs from 'dayjs'
 

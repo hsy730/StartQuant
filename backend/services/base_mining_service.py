@@ -219,6 +219,10 @@ class BaseMiningService(ABC):
             f"[{self._service_name}] 预计算 {n_factors} 个基础因子..."
         )
 
+        if n_factors == 0:
+            logger.info(f"[{self._service_name}] 无基础因子，跳过预计算")
+            return
+
         max_workers = min(n_factors, os.cpu_count() or 4)
 
         def _compute_one(idx_and_code):
@@ -321,6 +325,10 @@ class BaseMiningService(ABC):
         # 每只股票的因子计算独立，并行处理
         # 线程数基于股票数（而非因子数），因为每只股票的计算是独立的
         factor_workers = min(n_stocks, os.cpu_count() or 4, 8)
+
+        if n_stocks == 0:
+            logger.info(f"[{self._service_name}] 无股票数据，跳过股票池预计算")
+            return
 
         def _compute_stock_factors(args):
             code, df = args

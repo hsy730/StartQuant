@@ -41,7 +41,6 @@ except ImportError:
 
 from backend.services.base_mining_service import BaseMiningService  # noqa: E402
 from backend.services.factor_validation_service import factor_validation_service  # noqa: E402
-from backend.services.alphalens_analysis_service import alphalens_analysis_service  # noqa: E402
 from backend.services.factor_primitives import (  # noqa: E402
     create_pset,
     create_pset_numpy,

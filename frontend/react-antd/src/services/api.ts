@@ -1,5 +1,13 @@
 import axios from 'axios'
 
+/** 后端统一响应格式 */
+export interface ApiResponse<T = any> {
+  success: boolean
+  data?: T
+  message?: string
+  [key: string]: any
+}
+
 // 创建 axios 实例
 const request = axios.create({
   baseURL: '/api',
@@ -23,7 +31,7 @@ request.interceptors.request.use(
 
 // 响应拦截器
 request.interceptors.response.use(
-  response => {
+  (response): any => {
     return response.data
   },
   error => {
@@ -64,7 +72,46 @@ request.interceptors.response.use(
 )
 
 // API 接口
-export const api = {
+export const api: {
+  getFactorStats(): Promise<ApiResponse>
+  getFactors(params?: Record<string, unknown>): Promise<ApiResponse>
+  createFactor(data: Record<string, unknown>): Promise<ApiResponse>
+  updateFactor(id: number, data: Record<string, unknown>): Promise<ApiResponse>
+  deleteFactor(id: number): Promise<ApiResponse>
+  getFactorDetail(id: number): Promise<ApiResponse>
+  calculateIC(data: Record<string, unknown>): Promise<ApiResponse>
+  calculateFactor(data: Record<string, unknown>): Promise<ApiResponse>
+  getStockData(code: string, startDate: string, endDate: string): Promise<ApiResponse>
+  getStockPools(): Promise<ApiResponse>
+  getStockPoolStocks(poolId: string): Promise<ApiResponse>
+  optimizeWeights(data: Record<string, unknown>): Promise<ApiResponse>
+  compareWeightMethods(data: Record<string, unknown>): Promise<ApiResponse>
+  calculateCompositeScore(data: Record<string, unknown>): Promise<ApiResponse>
+  runBacktest(data: Record<string, unknown>): Promise<ApiResponse>
+  getBacktestHistory(params?: { limit?: number }): Promise<ApiResponse>
+  recommendPreprocessing(data: Record<string, unknown>): Promise<ApiResponse>
+  validatePreprocessing(data: Record<string, unknown>): Promise<ApiResponse>
+  analyzeCorrelation(data: Record<string, unknown>): Promise<ApiResponse>
+  validateFactor(data: Record<string, unknown>): Promise<ApiResponse>
+  batchGenerateFactors(data: Record<string, unknown>): Promise<ApiResponse>
+  copyFactor(id: number): Promise<ApiResponse>
+  analyzeExposure(data: Record<string, unknown>): Promise<ApiResponse>
+  analyzeEffectiveness(data: Record<string, unknown>): Promise<ApiResponse>
+  analyzeAttribution(data: Record<string, unknown>): Promise<ApiResponse>
+  analyzeMonitoring(data: Record<string, unknown>): Promise<ApiResponse>
+  startGeneticMining(data: Record<string, unknown>): Promise<ApiResponse>
+  getMiningStatus(taskId: string): Promise<ApiResponse>
+  getMiningResults(taskId: string): Promise<ApiResponse>
+  cancelMiningTask(taskId: string): Promise<ApiResponse>
+  getActiveMiningTasks(): Promise<ApiResponse>
+  getMiningHistory(params?: { limit?: number; offset?: number }): Promise<ApiResponse>
+  getMiningHistoryDetail(taskId: string): Promise<ApiResponse>
+  deleteMiningHistory(taskId: string): Promise<ApiResponse>
+  detectLookaheadBias(data: Record<string, unknown>): Promise<ApiResponse>
+  analyzeQuantileReturns(data: Record<string, unknown>): Promise<ApiResponse>
+  analyzeCumulativeReturns(data: Record<string, unknown>): Promise<ApiResponse>
+  generateTearSheet(data: Record<string, unknown>): Promise<ApiResponse>
+} = {
   // 获取因子统计
   getFactorStats() {
     return request.get('/factors/stats')

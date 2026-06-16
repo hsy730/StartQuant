@@ -783,7 +783,7 @@ if GFLOWNET_AVAILABLE:
             namespace["sigmoid"] = _sigmoid
             namespace["tanh"] = _tanh
 
-            result = eval(expr_str, {"__builtins__": {}}, namespace)
+            result = eval(expr_str, {"__builtins__": {}}, namespace)  # nosec B307
 
             if isinstance(result, (int, float, np.number)):
                 first_factor = list(self.base_factor_values.values())[0]

@@ -45,7 +45,7 @@ class CacheService:
             MD5哈希值作为缓存键
         """
         key_str = "_".join(str(arg) for arg in args)
-        return hashlib.md5(key_str.encode()).hexdigest()
+        return hashlib.md5(key_str.encode(), usedforsecurity=False).hexdigest()
 
     def _get_cache_path(self, cache_key: str) -> Path:
         """获取缓存文件路径"""

@@ -537,12 +537,12 @@ class ModelRegistry:
         elif framework == ModelFramework.PYTORCH:
             import torch
 
-            return torch.load(path, weights_only=False)
+            return torch.load(path, weights_only=False)  # nosec B614 - 模型来自内部注册目录
         else:
             import pickle
 
             with open(path, "rb") as f:
-                return pickle.load(f)
+                return pickle.load(f)  # nosec B301 - 模型来自内部注册目录
 
     @staticmethod
     def _checksum(path: str) -> str:

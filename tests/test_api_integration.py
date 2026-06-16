@@ -1,13 +1,33 @@
 """
 API接口集成测试 - 验证P0/P1改造后的端到端功能
+
+注意：这些测试需要后端服务运行在 http://localhost:8000
+      服务未启动时自动跳过，不会导致测试失败
 """
 
+import pytest
 import requests
 import time
 
 BASE = "http://localhost:8000"
 passed = 0
 failed = 0
+
+
+def _server_available():
+    """检查后端服务是否可用"""
+    try:
+        r = requests.get(f"{BASE}/health", timeout=3)
+        return r.status_code == 200
+    except Exception:
+        return False
+
+
+# 全局跳过条件：服务不可用时跳过所有集成测试
+pytestmark = pytest.mark.skipif(
+    not _server_available(),
+    reason="后端服务未运行 (http://localhost:8000)，跳过集成测试"
+)
 
 
 def run_test(name, fn):

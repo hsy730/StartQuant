@@ -732,7 +732,6 @@ def calculate_factor(df):
 
                 # 计算IR（IC均值/IC标准差）- 使用滚动Spearman IC
                 window = 20
-                min_periods = 10
                 factor_vals = aligned_data["factor"]
                 return_vals = aligned_data["return"]
 
@@ -801,7 +800,6 @@ def calculate_factor(df):
 
         # 计算滚动IR - 使用滚动Spearman IC
         window = 20
-        min_periods = 10
         factor_vals = aligned_data["factor"]
         return_vals = aligned_data["return"]
 

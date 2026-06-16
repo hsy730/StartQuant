@@ -71,7 +71,7 @@ class DataService:
     def _get_cache_key(self, stock_code: str, start_date: str, end_date: str) -> str:
         """生成缓存键"""
         cache_key = f"{stock_code}_{start_date}_{end_date}"
-        return hashlib.md5(cache_key.encode()).hexdigest()
+        return hashlib.md5(cache_key.encode(), usedforsecurity=False).hexdigest()
 
     def _get_cache_path(self, stock_code: str, start_date: str, end_date: str) -> Path:
         """生成缓存文件路径（保留向后兼容）"""

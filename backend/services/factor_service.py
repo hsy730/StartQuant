@@ -595,10 +595,10 @@ class FactorCalculator:
             local_vars = {}
 
             try:
-                # 执行函数定义
-                # 注意：此处在受限环境中执行用户代码
-                # global_vars已经限制了可用的内置函数
-                exec(factor_code, global_vars, local_vars)
+                # 执行因子函数定义
+                # 安全说明：global_vars 已限制可用内置函数（仅数学/科学计算），
+                # 且 _validate_expression_safety() 已在调用前校验表达式安全性
+                exec(factor_code, global_vars, local_vars)  # nosec B102
 
                 # 调用函数（函数可能在 global_vars 或 local_vars 中）
                 calc_func = local_vars.get("calculate_factor") or global_vars.get(
@@ -683,7 +683,7 @@ class FactorCalculator:
                 except SyntaxError:
                     raise ValueError(f"因子表达式语法错误: {factor_code}")
 
-                result = eval(factor_code, {"__builtins__": {}}, local_vars)
+                result = eval(factor_code, {"__builtins__": {}}, local_vars)  # nosec B307
 
                 # 处理不同类型的返回结果
                 if isinstance(result, pd.DataFrame):

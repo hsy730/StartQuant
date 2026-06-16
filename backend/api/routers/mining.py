@@ -22,7 +22,6 @@ from datetime import datetime
 
 from backend.utils.serialization import sanitize_dict
 from backend.utils.safe_math import safe_float as _safe_float
-from backend.utils.safe_math import safe_divide
 from backend.core.database import get_db
 from backend.models.mining_task import MiningTaskModel
 from backend.repositories.mining_task_repository import MiningTaskRepository

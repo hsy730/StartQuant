@@ -38,7 +38,7 @@ from backend.services.lookahead_bias_detector import (  # noqa: E402
     lookahead_bias_detector,
     BiasRiskLevel,
 )
-from backend.utils.safe_math import safe_ir, safe_divide  # noqa: E402
+from backend.utils.safe_math import safe_ir, safe_divide, safe_series_divide  # noqa: E402
 from backend.utils.weight_utils import normalize_weights  # noqa: E402
 from backend.utils.ic_calculator import calculate_rolling_ic  # noqa: E402
 from backend.constants import (  # noqa: E402
@@ -211,7 +211,7 @@ class AnalysisService:
         if factor_version_hash:
             parts.append(factor_version_hash)
         key_str = "_".join(parts)
-        return hashlib.md5(key_str.encode()).hexdigest()[:32]
+        return hashlib.md5(key_str.encode(), usedforsecurity=False).hexdigest()[:32]
 
     def _compute_factor_version_hash(self, factor_names: List[str]) -> str:
         """计算因子版本哈希（基于因子定义的code字段）"""
@@ -228,7 +228,7 @@ class AnalysisService:
                         codes.append(f"{name}:{factor.code}")
 
                 if codes:
-                    return hashlib.md5("|".join(sorted(codes)).encode()).hexdigest()[
+                    return hashlib.md5("|".join(sorted(codes)).encode(), usedforsecurity=False).hexdigest()[
                         :16
                     ]
         except Exception as e:

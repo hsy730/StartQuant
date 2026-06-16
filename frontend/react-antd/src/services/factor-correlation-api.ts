@@ -138,6 +138,6 @@ export async function analyzeFactorCorrelation(
     '/analysis/correlation/enhanced',
     requestData,
     { timeout: 30000 }
-  )
+  ) as unknown as CorrelationAnalysisResponse
   return data
 }

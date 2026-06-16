@@ -6,7 +6,7 @@ import {
   Button,
   Space,
   message,
-  Modal,
+  Drawer,
   Descriptions,
   Progress,
   Row,
@@ -25,6 +25,7 @@ import {
   StopOutlined,
   WarningOutlined,
   InfoCircleOutlined,
+  SaveOutlined,
 } from "@ant-design/icons";
 import * as echarts from "echarts";
 import { api } from "@/services/api";
@@ -179,6 +180,8 @@ const MiningHistory: React.FC = () => {
   const [detail, setDetail] = useState<MiningHistoryDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
+  const savedFactorIds = useRef<Set<number>>(new Set()); // 已保存到因子池的 generated_factor_id
+  const savingIndex = useRef<number | null>(null); // 正在保存的因子索引
   const chartRef = useRef<HTMLDivElement>(null);
   const chartInstanceRef = useRef<echarts.ECharts | null>(null);
 
@@ -217,6 +220,7 @@ const MiningHistory: React.FC = () => {
     setModalOpen(false);
     setDetailLoading(true);
     setDetail(null);
+    savedFactorIds.current.clear(); // 重置已保存状态
     try {
       const response = (await api.getMiningHistoryDetail(taskId)) as any;
       if (response.success) {
@@ -251,6 +255,109 @@ const MiningHistory: React.FC = () => {
     } catch (error) {
       console.error("删除失败:", error);
       message.error("删除失败");
+    }
+  };
+
+  // 将发现的因子保存到因子池
+  const saveFactorToPool = async (factor: any, index: number, retryCount = 0) => {
+    // 验证门控
+    if (factor.overall_passed === false) {
+      message.warning(
+        `该因子未通过验证（得分: ${factor.validation_score?.toFixed(1)}），不能保存到因子池`
+      );
+      return;
+    }
+
+    // 已保存过则跳过
+    if (factor.generated_factor_id && savedFactorIds.current.has(factor.generated_factor_id)) {
+      message.info("该因子已在因子池中");
+      return;
+    }
+
+    savingIndex.current = index;
+
+    try {
+      const today = new Date();
+      const dateStr = [
+        today.getFullYear(),
+        String(today.getMonth() + 1).padStart(2, "0"),
+        String(today.getDate()).padStart(2, "0"),
+        String(today.getHours()).padStart(2, "0"),
+        String(today.getMinutes()).padStart(2, "0"),
+      ].join("");
+
+      const factorName =
+        retryCount === 0
+          ? `Mined_${index + 1}_${dateStr}`
+          : `Mined_${index + 1}_${dateStr}_${retryCount}`;
+
+      // 表达式包装为完整函数
+      const processedExpr = factor.expression
+        .replace(/\bopen\b/g, "df['open']")
+        .replace(/\bclose\b/g, "df['close']")
+        .replace(/\bhigh\b/g, "df['high']")
+        .replace(/\blow\b/g, "df['low']")
+        .replace(/\bvolume\b/g, "df['volume']");
+
+      const sourceLabel =
+        factor.source === "pysr"
+          ? "PySR符号回归"
+          : factor.source === "genetic"
+            ? "遗传规划"
+            : "因子挖掘";
+
+      const code = `def calculate_factor(df):
+    """
+    ${sourceLabel}挖掘因子
+    表达式: ${factor.expression}
+    IC: ${factor.ic?.toFixed(4)}
+    IR: ${factor.ir?.toFixed(4)}
+    """
+    import pandas as pd
+    import numpy as np
+
+    try:
+        result = ${processedExpr}
+        return result
+    except Exception as e:
+        return pd.Series(0, index=df.index)
+`;
+
+      const response = (await api.createFactor({
+        name: factorName,
+        code,
+        category: sourceLabel,
+        description: `${sourceLabel} | 表达式: ${factor.expression} | IC: ${factor.ic?.toFixed(4)} | IR: ${factor.ir?.toFixed(4)}`,
+        formula_type: "function",
+        generated_factor_id: factor.generated_factor_id || null,
+      })) as any;
+
+      if (response.success) {
+        message.success(`因子 "${factorName}" 已添加到因子池`);
+        if (factor.generated_factor_id) {
+          savedFactorIds.current.add(factor.generated_factor_id);
+        }
+        // 强制刷新卡片以更新按钮状态
+        setDetail((prev) => prev ? { ...prev } : prev);
+      } else {
+        message.error("保存失败: " + (response.data?.detail || response.message || "未知错误"));
+      }
+    } catch (error: any) {
+      const errorMsg =
+        error.response?.data?.detail ||
+        error.response?.data?.message ||
+        error.message ||
+        "未知错误";
+
+      if (errorMsg.includes("未通过验证")) {
+        message.error("保存失败: " + errorMsg);
+      } else if (errorMsg.includes("已存在") && retryCount < 5) {
+        return saveFactorToPool(factor, index, retryCount + 1);
+      } else {
+        message.error("保存失败: " + errorMsg);
+      }
+    } finally {
+      savingIndex.current = null;
     }
   };
 
@@ -488,8 +595,8 @@ const MiningHistory: React.FC = () => {
         </Card>
       </div>
 
-      {/* 详情弹窗 */}
-      <Modal
+      {/* 详情侧滑框 */}
+      <Drawer
         title={
           <Space>
             <ExperimentOutlined />
@@ -498,7 +605,7 @@ const MiningHistory: React.FC = () => {
         }
         open={detailVisible}
         afterOpenChange={(open) => setModalOpen(open)}
-        onCancel={() => {
+        onClose={() => {
           setDetailVisible(false);
           setModalOpen(false);
           setDetail(null);
@@ -508,9 +615,8 @@ const MiningHistory: React.FC = () => {
             chartInstanceRef.current = null;
           }
         }}
-        footer={null}
-        width={800}
-        destroyOnHidden  // 关闭时销毁内容，避免残留状态
+        width={960}
+        destroyOnClose
       >
         {detailLoading ? (
           <div style={{ textAlign: "center", padding: "40px 0" }}>
@@ -611,7 +717,7 @@ const MiningHistory: React.FC = () => {
                   <h4 style={{ marginBottom: 12 }}>进化曲线</h4>
                   <div
                     ref={chartRef}
-                    style={{ height: 300, border: "1px solid #f0f0f0", borderRadius: 8 }}
+                    style={{ height: 400, border: "1px solid #f0f0f0", borderRadius: 8 }}
                   />
                 </div>
               )}
@@ -622,96 +728,149 @@ const MiningHistory: React.FC = () => {
                 <h4 style={{ marginBottom: 12 }}>
                   发现的因子 ({detail.result.factors.length})
                 </h4>
-                <div style={{ maxHeight: 400, overflow: "auto" }}>
+                <div style={{ maxHeight: 500, overflow: "auto" }}>
                   {detail.result.factors.map(
-                    (factor: any, index: number) => (
-                      <Card
-                        key={index}
-                        size="small"
-                        style={{
-                          marginBottom: 8,
-                          border: "1px solid #f0f0f0",
-                        }}
-                      >
-                        <div
+                    (factor: any, index: number) => {
+                      const isSaved =
+                        factor.generated_factor_id != null &&
+                        savedFactorIds.current.has(factor.generated_factor_id);
+                      const isSaving = savingIndex.current === index;
+                      const canSave =
+                        factor.overall_passed !== false && !isSaved;
+
+                      return (
+                        <Card
+                          key={index}
+                          size="small"
                           style={{
-                            display: "flex",
-                            justifyContent: "space-between",
-                            alignItems: "center",
+                            marginBottom: 8,
+                            border: isSaved
+                              ? "1px solid #22c55e"
+                              : "1px solid #f0f0f0",
                           }}
                         >
-                          <div style={{ flex: 1 }}>
-                            <Space>
-                              <Tag color="blue">Top {index + 1}</Tag>
-                              <Tag
-                                color={
-                                  algoColors[factor.source] || "default"
-                                }
+                          <div
+                            style={{
+                              display: "flex",
+                              justifyContent: "space-between",
+                              alignItems: "center",
+                            }}
+                          >
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <Space wrap>
+                                <Tag color="blue">Top {index + 1}</Tag>
+                                <Tag
+                                  color={
+                                    algoColors[factor.source] || "default"
+                                  }
+                                >
+                                  {algoLabels[factor.source] ||
+                                    factor.source}
+                                </Tag>
+                                {isSaved && (
+                                  <Tag color="success">已入库</Tag>
+                                )}
+                              </Space>
+                              <div
+                                style={{
+                                  fontFamily: "monospace",
+                                  fontSize: 12,
+                                  marginTop: 4,
+                                  color: "#475569",
+                                  wordBreak: "break-all",
+                                }}
                               >
-                                {algoLabels[factor.source] || factor.source}
-                              </Tag>
-                            </Space>
+                                {factor.expression}
+                              </div>
+                            </div>
                             <div
                               style={{
-                                fontFamily: "monospace",
-                                fontSize: 12,
-                                marginTop: 4,
-                                color: "#475569",
-                                wordBreak: "break-all",
+                                textAlign: "right",
+                                minWidth: 140,
+                                marginLeft: 16,
                               }}
                             >
-                              {factor.expression}
+                              <div>
+                                IC:{" "}
+                                <span
+                                  style={{
+                                    color:
+                                      factor.ic > 0 ? "#22c55e" : "#ef4444",
+                                    fontWeight: 600,
+                                  }}
+                                >
+                                  {factor.ic?.toFixed(4)}
+                                </span>
+                              </div>
+                              <div>
+                                IR:{" "}
+                                <span
+                                  style={{
+                                    color:
+                                      factor.ir > 0 ? "#22c55e" : "#ef4444",
+                                    fontWeight: 600,
+                                  }}
+                                >
+                                  {factor.ir?.toFixed(4)}
+                                </span>
+                              </div>
+                              <div>
+                                验证:{" "}
+                                <Tag
+                                  color={
+                                    factor.overall_passed
+                                      ? "success"
+                                      : "error"
+                                  }
+                                  style={{ fontSize: 11 }}
+                                >
+                                  {factor.overall_passed
+                                    ? "通过"
+                                    : "未通过"}
+                                </Tag>
+                              </div>
+                              <div style={{ marginTop: 6 }}>
+                                {isSaved ? (
+                                  <Button
+                                    size="small"
+                                    type="link"
+                                    disabled
+                                    icon={<CheckCircleOutlined />}
+                                    style={{ color: "#22c55e", padding: 0 }}
+                                  >
+                                    已在因子池
+                                  </Button>
+                                ) : (
+                                  <Button
+                                    size="small"
+                                    type="primary"
+                                    icon={<SaveOutlined />}
+                                    loading={isSaving}
+                                    disabled={!canSave}
+                                    onClick={() =>
+                                      saveFactorToPool(factor, index)
+                                    }
+                                  >
+                                    {isSaving
+                                      ? "保存中..."
+                                      : factor.overall_passed === false
+                                        ? "未通过验证"
+                                        : "添加到因子池"}
+                                  </Button>
+                                )}
+                              </div>
                             </div>
                           </div>
-                          <div style={{ textAlign: "right", minWidth: 120 }}>
-                            <div>
-                              IC:{" "}
-                              <span
-                                style={{
-                                  color:
-                                    factor.ic > 0 ? "#22c55e" : "#ef4444",
-                                  fontWeight: 600,
-                                }}
-                              >
-                                {factor.ic?.toFixed(4)}
-                              </span>
-                            </div>
-                            <div>
-                              IR:{" "}
-                              <span
-                                style={{
-                                  color:
-                                    factor.ir > 0 ? "#22c55e" : "#ef4444",
-                                  fontWeight: 600,
-                                }}
-                              >
-                                {factor.ir?.toFixed(4)}
-                              </span>
-                            </div>
-                            <div>
-                              验证:{" "}
-                              <Tag
-                                color={
-                                  factor.overall_passed
-                                    ? "success"
-                                    : "error"
-                                }
-                                style={{ fontSize: 11 }}
-                              >
-                                {factor.overall_passed ? "通过" : "未通过"}
-                              </Tag>
-                            </div>
-                          </div>
-                        </div>
-                      </Card>
-                    )
+                        </Card>
+                      );
+                    }
                   )}
                 </div>
               </div>
             )}
           </div>
         ) : null}
-      </Modal>
+      </Drawer>
     </div>
   );
 };

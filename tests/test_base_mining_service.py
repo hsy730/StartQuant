@@ -120,6 +120,11 @@ class TestMakeVarName:
 class TestPrecomputeBaseFactors:
     """_precompute_base_factors 测试"""
 
+    def setup_method(self):
+        """每个测试前清空模块级因子缓存，避免测试间污染"""
+        from backend.services.base_mining_service import clear_base_factor_cache
+        clear_base_factor_cache()
+
     def test_empty_base_factors(self):
         """空因子列表不应出错"""
         svc = create_service(base_factors=[])
