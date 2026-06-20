@@ -52,6 +52,7 @@ from backend.services.factor_primitives import (  # noqa: E402
     simplify_gp_expression,
     compute_weighted_complexity,
     count_duplicate_subtrees,
+    replace_duplicate_subtrees,
     sympy_canonical_key,
 )
 from backend.utils.safe_math import safe_divide, safe_ir  # noqa: E402
@@ -528,9 +529,16 @@ class GeneticFactorMiningService(BaseMiningService):
         # 检测单个表达式内部的重复子树，对重复施加额外惩罚
         # 重复子树 = 冗余计算，不提升表达能力但增加复杂度
         dup_info = count_duplicate_subtrees(individual)
-        # 惩罚独立于 parsimony_coeff，因为重复子树的危害远大于单纯节点数
-        # 10个重复子树 → 惩罚 1.0（远大于 IC 值 0.03~0.1），有效抑制膨胀
-        dup_penalty = dup_info["n_duplicates"] * 0.1
+        # 渐进惩罚：前2个重复0.15/个，之后0.4/个
+        # 8个重复 → 0.3 + 6*0.4 = 2.7（远大于 IC 值 0.03~0.34），
+        # 有效抑制终端大量重复（如 factor_0 出现8次）
+        # 注意：当只有1个基础因子时，replace_duplicate_subtrees 会跳过终端重复
+        # （避免复杂度爆炸），因此适应度惩罚是唯一的抑制手段，需要更强
+        n_dups = dup_info["n_duplicates"]
+        if n_dups <= 2:
+            dup_penalty = n_dups * 0.15
+        else:
+            dup_penalty = 0.3 + (n_dups - 2) * 0.4
 
         # --- Diversity Penalty (Phase 3) ---
         diversity_penalty = 0.0
@@ -596,8 +604,15 @@ class GeneticFactorMiningService(BaseMiningService):
         # P1增强: 加入子表达式重复惩罚（重复子树增加复杂度但不提升表达能力）
         # NSGA-II 第二目标：复杂度越小越好
         dup_info = count_duplicate_subtrees(individual)
-        # 重复惩罚独立于 parsimony_coeff，10个重复 → +1.0 复杂度
-        complexity = compute_weighted_complexity(individual) + dup_info["n_duplicates"] * 0.1
+        # 渐进惩罚：前2个重复0.15/个，之后0.4/个
+        # 注意：当只有1个基础因子时，replace_duplicate_subtrees 会跳过终端重复
+        # （避免复杂度爆炸），因此适应度惩罚是唯一的抑制手段，需要更强
+        n_dups = dup_info["n_duplicates"]
+        if n_dups <= 2:
+            dup_penalty = n_dups * 0.15
+        else:
+            dup_penalty = 0.3 + (n_dups - 2) * 0.4
+        complexity = compute_weighted_complexity(individual) + dup_penalty
         return (ic_fitness, complexity)
 
     def _penalty_fitness(self) -> tuple:
@@ -1203,6 +1218,49 @@ class GeneticFactorMiningService(BaseMiningService):
             mapping[var_name] = info["code"]
         return tree_to_expression(tree, mapping)
 
+    def _placeholder_to_code(self, placeholder_str: str) -> str:
+        """Expand factor_N placeholders in a prefix expression string to actual codes.
+
+        Used after SymPy simplification: the simplified placeholder string
+        (e.g. ``ts_corr_5(mul(2, factor_0), factor_0)``) is expanded by
+        replacing each ``factor_N`` with its real expression code.
+
+        不加额外括号：GP 前缀表达式中 factor_N 总是作为函数参数出现（在括号内），
+        逗号已分隔参数，无需再用括号包裹。避免 ``sqrt((SCALE(...)))`` 双括号。
+        """
+        expr = placeholder_str
+        for var_name in sorted(self.base_factor_values, key=len, reverse=True):
+            code = self.base_factor_values[var_name]["code"]
+            expr = expr.replace(var_name, code)
+        return expr
+
+    def _generate_display_expression(self, simplified_placeholder: str) -> tuple:
+        """Generate a compact display expression using short variable names.
+
+        When only 1-2 base factors are used, the expanded expression contains
+        the full base factor code repeated many times (e.g. ``-1 * DELTA(...)``
+        appears 7 times), making it unreadable.
+
+        This method replaces each ``factor_N`` with a short name ``FN`` and
+        returns a mapping of short names to full codes.
+
+        Returns
+        -------
+        display_expr : str
+            Expression with short variable names (e.g. ``ts_corr_5(F0, F0)``).
+        definitions : dict
+            Mapping from short names to full code strings.
+        """
+        display_expr = simplified_placeholder
+        definitions = {}
+        for var_name in sorted(self.base_factor_values, key=len, reverse=True):
+            code = self.base_factor_values[var_name]["code"]
+            # factor_0 → F0, factor_1 → F1, ...
+            short = var_name.replace("factor_", "F")
+            display_expr = display_expr.replace(var_name, short)
+            definitions[short] = code
+        return display_expr, definitions
+
     # ------------------------------------------------------------------
     # Mining entry point
     # ------------------------------------------------------------------
@@ -1239,6 +1297,30 @@ class GeneticFactorMiningService(BaseMiningService):
         )
 
         population = self.toolbox.population(n=self.population_size)
+
+        # ---- Phase 2.6 (initial): Deduplicate initial population ----
+        # 随机生成的初始种群可能包含个体内部重复终端（如 factor_0 出现两次）。
+        # 由于 Alpha101 基础因子是复杂表达式，终端重复会导致最终表达式包含
+        # 大段重复内容。在评估前去重，确保起始种群干净。
+        _n_init_deduped = 0
+        for i, ind in enumerate(population):
+            try:
+                new_nodes, n_replaced = replace_duplicate_subtrees(
+                    ind, self.pset
+                )
+                if new_nodes is not None and n_replaced > 0:
+                    new_tree = gp.PrimitiveTree(new_nodes)
+                    if len(new_tree) > 0:
+                        _ = new_tree.height
+                        gp.compile(new_tree, self.pset)
+                        population[i] = type(ind)(new_tree)
+                        _n_init_deduped += n_replaced
+            except Exception:
+                pass  # 去重失败，保留原始个体
+        if _n_init_deduped > 0:
+            logger.info(
+                f"初始种群去重: 替换{_n_init_deduped}个重复子树"
+            )
 
         # Evaluate initial population — 串行评估（避免嵌套 ThreadPoolExecutor 死锁）
         # _evaluate_cross_sectional_ic 内部已有 ThreadPoolExecutor 并行评估股票，
@@ -1300,17 +1382,69 @@ class GeneticFactorMiningService(BaseMiningService):
             )
         logger.info(f"进化循环完成，开始验证 {n_hof} 个候选因子...")
 
+        # ---- 最终去重安全网：对 Hall of Fame 个体执行子表达式去重 ----
+        # 即使进化过程中已执行 Phase 2.6，精英个体（elites）未经去重，
+        # 且 GP 可能在后续代中重新进化出重复。此安全网确保最终输出干净。
+        # 注意：fitness 保留原始值（近似），因子值从去重后的树重新计算。
+        deduped_hof = []
+        _n_final_deduped = 0
+        for tree in halloffame:
+            try:
+                new_nodes, n_replaced = replace_duplicate_subtrees(
+                    tree, self.pset
+                )
+                if new_nodes is not None and n_replaced > 0:
+                    new_tree = gp.PrimitiveTree(new_nodes)
+                    if len(new_tree) > 0:
+                        _ = new_tree.height
+                        gp.compile(new_tree, self.pset)
+                        new_ind = type(tree)(new_tree)
+                        new_ind.fitness.values = tree.fitness.values
+                        deduped_hof.append(new_ind)
+                        _n_final_deduped += n_replaced
+                        continue
+            except Exception:
+                pass
+            deduped_hof.append(tree)
+        if _n_final_deduped > 0:
+            logger.info(
+                f"最终去重: 替换{_n_final_deduped}个重复子树"
+            )
+
         _validate_start = time.time()
         best_factors = []
-        for i, tree in enumerate(halloffame):
+        _n_sympy_simplified = 0
+        for i, tree in enumerate(deduped_hof):
             _ind_t0 = time.time()
-            actual_expr = self._convert_expression_to_code(tree)
             placeholder_expr = tree_to_placeholder_expr(tree)
 
             # SymPy 后置简化：对占位符表达式进行代数化简
-            # 例如 add(factor_0, sub(factor_1, factor_0)) → factor_1
+            # 例如 add(factor_0, factor_0) → mul(2, factor_0)
+            #      sub(factor_0, factor_0) → 0
+            #      max(factor_0, factor_0) → factor_0
+            # 这显著减少展开后的重复（如8个factor_0→2个）
             simplified_placeholder = simplify_gp_expression(placeholder_expr)
             was_simplified = simplified_placeholder != placeholder_expr
+
+            # 始终使用简化后的占位符生成展开表达式
+            # 即使 simplify_gp_expression 内部异常吞掉返回原表达式，
+            # _placeholder_to_code(str(tree)) ≡ _convert_expression_to_code(tree)，
+            # 行为等价，不会引入新问题
+            actual_expr = self._placeholder_to_code(simplified_placeholder)
+
+            # 生成可读的显示表达式（短变量名 + 定义映射）
+            # 当基础因子代码较长时（如 Alpha101 因子），完整展开会导致
+            # 同一代码重复多次，可读性极差。短变量名 F0, F1 解决此问题。
+            display_expr, factor_defs = self._generate_display_expression(
+                simplified_placeholder
+            )
+
+            if was_simplified:
+                _n_sympy_simplified += 1
+                logger.info(
+                    f"  SymPy 简化候选 [{i+1}]: "
+                    f"{len(placeholder_expr)}→{len(simplified_placeholder)} 字符"
+                )
 
             # Extract primary fitness (IC-based)
             fitness_values = tree.fitness.values
@@ -1328,6 +1462,8 @@ class GeneticFactorMiningService(BaseMiningService):
             factor_info = {
                 "rank": i + 1,
                 "expression": actual_expr,
+                "display_expression": display_expr,
+                "factor_definitions": factor_defs,
                 "placeholder_expression": placeholder_expr,
                 "simplified_expression": simplified_placeholder if was_simplified else None,
                 "fitness": primary_fitness,
@@ -1384,6 +1520,10 @@ class GeneticFactorMiningService(BaseMiningService):
             best_factors.append(factor_info)
 
         _validate_elapsed = time.time() - _validate_start
+        if _n_sympy_simplified > 0:
+            logger.info(
+                f"SymPy 后置简化: {_n_sympy_simplified}/{n_hof} 个候选因子被简化"
+            )
         logger.info(f"候选因子验证完成: {n_hof} 个，总耗时 {_validate_elapsed:.1f}s")
 
         # Sort by validation score, fallback to fitness
@@ -1507,6 +1647,14 @@ class GeneticFactorMiningService(BaseMiningService):
                                 continue
                             # height 计算会检测结构完整性（缺少子节点会 IndexError）
                             _ = new_tree.height
+                            # 验证所有节点的类型与 pset 一致
+                            # SymPy 简化可能引入数值常量（如 0, 1.0），
+                            # 这些常量的 .ret 类型（int/float）与 pset.ret（object）
+                            # 不匹配，会导致后续变异时 gp.generate 找不到对应类型
+                            # 的 primitive 而崩溃
+                            if any(getattr(node, "ret", None) != self.pset.ret
+                                   for node in new_tree):
+                                continue
                             gp.compile(new_tree, self.pset)
                             # 用简化后的个体替换原始个体
                             offspring[i] = type(ind)(new_tree)
@@ -1515,6 +1663,49 @@ class GeneticFactorMiningService(BaseMiningService):
                         pass  # 简化失败，保留原始个体
             if n_simplified > 0:
                 logger.info(f"  Gen {gen}: 在线简化 {n_simplified} 个个体")
+
+            # ---- Phase 2.6: Subtree Dedup Refactoring ----
+            # 检测个体内部的重复子树（包括终端重复），将重复实例替换为不同终端/随机子树
+            # 解决 SymPy 无法简化不透明函数（TSRANK/CORR/SUM）重复的问题
+            # 参考: Poli & McPhee (2008) — intron removal via subtree replacement
+            #
+            # 重要：处理所有 offspring（不仅限于 not ind.fitness.valid）。
+            # 未被交叉/变异的个体可能从初始种群继承了重复终端，
+            # 跳过它们会导致重复一直存活到最终结果。
+            # 修改后删除 fitness.values，使其在后续重评估步骤中被重新计算。
+            n_deduped = 0
+            n_dups_found = 0
+            n_checked = 0
+            n_errors = 0
+            for i, ind in enumerate(offspring):
+                n_checked += 1
+                try:
+                    new_nodes, n_replaced = replace_duplicate_subtrees(
+                        ind, self.pset
+                    )
+                    n_dups_found += n_replaced
+                    if new_nodes is not None and n_replaced > 0:
+                        new_tree = gp.PrimitiveTree(new_nodes)
+                        if len(new_tree) == 0:
+                            n_errors += 1
+                            continue
+                        _ = new_tree.height
+                        gp.compile(new_tree, self.pset)
+                        offspring[i] = type(ind)(new_tree)
+                        # 表达式已改变，fitness 不再有效，标记需要重评估
+                        if ind.fitness.valid:
+                            del offspring[i].fitness.values
+                        n_deduped += n_replaced
+                except Exception as e:
+                    n_errors += 1
+                    if n_errors <= 3:
+                        logger.warning(
+                            f"  Gen {gen}: 子表达式去重失败: {e}"
+                        )
+            logger.info(
+                f"  Gen {gen}: 子表达式去重 检查{n_checked}个体, "
+                f"发现{n_dups_found}重复, 替换{n_deduped}个, 错误{n_errors}"
+            )
 
             # ---- Phase 3: Diversity protection – replace duplicates ----
             # P1 增强：分层深度去重

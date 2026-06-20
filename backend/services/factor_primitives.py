@@ -506,9 +506,11 @@ def tree_to_expression(tree, base_factor_codes: dict) -> str:
     """
     expr = str(tree)
     # replace longest keys first to avoid partial-match collisions
+    # 不加额外括号：GP 前缀表达式中 factor_N 总是作为函数参数出现（在括号内），
+    # 逗号已分隔参数，无需再用括号包裹。避免 sqrt((SCALE(...))) 双括号。
     for var_name in sorted(base_factor_codes, key=len, reverse=True):
         code = base_factor_codes[var_name]
-        expr = expr.replace(var_name, f"({code})")
+        expr = expr.replace(var_name, code)
     return expr
 
 
@@ -992,6 +994,165 @@ def count_duplicate_subtrees(tree) -> dict:
     }
 
 
+def replace_duplicate_subtrees(
+    tree, pset, max_subtree_depth: int = 1, max_replacements: int = 5
+) -> tuple:
+    """检测并替换个体内部的重复子树
+
+    遍历所有子树，用 Zobrist 哈希检测重复。
+    对于重复的子树（保留第一次出现），将后续出现替换为一个新的随机子树。
+
+    设计决策：
+    - **终端重复**：仅当可用终端 ≥ 3 时才替换。终端少时（如仅1个基础因子），
+      factor_0 重复是不可避免的，强行替换只会用随机子树增加复杂度，
+      导致表达式膨胀和评估变慢（10-20x）。
+    - **算子子树重复**：始终替换，这些是真正的结构冗余。
+    - **替换上限**：每个个体最多替换 max_replacements 个子树，防止复杂度爆炸。
+
+    参考: Poli & McPhee (2008) "Bloat in Genetic Programming" —
+    intron removal via subtree replacement.
+
+    Parameters
+    ----------
+    tree : PrimitiveTree
+        DEAP 表达式树
+    pset : PrimitiveSet
+        原语集合，用于生成随机子树
+    max_subtree_depth : int
+        替换子树的最大深度（默认 1，保持表达式简洁）
+    max_replacements : int
+        每个个体最多替换的子树数量（默认 5，防止复杂度爆炸）
+
+    Returns
+    -------
+    tuple
+        new_nodes : list or None
+            替换后的节点列表（如果无重复返回 None）
+        n_replaced : int
+            替换的重复子树数量
+    """
+    seen_hashes: dict = {}
+    duplicates = []  # [(start, end), ...]
+
+    def _scan_subtree(start: int) -> tuple:
+        node = tree[start]
+        arity = getattr(node, "arity", 0)
+        name = getattr(node, "name", str(node))
+        node_val = _get_zobrist_value(name)
+
+        if arity == 0:
+            h = node_val
+            end = start
+        else:
+            children = []
+            idx = start + 1
+            for _ in range(arity):
+                child_hash, idx = _scan_subtree(idx)
+                children.append(child_hash)
+
+            if name in _COMMUTATIVE_OPS:
+                children.sort()
+
+            result = node_val
+            for pos, ch in enumerate(children):
+                seed = _POSITION_SEEDS[pos % len(_POSITION_SEEDS)]
+                result ^= (ch * seed) & _MASK64
+
+            h = result
+            end = idx - 1
+
+        # 检测所有子树重复（包括终端和算子子树）
+        # 终端重复（如 factor_0 多次出现）在展开后会生成重复的复杂表达式，
+        # 因为 base factor 本身可能是复杂表达式（如 Alpha101 因子）
+        if h in seen_hashes:
+            duplicates.append((start, end))
+        else:
+            seen_hashes[h] = start
+
+        # 返回 end + 1 作为下一个子树的起始索引
+        # （end 是当前子树最后一个节点的索引）
+        return h, end + 1
+
+    _scan_subtree(0)
+
+    if not duplicates:
+        return None, 0
+
+    # 过滤嵌套的重复子树
+    # 如果子树 A 包含子树 B，替换 A 后 B 的位置就失效了
+    # 只保留不嵌套的（最外层的）重复子树
+    sorted_dups = sorted(duplicates, key=lambda x: x[0])
+    filtered = []
+    for start, end in sorted_dups:
+        nested = False
+        for f_start, f_end in filtered:
+            if f_start <= start and end <= f_end:
+                nested = True
+                break
+        if not nested:
+            filtered.append((start, end))
+
+    nodes = list(tree)
+
+    # Collect available terminals for replacing duplicate terminals.
+    # Only replace terminal duplicates when there are enough alternatives (≥ 3).
+    # With few terminals (e.g. 1 base factor), factor_0 repeats are unavoidable;
+    # replacing them with random subtrees only inflates complexity (10-20x slower).
+    available_terminals = []
+    try:
+        available_terminals = list(pset.terminals[pset.ret])
+    except (KeyError, AttributeError):
+        pass
+
+    can_replace_terminals = len(available_terminals) >= 3
+
+    # Filter: keep only operator-subtree duplicates, or terminal duplicates
+    # when enough terminals are available
+    replaceable = []
+    for start, end in filtered:
+        node = tree[start]
+        arity = getattr(node, "arity", 0)
+        if arity == 0 and not can_replace_terminals:
+            continue  # Skip terminal duplicates when few terminals
+        replaceable.append((start, end))
+
+    if not replaceable:
+        return None, 0
+
+    # 从后往前替换（避免索引偏移），限制总替换数防止复杂度爆炸
+    n_replaced = 0
+    for start, end in sorted(replaceable, key=lambda x: x[0], reverse=True):
+        if n_replaced >= max_replacements:
+            break
+
+        node = tree[start]
+        arity = getattr(node, "arity", 0)
+
+        if arity == 0:
+            # 重复终端：用不同的终端替换
+            name = getattr(node, "name", str(node))
+            other_terminals = [
+                t for t in available_terminals
+                if getattr(t, "name", str(t)) != name
+            ]
+            if other_terminals:
+                nodes[start:end + 1] = [random.choice(other_terminals)]
+            else:
+                new_subtree = gp.genHalfAndHalf(
+                    pset, min_=0, max_=max_subtree_depth
+                )
+                nodes[start:end + 1] = new_subtree
+        else:
+            # 重复算子子树：用随机子树替换
+            new_subtree = gp.genHalfAndHalf(
+                pset, min_=0, max_=max_subtree_depth
+            )
+            nodes[start:end + 1] = new_subtree
+        n_replaced += 1
+
+    return nodes, n_replaced
+
+
 # ---------------------------------------------------------------------------
 # Zobrist hash for efficient duplicate detection (cache key)
 # Based on: Burlacu (2025) "Zobrist Hash-based Duplicate Detection in SR"
@@ -1316,7 +1477,7 @@ def simplify_gp_expression(expr_str: str) -> str:
             return result
         return expr_str
     except Exception as e:
-        logger.debug(f"表达式简化失败 '{expr_str[:60]}': {e}")
+        logger.warning(f"表达式简化失败 '{expr_str[:80]}': {e}")
         return expr_str
 
 

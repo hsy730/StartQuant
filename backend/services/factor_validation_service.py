@@ -131,9 +131,13 @@ class FactorValidationService:
 
         # 6. 未来函数检测（Look-ahead Bias Detection）
         _t = time.time()
-        results["lookahead_bias"] = self.detect_lookahead_bias(
-            factor_values, return_values
-        )
+        try:
+            results["lookahead_bias"] = self.detect_lookahead_bias(
+                factor_values, return_values
+            )
+        except Exception as e:
+            logger.warning(f"未来函数检测异常，跳过: {e}")
+            results["lookahead_bias"] = None
         logger.debug(f"[验证计时] LookaheadBias: {time.time()-_t:.3f}s")
 
         # overall_passed: 原有验证项全部通过 且 无高风险/严重未来函数

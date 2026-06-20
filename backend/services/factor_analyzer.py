@@ -211,6 +211,8 @@ class FactorAnalyzer:
         return {
             "name": f"Mined_Factor_{candidate.rank or idx}",
             "expression": expression,
+            "display_expression": candidate.display_expression,
+            "factor_definitions": candidate.factor_definitions,
             "ic": _safe_float(ic),
             "ir": _safe_float(ir),
             "fitness": _safe_float(fitness),
@@ -289,7 +291,7 @@ class FactorAnalyzer:
                     "validation": validation,
                 }
             except Exception as e:
-                logger.debug(f"统一验证: 验证失败 '{expression[:60]}': {e}")
+                logger.warning(f"统一验证: 验证失败 '{expression[:60]}': {e}")
                 return self._empty_result()
 
         return self._empty_result()

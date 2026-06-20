@@ -499,10 +499,10 @@ class LookaheadBiasDetector:
             return self._skip_result("ir_magnitude", "数据量不足(<40)")
 
         # 使用缓存的滚动IC（避免重复计算）
+        window = min(20, len(aligned) // 2)
         if rolling_ic_cache is not None:
             rolling_ic = rolling_ic_cache
         else:
-            window = min(20, len(aligned) // 2)
             rolling_ic = calculate_rolling_ic(
                 aligned["f"], aligned["r"], window=window, method="spearman",
             )

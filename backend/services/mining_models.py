@@ -30,6 +30,8 @@ class FactorCandidate:
     Attributes:
         expression: 因子代码表达式（如 "ts_delta(close, 5) / close"）
         placeholder_expression: 算法原始表达式格式（如 DEAP树字符串、sympy表达式）
+        display_expression: 可读的显示表达式，使用短变量名（如 F0, F1）替代完整基础因子代码
+        factor_definitions: 短变量名→完整代码的映射（如 {"F0": "-1 * DELTA(...)", ...}）
         fitness: 算法原始适应度（不同算法含义不同，仅作参考）
         complexity: 表达式复杂度（节点数/参数量等）
         source: 算法来源标识（如 "genetic", "pysr", "gflownet"）
@@ -42,6 +44,8 @@ class FactorCandidate:
 
     expression: str
     placeholder_expression: str = ""
+    display_expression: str = ""
+    factor_definitions: Dict[str, str] = field(default_factory=dict)
     fitness: float = 0.0
     complexity: float = 0.0
     source: str = ""
@@ -54,6 +58,8 @@ class FactorCandidate:
         d = {
             "expression": self.expression,
             "placeholder_expression": self.placeholder_expression,
+            "display_expression": self.display_expression,
+            "factor_definitions": self.factor_definitions,
             "fitness": self.fitness,
             "complexity": self.complexity,
             "source": self.source,
@@ -113,6 +119,8 @@ class MiningResult:
                 FactorCandidate(
                     expression=f.get("expression", ""),
                     placeholder_expression=f.get("placeholder_expression", ""),
+                    display_expression=f.get("display_expression", ""),
+                    factor_definitions=f.get("factor_definitions", {}),
                     fitness=f.get("fitness", 0.0),
                     complexity=f.get("complexity", 0.0),
                     source=f.get("source", ""),
@@ -125,6 +133,8 @@ class MiningResult:
                         not in {
                             "expression",
                             "placeholder_expression",
+                            "display_expression",
+                            "factor_definitions",
                             "fitness",
                             "complexity",
                             "source",
