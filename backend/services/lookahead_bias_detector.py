@@ -29,6 +29,7 @@ from typing import Dict, List, Optional, Any
 from dataclasses import dataclass, field
 from enum import Enum
 import logging
+import time
 from scipy.stats import spearmanr
 
 from backend.utils.safe_math import safe_divide, safe_ir
@@ -168,6 +169,7 @@ class LookaheadBiasDetector:
         """
         checks: List[BiasCheckResult] = []
         context = extra_context or {}
+        _t0 = time.time()
 
         logger.info(
             f"[未来函数检测] 开始检测因子: {factor_name}, 样本数: {len(factor_values)}"
@@ -181,16 +183,33 @@ class LookaheadBiasDetector:
             )
             return self._insufficient_data_result(factor_name, len(factor_clean))
 
+        # ---- 预计算缓存：滚动IC只算一次，复用于3个检查项 ----
+        # 之前 _check_ir_magnitude / _check_ic_positive_ratio / _check_rank_ic_magnitude
+        # 各自独立调用 calculate_rolling_ic，造成3x冗余计算
+        rolling_ic_cache: Optional[pd.Series] = None
+        if return_values is not None and len(return_values) > 0:
+            aligned = pd.DataFrame({"f": factor_clean, "r": return_values}).dropna()
+            if len(aligned) >= 40:
+                window = min(20, len(aligned) // 2)
+                _ric_t0 = time.time()
+                rolling_ic_cache = calculate_rolling_ic(
+                    aligned["f"], aligned["r"], window=window, method="spearman"
+                )
+                logger.debug(
+                    f"[未来函数检测] 滚动IC预计算完成: "
+                    f"{len(rolling_ic_cache)} 窗口, 耗时 {time.time()-_ric_t0:.3f}s"
+                )
+
         # ---- 维度 1: IC 异常检测 ----
         if return_values is not None and len(return_values) > 0:
             checks.append(self._check_ic_magnitude(factor_clean, return_values))
-            checks.append(self._check_ir_magnitude(factor_clean, return_values))
-            checks.append(self._check_ic_positive_ratio(factor_clean, return_values))
+            checks.append(self._check_ir_magnitude(factor_clean, return_values, rolling_ic_cache))
+            checks.append(self._check_ic_positive_ratio(factor_clean, return_values, rolling_ic_cache))
 
         # ---- 维度 2: 完美排序检测 ----
         if return_values is not None and len(return_values) > 0:
             checks.append(self._check_rank_correlation(factor_clean, return_values))
-            checks.append(self._check_rank_ic_magnitude(factor_clean, return_values))
+            checks.append(self._check_rank_ic_magnitude(factor_clean, return_values, rolling_ic_cache))
 
         # ---- 维度 3: 自相关异常检测 ----
         checks.append(self._check_autocorrelation_lag1(factor_clean))
@@ -226,10 +245,12 @@ class LookaheadBiasDetector:
         summary = self._generate_summary(factor_name, checks, risk_level)
         recommendations = self._generate_recommendations(failed_checks)
 
+        _elapsed = time.time() - _t0
         logger.info(
             f"[未来函数检测] 检测完成: {factor_name}, "
             f"风险等级={risk_level.value}, 评分={risk_score:.1f}, "
-            f"通过={len(checks) - len(failed_checks)}/{len(checks)}"
+            f"通过={len(checks) - len(failed_checks)}/{len(checks)}, "
+            f"耗时={_elapsed:.1f}s"
         )
 
         return LookaheadBiasDetectionResult(
@@ -469,22 +490,22 @@ class LookaheadBiasDetector:
         )
 
     def _check_ir_magnitude(
-        self, factor: pd.Series, returns: pd.Series
+        self, factor: pd.Series, returns: pd.Series,
+        rolling_ic_cache: Optional[pd.Series] = None,
     ) -> BiasCheckResult:
         """检测 1b: IR 是否异常偏高（基于滚动Spearman IC）"""
         aligned = pd.DataFrame({"f": factor, "r": returns}).dropna()
         if len(aligned) < 40:
             return self._skip_result("ir_magnitude", "数据量不足(<40)")
 
-        window = min(20, len(aligned) // 2)
-
-        # 使用统一入口计算滚动Spearman IC（符合规则0和规则5）
-        rolling_ic = calculate_rolling_ic(
-            aligned["f"],
-            aligned["r"],
-            window=window,
-            method="spearman",
-        )
+        # 使用缓存的滚动IC（避免重复计算）
+        if rolling_ic_cache is not None:
+            rolling_ic = rolling_ic_cache
+        else:
+            window = min(20, len(aligned) // 2)
+            rolling_ic = calculate_rolling_ic(
+                aligned["f"], aligned["r"], window=window, method="spearman",
+            )
         rolling_ic = rolling_ic.replace([np.inf, -np.inf], np.nan).dropna()
 
         if len(rolling_ic) < 10:
@@ -517,22 +538,22 @@ class LookaheadBiasDetector:
         )
 
     def _check_ic_positive_ratio(
-        self, factor: pd.Series, returns: pd.Series
+        self, factor: pd.Series, returns: pd.Series,
+        rolling_ic_cache: Optional[pd.Series] = None,
     ) -> BiasCheckResult:
         """检测 1c: IC 正向比例是否异常（接近 100% 或 0%，使用Spearman IC）"""
         aligned = pd.DataFrame({"f": factor, "r": returns}).dropna()
         if len(aligned) < 20:
             return self._skip_result("ic_positive_ratio", "数据量不足")
 
-        window = min(20, len(aligned) // 2)
-
-        # 使用统一入口计算滚动Spearman IC（符合规则0和规则5）
-        rolling_ic = calculate_rolling_ic(
-            aligned["f"],
-            aligned["r"],
-            window=window,
-            method="spearman",
-        )
+        # 使用缓存的滚动IC（避免重复计算）
+        if rolling_ic_cache is not None:
+            rolling_ic = rolling_ic_cache
+        else:
+            window = min(20, len(aligned) // 2)
+            rolling_ic = calculate_rolling_ic(
+                aligned["f"], aligned["r"], window=window, method="spearman",
+            )
         rolling_ic = rolling_ic.replace([np.inf, -np.inf], np.nan).dropna()
 
         if len(rolling_ic) < 5:
@@ -586,22 +607,22 @@ class LookaheadBiasDetector:
         )
 
     def _check_rank_ic_magnitude(
-        self, factor: pd.Series, returns: pd.Series
+        self, factor: pd.Series, returns: pd.Series,
+        rolling_ic_cache: Optional[pd.Series] = None,
     ) -> BiasCheckResult:
         """检测 2b: Rank IC 均值"""
         aligned = pd.DataFrame({"f": factor, "r": returns}).dropna()
         if len(aligned) < 20:
             return self._skip_result("rank_ic_magnitude", "数据量不足")
 
-        window = min(20, len(aligned) // 2)
-
-        # 使用统一入口计算滚动Spearman IC（符合规则0和规则5）
-        rolling_rank_ic = calculate_rolling_ic(
-            aligned["f"],
-            aligned["r"],
-            window=window,
-            method="spearman",
-        )
+        # 使用缓存的滚动IC（避免重复计算，Spearman IC = Rank IC）
+        if rolling_ic_cache is not None:
+            rolling_rank_ic = rolling_ic_cache
+        else:
+            window = min(20, len(aligned) // 2)
+            rolling_rank_ic = calculate_rolling_ic(
+                aligned["f"], aligned["r"], window=window, method="spearman",
+            )
         rolling_rank_ic = rolling_rank_ic.replace([np.inf, -np.inf], np.nan).dropna()
 
         if len(rolling_rank_ic) < 5:

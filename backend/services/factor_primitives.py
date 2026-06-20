@@ -26,6 +26,7 @@ Mask-First Design (v2.0):
 import numpy as np
 import pandas as pd
 import logging
+import random
 from deap import gp
 from typing import Optional
 from functools import partial
@@ -851,3 +852,331 @@ def expression_similarity(expr_a: str, expr_b: str) -> float:
     intersection = tokens_a & tokens_b
     union = tokens_a | tokens_b
     return len(intersection) / len(union)
+
+
+# ---------------------------------------------------------------------------
+# Zobrist hash for efficient duplicate detection (cache key)
+# Based on: Burlacu (2025) "Zobrist Hash-based Duplicate Detection in SR"
+# ---------------------------------------------------------------------------
+
+_MASK64 = 0xFFFFFFFFFFFFFFFF
+# Fixed-seed RNG for reproducible Zobrist table
+_ZOBRIST_RNG = random.Random(0x5EED_1234)
+_ZOBRIST_TABLE: dict = {}
+
+# Commutative operations where argument order doesn't matter
+_COMMUTATIVE_OPS = frozenset({"add", "mul", "max", "min"})
+
+# Position-dependent seeds for non-commutative argument mixing
+_POSITION_SEEDS = (
+    0x9E3779B97F4A7C15,
+    0xC2B2AE3D27D4EB4F,
+    0x165667B19E3779F9,
+    0x96C7D2C0B3F6A5D8,
+)
+
+
+def _get_zobrist_value(name: str) -> int:
+    """Get or create a 64-bit Zobrist value for a node name."""
+    val = _ZOBRIST_TABLE.get(name)
+    if val is None:
+        val = _ZOBRIST_RNG.getrandbits(64)
+        _ZOBRIST_TABLE[name] = val
+    return val
+
+
+def zobrist_hash(tree) -> int:
+    """Compute a Zobrist hash for a DEAP PrimitiveTree.
+
+    Detects structurally identical trees, including isomorphic forms of
+    commutative operations (``add``, ``mul``, ``max``, ``min``).
+
+    For commutative ops, children hashes are sorted before mixing, so
+    ``add(a, b)`` and ``add(b, a)`` produce the same hash.
+
+    For non-commutative ops (``sub``, ``div``, …), position-dependent
+    seeds ensure ``sub(a, b)`` ≠ ``sub(b, a)``.
+
+    Collision rate is bounded by 2⁻⁶⁴, which is negligible.
+    """
+    def _hash_subtree(start: int) -> tuple:
+        node = tree[start]
+        arity = getattr(node, "arity", 0)
+        name = getattr(node, "name", str(node))
+        node_val = _get_zobrist_value(name)
+
+        if arity == 0:
+            return node_val, start + 1
+
+        children = []
+        idx = start + 1
+        for _ in range(arity):
+            child_hash, idx = _hash_subtree(idx)
+            children.append(child_hash)
+
+        # For commutative ops, sort to normalize argument order
+        if name in _COMMUTATIVE_OPS:
+            children.sort()
+
+        # Mix children with position-dependent seeds
+        result = node_val
+        for pos, ch in enumerate(children):
+            seed = _POSITION_SEEDS[pos % len(_POSITION_SEEDS)]
+            result ^= (ch * seed) & _MASK64
+
+        return result, idx
+
+    h, _ = _hash_subtree(0)
+    return h
+
+
+# ---------------------------------------------------------------------------
+# SymPy-based expression simplification (post-processing)
+# Based on: SymPy simplify() + canonical form for deduplication
+# ---------------------------------------------------------------------------
+
+try:
+    import sympy as sp
+
+    _SYMPY_AVAILABLE = True
+except ImportError:
+    _SYMPY_AVAILABLE = False
+    logger.info("SymPy未安装，表达式简化功能将不可用")
+
+# Mapping from GP primitive names to SymPy constructors
+_GP_TO_SYMPY = {
+    "add": lambda a, b: a + b,
+    "sub": lambda a, b: a - b,
+    "mul": lambda a, b: a * b,
+    "div": lambda a, b: a / b,
+    "neg": lambda a: -a,
+    "abs": lambda a: sp.Abs(a),
+    "log": lambda a: sp.log(a),
+    "sqrt": lambda a: sp.sqrt(a),
+    "max": lambda a, b: sp.Max(a, b),
+    "min": lambda a, b: sp.Min(a, b),
+    "tanh": lambda a: sp.tanh(a),
+    "sigmoid": lambda a: 1 / (1 + sp.exp(-a)),
+}
+
+
+def _tokenize_prefix(expr_str: str) -> list:
+    """Tokenize a DEAP prefix expression like 'add(factor_0, sub(factor_1, factor_0))'."""
+    tokens = []
+    i = 0
+    n = len(expr_str)
+    while i < n:
+        c = expr_str[i]
+        if c.isspace():
+            i += 1
+        elif c in "(),":
+            tokens.append(c)
+            i += 1
+        else:
+            j = i
+            while j < n and expr_str[j] not in "(), \t\n":
+                j += 1
+            tokens.append(expr_str[i:j])
+            i = j
+    return tokens
+
+
+def _parse_prefix_tokens(tokens: list, idx: int, symbols: dict) -> tuple:
+    """Parse tokenized prefix expression into a SymPy expression.
+
+    Returns (sympy_expr, next_idx).
+    """
+    token = tokens[idx]
+
+    # Check if this is a function call: name(args...)
+    if idx + 1 < len(tokens) and tokens[idx + 1] == "(":
+        func_name = token
+        idx += 2  # skip name and '('
+        args = []
+        while tokens[idx] != ")":
+            if tokens[idx] == ",":
+                idx += 1
+                continue
+            arg, idx = _parse_prefix_tokens(tokens, idx, symbols)
+            args.append(arg)
+        idx += 1  # skip ')'
+
+        # Apply known function or treat as symbolic
+        if func_name in _GP_TO_SYMPY:
+            return _GP_TO_SYMPY[func_name](*args), idx
+        else:
+            # Unknown function (ts_mean_5, rank, etc.) → symbolic Function
+            func = sp.Function(func_name)
+            return func(*args), idx
+
+    # Terminal: symbol or number
+    if token in symbols:
+        return symbols[token], idx + 1
+
+    # Try to parse as number (use Integer for whole numbers to enable simplification)
+    try:
+        val = float(token)
+        if val == int(val) and abs(val) < 1e15:
+            return sp.Integer(int(val)), idx + 1
+        return sp.Float(val), idx + 1
+    except ValueError:
+        return sp.Symbol(token), idx + 1
+
+
+def _sympy_to_prefix(expr) -> str:
+    """Convert a SymPy expression back to GP prefix notation."""
+    # Atoms
+    if expr.is_Symbol:
+        return str(expr)
+    if expr.is_Number:
+        return str(expr)
+
+    # Addition → add/sub chain
+    if expr.is_Add:
+        args = list(expr.args)
+        result = _sympy_to_prefix(args[0])
+        for arg in args[1:]:
+            # Check for negative coefficient → subtraction
+            if arg.is_Mul and len(arg.args) == 2 and arg.args[0] == -1:
+                result = f"sub({result}, {_sympy_to_prefix(arg.args[1])})"
+            elif arg.is_Number and arg < 0:
+                result = f"sub({result}, {_sympy_to_prefix(-arg)})"
+            else:
+                result = f"add({result}, {_sympy_to_prefix(arg)})"
+        return result
+
+    # Multiplication → mul/div chain
+    if expr.is_Mul:
+        args = list(expr.args)
+        numerators = []
+        denominators = []
+        for arg in args:
+            if arg.is_Pow and len(arg.args) == 2 and arg.args[1] == -1:
+                denominators.append(arg.args[0])
+            elif arg.is_Number and arg < 0:
+                # Negative coefficient → neg
+                numerators.append(sp.Mul(-arg, *args[args.index(arg) + 1:]))
+                break
+            else:
+                numerators.append(arg)
+
+        if not numerators:
+            numerators = [sp.Integer(1)]
+
+        # Build numerator
+        num_str = _sympy_to_prefix(numerators[0])
+        for n in numerators[1:]:
+            num_str = f"mul({num_str}, {_sympy_to_prefix(n)})"
+
+        if not denominators:
+            return num_str
+
+        # Build denominator
+        den_str = _sympy_to_prefix(denominators[0])
+        for d in denominators[1:]:
+            den_str = f"mul({den_str}, {_sympy_to_prefix(d)})"
+
+        return f"div({num_str}, {den_str})"
+
+    # Power
+    if expr.is_Pow:
+        base, exp = expr.args
+        if exp == sp.Rational(1, 2):
+            return f"sqrt({_sympy_to_prefix(base)})"
+        if exp == -1:
+            return f"div(1, {_sympy_to_prefix(base)})"
+        # General power not in GP primitive set
+        return f"pow({_sympy_to_prefix(base)}, {_sympy_to_prefix(exp)})"
+
+    # Abs
+    if expr.func is sp.Abs:
+        return f"abs({_sympy_to_prefix(expr.args[0])})"
+
+    # log
+    if expr.func is sp.log:
+        return f"log({_sympy_to_prefix(expr.args[0])})"
+
+    # Max / Min
+    if expr.func is sp.Max:
+        args = expr.args
+        result = _sympy_to_prefix(args[0])
+        for a in args[1:]:
+            result = f"max({result}, {_sympy_to_prefix(a)})"
+        return result
+
+    if expr.func is sp.Min:
+        args = expr.args
+        result = _sympy_to_prefix(args[0])
+        for a in args[1:]:
+            result = f"min({result}, {_sympy_to_prefix(a)})"
+        return result
+
+    # tanh
+    if expr.func is sp.tanh:
+        return f"tanh({_sympy_to_prefix(expr.args[0])})"
+
+    # exp (from sigmoid expansion)
+    if expr.func is sp.exp:
+        return f"exp({_sympy_to_prefix(expr.args[0])})"
+
+    # Symbolic function (ts_mean_5, rank, etc.)
+    if expr.is_Function:
+        func_name = expr.func.__name__
+        args_str = ", ".join(_sympy_to_prefix(a) for a in expr.args)
+        return f"{func_name}({args_str})"
+
+    # Fallback: string representation
+    return str(expr)
+
+
+def simplify_gp_expression(expr_str: str) -> str:
+    """Simplify a GP prefix expression using SymPy.
+
+    Parses the DEAP prefix notation (e.g. ``add(factor_0, sub(factor_1, factor_0))``)
+    into a SymPy expression, applies :func:`sympy.simplify`, and converts the
+    result back to prefix notation.
+
+    SymPy auto-simplifies during construction (e.g. ``x + 0`` → ``x``),
+    so we compare the original string against the converted result rather
+    than comparing op counts.
+
+    If SymPy is unavailable or simplification fails, the original expression
+    is returned unchanged.
+
+    Examples
+    --------
+    >>> simplify_gp_expression("add(factor_0, sub(factor_1, factor_0))")
+    'factor_1'
+    >>> simplify_gp_expression("mul(factor_0, div(factor_0, factor_0))")
+    'factor_0'
+    """
+    if not _SYMPY_AVAILABLE:
+        return expr_str
+
+    try:
+        # Collect all factor_N symbols from the expression
+        tokens = _tokenize_prefix(expr_str)
+        symbol_names = set()
+        for t in tokens:
+            if t.startswith("factor_"):
+                symbol_names.add(t)
+
+        symbols = {name: sp.Symbol(name) for name in symbol_names}
+
+        # Parse prefix → SymPy (auto-simplifies during construction)
+        sympy_expr, _ = _parse_prefix_tokens(tokens, 0, symbols)
+
+        # Explicit simplify for additional reductions
+        simplified = sp.simplify(sympy_expr)
+
+        # Convert back to prefix notation
+        result = _sympy_to_prefix(simplified)
+
+        # Only return simplified result if it differs from the original
+        # (i.e. actual simplification occurred)
+        if result != expr_str:
+            return result
+        return expr_str
+    except Exception as e:
+        logger.debug(f"表达式简化失败 '{expr_str[:60]}': {e}")
+        return expr_str

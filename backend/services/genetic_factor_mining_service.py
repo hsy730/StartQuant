@@ -48,6 +48,8 @@ from backend.services.factor_primitives import (  # noqa: E402
     tree_to_placeholder_expr,
     compile_tree,
     expression_similarity,
+    zobrist_hash,
+    simplify_gp_expression,
 )
 from backend.utils.safe_math import safe_divide, safe_ir  # noqa: E402
 
@@ -338,8 +340,8 @@ class GeneticFactorMiningService(BaseMiningService):
     # ------------------------------------------------------------------
     # Phase 4: Factor value cache
     #
-    # 缓存结构：{tree_str: {"_index": pd.Index, "600036.SH": np.ndarray, ...}}
-    # - key: GP树的字符串表示（str(tree)）
+    # 缓存结构：{tree_key: {"_index": pd.Index, "600036.SH": np.ndarray, ...}}
+    # - key: GP树的 Zobrist 哈希（检测结构相同 + 交换律同构）
     # - "_index": 共享的 DatetimeIndex（所有股票共享同一时间索引）
     # - 其他 key: 股票代码 → numpy ndarray（因子值）
     #
@@ -350,18 +352,21 @@ class GeneticFactorMiningService(BaseMiningService):
     # 读取时按需 pd.Series(arr, index=cached["_index"]) 包装回 Series。
     # ------------------------------------------------------------------
 
-    def _cache_get(self, tree_str: str) -> Optional[Dict]:
-        """Look up pre-computed factor values for a tree expression."""
-        with self._cache_lock:
-            return self._factor_cache.get(tree_str)
+    def _cache_get(self, tree_key: int) -> Optional[Dict]:
+        """Look up pre-computed factor values for a tree expression.
 
-    def _cache_set(self, tree_str: str, values: Dict):
+        Uses Zobrist hash as key for O(1) lookup and isomorphic tree detection.
+        """
+        with self._cache_lock:
+            return self._factor_cache.get(tree_key)
+
+    def _cache_set(self, tree_key: int, values: Dict):
         """Store factor values in the LRU cache."""
         with self._cache_lock:
             if len(self._factor_cache) >= self.max_cache_size:
                 # evict oldest entry (OrderedDict FIFO)
                 self._factor_cache.popitem(last=False)
-            self._factor_cache[tree_str] = values
+            self._factor_cache[tree_key] = values
 
     def _cache_clear(self):
         """Clear the factor value cache (call once per generation).
@@ -582,17 +587,18 @@ class GeneticFactorMiningService(BaseMiningService):
     ) -> Optional[pd.Series]:
         """Compile a tree and evaluate it using one stock's base factor values.
 
-        Phase 4: Results are cached per (tree_str, stock_code) within a
+        Phase 4: Results are cached per (tree_key, stock_code) within a
         generation so that the same expression is never computed twice.
+        Uses Zobrist hash to detect isomorphic trees (e.g. add(a,b) = add(b,a)).
 
         内存优化：缓存中存储 numpy ndarray 而非 pd.Series，
         共享索引存储在 cached["_index"]，节省约50%缓存内存。
         """
-        tree_str = str(tree)
+        tree_key = zobrist_hash(tree)
         # Phase 4: check cache first
-        # 缓存结构：{tree_str: {"_index": pd.Index, "600036.SH": np.ndarray, ...}}
+        # 缓存结构：{tree_key: {"_index": pd.Index, "600036.SH": np.ndarray, ...}}
         # 读取时将 ndarray + 共享 index 包装回 pd.Series
-        cached = self._cache_get(tree_str)
+        cached = self._cache_get(tree_key)
         if cached is not None and stock_code in cached:
             val = cached[stock_code]
             if isinstance(val, np.ndarray):
@@ -637,12 +643,12 @@ class GeneticFactorMiningService(BaseMiningService):
 
         # Phase 4: store in cache (numpy array + shared index)
         with self._cache_lock:
-            cached = self._factor_cache.get(tree_str)
+            cached = self._factor_cache.get(tree_key)
             if cached is None:
                 cached = {"_index": result.index}
                 if len(self._factor_cache) >= self.max_cache_size:
                     self._factor_cache.popitem(last=False)
-                self._factor_cache[tree_str] = cached
+                self._factor_cache[tree_key] = cached
             elif "_index" not in cached:
                 cached["_index"] = result.index
             cached[stock_code] = result.values  # 存储 numpy ndarray
@@ -650,7 +656,7 @@ class GeneticFactorMiningService(BaseMiningService):
         return result
 
     def _eval_compiled_on_stock(
-        self, compiled_func, tree_str: str, stock_code: str, stock_base_factors: dict
+        self, compiled_func, tree_key: int, stock_code: str, stock_base_factors: dict
     ) -> Optional[pd.Series]:
         """使用已编译的函数在一只股票上评估因子值。
 
@@ -665,7 +671,7 @@ class GeneticFactorMiningService(BaseMiningService):
         """
         # Phase 4: check cache first
         # 缓存结构同 _eval_tree_on_stock，读取时 ndarray → pd.Series
-        cached = self._cache_get(tree_str)
+        cached = self._cache_get(tree_key)
         if cached is not None and stock_code in cached:
             val = cached[stock_code]
             if isinstance(val, np.ndarray):
@@ -731,12 +737,12 @@ class GeneticFactorMiningService(BaseMiningService):
 
         # Phase 4: store in cache (numpy array + shared index)
         with self._cache_lock:
-            cached = self._factor_cache.get(tree_str)
+            cached = self._factor_cache.get(tree_key)
             if cached is None:
                 cached = {"_index": index}
                 if len(self._factor_cache) >= self.max_cache_size:
                     self._factor_cache.popitem(last=False)
-                self._factor_cache[tree_str] = cached
+                self._factor_cache[tree_key] = cached
             elif "_index" not in cached:
                 cached["_index"] = index
             cached[stock_code] = result_np  # 存储 numpy ndarray
@@ -761,8 +767,8 @@ class GeneticFactorMiningService(BaseMiningService):
         # Phase 4: check if full result is cached
         # 缓存中 "_complete" 键存储横截面IC的完整结果（所有股票的因子值），
         # "_complete_index" 存储各股票对应的 DatetimeIndex（用于 ndarray → Series 转换）
-        tree_str = str(tree)
-        cached_all = self._cache_get(tree_str)
+        tree_key = zobrist_hash(tree)
+        cached_all = self._cache_get(tree_key)
         if cached_all is not None and "_complete" in cached_all:
             # 从缓存恢复：numpy ndarray → pd.Series（按需包装）
             complete_cache = cached_all["_complete"]
@@ -797,7 +803,7 @@ class GeneticFactorMiningService(BaseMiningService):
                 if base_factors is None:
                     return code, None
                 fv = self._eval_compiled_on_stock(
-                    compiled_func, tree_str, code, base_factors
+                    compiled_func, tree_key, code, base_factors
                 )
                 if fv is None:
                     return code, None
@@ -835,7 +841,7 @@ class GeneticFactorMiningService(BaseMiningService):
                 complete_np[code] = fv.values if isinstance(fv, pd.Series) else fv
                 if isinstance(fv, pd.Series):
                     complete_index[code] = fv.index
-            self._cache_set(tree_str, {
+            self._cache_set(tree_key, {
                 "_complete": complete_np,
                 "_complete_index": complete_index,
             })
@@ -1247,6 +1253,11 @@ class GeneticFactorMiningService(BaseMiningService):
             actual_expr = self._convert_expression_to_code(tree)
             placeholder_expr = tree_to_placeholder_expr(tree)
 
+            # SymPy 后置简化：对占位符表达式进行代数化简
+            # 例如 add(factor_0, sub(factor_1, factor_0)) → factor_1
+            simplified_placeholder = simplify_gp_expression(placeholder_expr)
+            was_simplified = simplified_placeholder != placeholder_expr
+
             # Extract primary fitness (IC-based)
             fitness_values = tree.fitness.values
             if self.use_nsga2:
@@ -1264,6 +1275,7 @@ class GeneticFactorMiningService(BaseMiningService):
                 "rank": i + 1,
                 "expression": actual_expr,
                 "placeholder_expression": placeholder_expr,
+                "simplified_expression": simplified_placeholder if was_simplified else None,
                 "fitness": primary_fitness,
                 "complexity": complexity,
             }
@@ -1276,31 +1288,43 @@ class GeneticFactorMiningService(BaseMiningService):
                     # 单因子验证超时保护：validate_factor 内部包含
                     # IC/换手率/稳定性/相关性/前视偏差等多项重型检测，
                     # 任一项卡死都会阻塞整个验证流程（实测已卡 >5min）
+                    #
+                    # 注意：ThreadPoolExecutor 的 with 语句 __exit__ 会调用
+                    # shutdown(wait=True)，即使 future.result(timeout=X) 抛出
+                    # TimeoutError，仍会阻塞等待线程完成。
+                    # 修复：不使用 with 语句，超时后直接 shutdown(wait=False)
+                    # 放弃线程，让主流程继续。
                     _validation_timeout = 120.0  # 单因子验证超时 120s
                     def _do_validate():
                         return factor_validation_service.validate_factor(
                             factor_values=fv,
                             return_values=self.return_values,
                         )
-                    with ThreadPoolExecutor(max_workers=1) as _v_executor:
-                        _v_future = _v_executor.submit(_do_validate)
+                    _v_executor = ThreadPoolExecutor(max_workers=1)
+                    _v_future = _v_executor.submit(_do_validate)
+                    try:
                         validation = _v_future.result(timeout=_validation_timeout)
-                    factor_info["validation"] = validation
-                    # 将预计算的因子值传递给 _finalize_task，避免重复计算
-                    # _finalize_task 中的 _unified_validate_factor 会检查此字段，
-                    # 如果存在则跳过 factor_calculator.calculate() 重新计算
-                    factor_info["_precomputed_factor_values"] = fv
-            except TimeoutError:
-                logger.warning(
-                    f"  候选因子 [{i+1}/{n_hof}] 验证超时 (>{_validation_timeout:.0f}s)，跳过"
-                )
+                        factor_info["validation"] = validation
+                        # 将预计算的因子值传递给 _finalize_task，避免重复计算
+                        # _finalize_task 中的 _unified_validate_factor 会检查此字段，
+                        # 如果存在则跳过 factor_calculator.calculate() 重新计算
+                        factor_info["_precomputed_factor_values"] = fv
+                    except TimeoutError:
+                        logger.warning(
+                            f"  候选因子 [{i+1}/{n_hof}] 验证超时 (>{_validation_timeout:.0f}s)，跳过"
+                        )
+                    finally:
+                        # wait=False: 不阻塞等待线程完成，让主流程继续
+                        # cancel_futures=True: 取消尚未开始的任务（Python 3.9+）
+                        _v_executor.shutdown(wait=False, cancel_futures=True)
             except Exception as e:
                 logger.debug(f"因子验证失败: {e}")
 
             _ind_elapsed = time.time() - _ind_t0
+            _simp_note = " [已简化]" if was_simplified else ""
             logger.info(
                 f"  验证候选因子 [{i+1}/{n_hof}] "
-                f"({_ind_elapsed:.1f}s)"
+                f"({_ind_elapsed:.1f}s){_simp_note}"
             )
 
             best_factors.append(factor_info)

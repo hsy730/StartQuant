@@ -765,6 +765,10 @@ class FactorCalculator:
                 raise ValueError(error_msg)
         else:
             # 表达式形式：使用 eval 执行（保持向后兼容）
+            # 提取 mylanguage_funcs 中的 MAX/MIN 用于支持 Series
+            _MAX = self.mylanguage_funcs.get("MAX")
+            _MIN = self.mylanguage_funcs.get("MIN")
+
             local_vars = {
                 "df": df,
                 "open": df["open"],
@@ -799,6 +803,20 @@ class FactorCalculator:
                 "set": set,
                 "len": len,
                 "range": range,
+                # 数学/比较函数（挖掘生成的表达式可能使用）
+                # 注意：max/min 需要映射到自定义版本以支持 pandas Series
+                "max": _MAX,  # 使用 mylanguage_funcs 中支持 Series 的 MAX
+                "min": _MIN,  # 使用 mylanguage_funcs 中支持 Series 的 MIN
+                "abs": abs,
+                "round": round,
+                "sum": sum,
+                "pow": pow,
+                "sorted": sorted,
+                "enumerate": enumerate,
+                "zip": zip,
+                "map": map,
+                "filter": filter,
+                "reversed": reversed,
                 # NumPy / pandas
                 "np": np,
                 "pd": pd,

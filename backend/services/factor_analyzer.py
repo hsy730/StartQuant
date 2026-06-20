@@ -88,6 +88,10 @@ class FactorAnalyzer:
 
                     try:
                         # 单因子超时保护：在线程中执行，超时返回空结果
+                        # 注意：ThreadPoolExecutor 的 with 语句 __exit__ 会调用
+                        # shutdown(wait=True)，即使 future.result(timeout=X) 抛出
+                        # TimeoutError，仍会阻塞等待线程完成。
+                        # 修复：不使用 with 语句，超时后直接 shutdown(wait=False)
                         import concurrent.futures
 
                         def _do_analyze():
@@ -95,15 +99,18 @@ class FactorAnalyzer:
                                 candidate, repo, source, idx
                             )
 
-                        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                            future = executor.submit(_do_analyze)
-                            factor_result = future.result(timeout=_validation_timeout)
-                    except concurrent.futures.TimeoutError:
-                        elapsed = time.time() - _cand_start
-                        logger.warning(
-                            f"  候选因子 [{idx}/{n_candidates}] 验证超时 ({elapsed:.1f}s > {_validation_timeout}s)，跳过: {_expr_short}"
-                        )
-                        factor_result = None
+                        _executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+                        _future = _executor.submit(_do_analyze)
+                        try:
+                            factor_result = _future.result(timeout=_validation_timeout)
+                        except concurrent.futures.TimeoutError:
+                            elapsed = time.time() - _cand_start
+                            logger.warning(
+                                f"  候选因子 [{idx}/{n_candidates}] 验证超时 ({elapsed:.1f}s > {_validation_timeout:.0f}s)，跳过: {_expr_short}"
+                            )
+                            factor_result = None
+                        finally:
+                            _executor.shutdown(wait=False, cancel_futures=True)
                     except Exception as e:
                         elapsed = time.time() - _cand_start
                         logger.warning(
