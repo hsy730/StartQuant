@@ -396,6 +396,31 @@ class GeneticFactorMiningService(BaseMiningService):
     # 内存管理
     # ------------------------------------------------------------------
 
+    def _sympy_canonical_key_with_timeout(self, tree, timeout: float = 3.0) -> Optional[str]:
+        """带超时保护的 SymPy 规范形计算。
+
+        sp.simplify() 对复杂 GP 树（深度>10、含时序算子嵌套）可能进入
+        极长计算甚至死循环。实测卡住 16+ 分钟，阻塞整个评估流程。
+
+        使用线程池 + future.result(timeout) 实现超时，
+        超时后返回 None（降级为纯 zobrist 去重，功能不受影响）。
+        """
+        import concurrent.futures
+
+        def _compute():
+            return sympy_canonical_key(tree)
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(_compute)
+            try:
+                return future.result(timeout=timeout)
+            except concurrent.futures.TimeoutError:
+                logger.warning(
+                    f"SymPy规范形计算超时（>{timeout}s），"
+                    f"树节点数={len(tree)}，跳过该优化"
+                )
+                return None
+
     def release_memory(self):
         """释放大对象占用的内存，在挖掘任务完成后调用
 
@@ -803,6 +828,7 @@ class GeneticFactorMiningService(BaseMiningService):
             而非完整的 alphalens 流水线。原因见 _fast_cross_sectional_ic 注释。
             GP 树编译一次后复用于所有股票，避免同一棵树被编译 N 次。
         """
+        _t0 = time.time()
         eval_codes = self._sampled_stock_codes
         factor_values_dict: Dict[str, pd.Series] = {}
 
@@ -814,19 +840,21 @@ class GeneticFactorMiningService(BaseMiningService):
 
         # P1: SymPy 规范形去重 — zobrist 未命中时，检查代数等价表达式
         # 例如 add(a, sub(b, a)) ≡ b，zobrist 不同但 SymPy 规范形相同
+        # ⚠️ 超时保护：sp.simplify() 对复杂 GP 树可能极慢甚至死循环（实测卡住 16+ 分钟）
         sympy_hit = False
         if cached_all is None or "_complete" not in cached_all:
             try:
-                canon_key = sympy_canonical_key(tree)
-                with self._sympy_key_lock:
-                    mapped_key = self._sympy_key_map.get(canon_key)
-                if mapped_key is not None:
-                    cached_all = self._cache_get(mapped_key)
-                    if cached_all is not None and "_complete" in cached_all:
-                        tree_key = mapped_key  # 复用已有缓存的 key
-                        sympy_hit = True
+                canon_key = self._sympy_canonical_key_with_timeout(tree, timeout=3.0)
+                if canon_key is not None:
+                    with self._sympy_key_lock:
+                        mapped_key = self._sympy_key_map.get(canon_key)
+                    if mapped_key is not None:
+                        cached_all = self._cache_get(mapped_key)
+                        if cached_all is not None and "_complete" in cached_all:
+                            tree_key = mapped_key  # 复用已有缓存的 key
+                            sympy_hit = True
             except Exception:
-                pass  # SymPy 不可用或失败，降级为纯 zobrist
+                pass  # SymPy 不可用或失败/超时，降级为纯 zobrist
 
         if cached_all is not None and "_complete" in cached_all:
             # 从缓存恢复：numpy ndarray → pd.Series（按需包装）
@@ -982,6 +1010,12 @@ class GeneticFactorMiningService(BaseMiningService):
             cv_penalty = self._cv_penalty(factor_values_dict)
             raw_fitness = raw_fitness * (1.0 - cv_penalty)
 
+            _elapsed = time.time() - _t0
+            if _elapsed > 5.0:
+                logger.warning(
+                    f"截面IC评估耗时 {_elapsed:.1f}s（阈值5s），"
+                    f"树节点数={len(tree)}, 股票数={len(eval_codes)}"
+                )
             return (raw_fitness,)
 
         except Exception as e:

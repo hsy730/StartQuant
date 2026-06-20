@@ -613,6 +613,7 @@ class FactorCalculator:
             "neg": neg,
             "sigmoid": sigmoid,
             "tanh": np.tanh,
+            "exp": np.exp,
             "add": add,
             "sub": sub,
             "mul": mul,

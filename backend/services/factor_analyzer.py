@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from typing import Any, Dict, List, Optional
@@ -206,6 +207,8 @@ class FactorAnalyzer:
             turnover=turnover_val,
             stability=stability_val,
             complexity=candidate.complexity,
+            display_expression=candidate.display_expression,
+            factor_definitions=candidate.factor_definitions,
         )
 
         return {
@@ -323,12 +326,25 @@ class FactorAnalyzer:
         turnover: Any,
         stability: Any,
         complexity: float,
+        display_expression: Optional[str] = None,
+        factor_definitions: Optional[Dict] = None,
     ) -> Optional[int]:
         """存储因子到 generated_factors 表
 
         注意：使用 repo 的 session 统一 commit，不用 Session.object_session，
         因为 object_session 可能返回不同的 session 实例，导致 commit 不一致。
         """
+        # 构建 extra_info（存储可读表达式和基础因子定义）
+        extra_info = None
+        if display_expression or factor_definitions:
+            extra_info = json.dumps(
+                {
+                    "display_expression": display_expression,
+                    "factor_definitions": factor_definitions,
+                },
+                ensure_ascii=False,
+            )
+
         existing = repo.get_by_expression(expression)
         if existing:
             existing.ic_value = _safe_float(ic)
@@ -347,6 +363,8 @@ class FactorAnalyzer:
             existing.is_valid = overall_passed
             existing.generation_method = source
             existing.complexity = str(complexity)
+            if extra_info:
+                existing.extra_info = extra_info
             # 使用 repo 的 db session 统一 commit（由外层 with get_db() 管理）
             repo.db.commit()
             repo.db.refresh(existing)
@@ -371,6 +389,7 @@ class FactorAnalyzer:
                 is_valid=overall_passed,
                 is_saved=False,
                 complexity=str(complexity),
+                extra_info=extra_info,
             )
             created = repo.create(gen_factor)
             return created.id
@@ -387,6 +406,8 @@ class FactorAnalyzer:
                 {
                     "name": f"Mined_Factor_{candidate.rank or len(results) + 1}",
                     "expression": candidate.expression,
+                    "display_expression": candidate.display_expression,
+                    "factor_definitions": candidate.factor_definitions,
                     "ic": None,
                     "ir": None,
                     "fitness": _safe_float(candidate.fitness),
