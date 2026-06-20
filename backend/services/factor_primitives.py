@@ -855,6 +855,69 @@ def expression_similarity(expr_a: str, expr_b: str) -> float:
 
 
 # ---------------------------------------------------------------------------
+# Operator-weighted complexity (P1: replaces naive node count)
+# Based on: Nomura et al. (2026) generalization bounds — structure-selection
+# term should reflect operator computational cost, not just node count.
+# ---------------------------------------------------------------------------
+
+# Weight by computational cost category:
+#   1.0 = basic arithmetic (O(n) elementwise)
+#   2.0 = transcendental / sort-based (log, sqrt, rank)
+#   3.0 = windowed aggregation (ts_mean, ts_std, sigmoid, tanh)
+#   4.0 = pairwise windowed (ts_corr)
+#   0.5 = terminal nodes (leaf, low cost)
+_OPERATOR_WEIGHTS: dict = {
+    # --- Basic arithmetic (weight 1.0) ---
+    "add": 1.0, "sub": 1.0, "mul": 1.0, "div": 1.0,
+    "neg": 1.0, "abs": 1.0,
+    "max": 1.0, "min": 1.0,
+    # --- Transcendental / sort-based (weight 2.0) ---
+    "log": 2.0, "sqrt": 2.0, "rank": 2.0,
+    # --- Windowed aggregation (weight 3.0) ---
+    "ts_mean_5": 3.0, "ts_mean_10": 3.0, "ts_mean_20": 3.0,
+    "ts_std_5": 3.0, "ts_std_10": 3.0, "ts_std_20": 3.0,
+    "ts_delay_1": 3.0, "ts_delay_5": 3.0,
+    "ts_delta_1": 3.0, "ts_delta_5": 3.0,
+    "sigmoid": 3.0, "tanh": 3.0,
+    # --- Pairwise windowed (weight 4.0) ---
+    "ts_corr_5": 4.0, "ts_corr_10": 4.0, "ts_corr_20": 4.0,
+}
+
+# Default weight for unknown operators and terminals
+_DEFAULT_OP_WEIGHT = 1.0
+_TERMINAL_WEIGHT = 0.5
+
+
+def compute_weighted_complexity(tree) -> float:
+    """Compute operator-weighted complexity of a DEAP PrimitiveTree.
+
+    Unlike naive ``len(tree)`` which counts every node equally, this
+    assigns higher weights to expensive operators (``ts_corr``=4.0,
+    ``log``/``sqrt``/``rank``=2.0, ``ts_mean``=3.0) and lower weights
+    to terminals (0.5).
+
+    This gives a more accurate proxy for the structure-selection term
+    in the generalization bound (Nomura et al., 2026), improving
+    parsimony pressure precision.
+
+    Examples
+    --------
+    >>> # add(factor_0, factor_1) = 1.0 + 0.5 + 0.5 = 2.0
+    >>> # ts_corr_5(factor_0, factor_1) = 4.0 + 0.5 + 0.5 = 5.0
+    """
+    total = 0.0
+    for node in tree:
+        name = getattr(node, "name", str(node))
+        arity = getattr(node, "arity", 0)
+        if arity == 0:
+            # Terminal node (factor_N or constant)
+            total += _TERMINAL_WEIGHT
+        else:
+            total += _OPERATOR_WEIGHTS.get(name, _DEFAULT_OP_WEIGHT)
+    return total
+
+
+# ---------------------------------------------------------------------------
 # Zobrist hash for efficient duplicate detection (cache key)
 # Based on: Burlacu (2025) "Zobrist Hash-based Duplicate Detection in SR"
 # ---------------------------------------------------------------------------
@@ -1179,4 +1242,42 @@ def simplify_gp_expression(expr_str: str) -> str:
         return expr_str
     except Exception as e:
         logger.debug(f"表达式简化失败 '{expr_str[:60]}': {e}")
+        return expr_str
+
+
+def sympy_canonical_key(tree) -> str:
+    """Compute a SymPy canonical-form key for a DEAP PrimitiveTree.
+
+    This is used for **algebraic-equivalence deduplication** during
+    evaluation (P1): unlike :func:`zobrist_hash` which only detects
+    structural isomorphism, this detects algebraic equivalence such as
+    ``add(a, sub(b, a))`` ≡ ``b``.
+
+    The canonical key is the SymPy ``srepr()`` of the simplified
+    expression, which is deterministic and order-independent.
+
+    If SymPy is unavailable or simplification fails, returns the
+    plain prefix string (degraded dedup, still correct).
+
+    Performance note
+    ----------------
+    ``sp.simplify`` is ~1-5ms for small expressions. Callers should
+    only invoke this when the fast ``zobrist_hash`` lookup misses,
+    so the overhead is amortized over cache hits.
+    """
+    expr_str = tree_to_placeholder_expr(tree)
+    if not _SYMPY_AVAILABLE:
+        return expr_str
+
+    try:
+        tokens = _tokenize_prefix(expr_str)
+        symbol_names = {t for t in tokens if t.startswith("factor_")}
+        symbols = {name: sp.Symbol(name) for name in symbol_names}
+
+        sympy_expr, _ = _parse_prefix_tokens(tokens, 0, symbols)
+        simplified = sp.simplify(sympy_expr)
+        # srepr gives a deterministic, canonical string representation
+        return sp.srepr(simplified)
+    except Exception:
+        # Fallback: use prefix string as key (still correct, just less dedup)
         return expr_str

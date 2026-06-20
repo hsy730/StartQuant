@@ -50,6 +50,8 @@ from backend.services.factor_primitives import (  # noqa: E402
     expression_similarity,
     zobrist_hash,
     simplify_gp_expression,
+    compute_weighted_complexity,
+    sympy_canonical_key,
 )
 from backend.utils.safe_math import safe_divide, safe_ir  # noqa: E402
 
@@ -182,9 +184,15 @@ class GeneticFactorMiningService(BaseMiningService):
         # evolve_factor 等非任务场景下为 None，此时不保存 checkpoint。
         self._task_id: Optional[str] = None
 
-        # Phase 4: factor value cache (keyed by tree string)
+        # Phase 4: factor value cache (keyed by Zobrist hash)
         self._factor_cache: OrderedDict = OrderedDict()
         self._cache_lock = threading.Lock()
+
+        # P1: SymPy canonical-form → Zobrist hash mapping
+        # 用于检测代数等价表达式（如 add(a, sub(b, a)) ≡ b）
+        # 仅在 zobrist 未命中时查询，避免每次评估都做 SymPy 简化
+        self._sympy_key_map: dict = {}
+        self._sympy_key_lock = threading.Lock()
 
         # Build tradable_mask from OHLC data (detect limit-up/down days)
         self.tradable_mask: Optional[pd.Series] = self._build_tradable_mask()
@@ -378,6 +386,9 @@ class GeneticFactorMiningService(BaseMiningService):
         """
         with self._cache_lock:
             self._factor_cache.clear()
+        # P1: 同步清理 SymPy 规范形映射
+        with self._sympy_key_lock:
+            self._sympy_key_map.clear()
 
     # ------------------------------------------------------------------
     # 内存管理
@@ -507,8 +518,10 @@ class GeneticFactorMiningService(BaseMiningService):
             logger.debug(f"适应度评估失败: {e}")
             return (0.0,)
 
-        # --- Parsimony Pressure (Phase 2) ---
-        parsimony_penalty = self.parsimony_coeff * len(individual)
+        # --- Parsimony Pressure (Phase 2, P1: operator-weighted) ---
+        # 替换原 len(individual)：算子加权复杂度更精准地反映计算成本
+        # ts_corr=4.0, log/sqrt/rank=2.0, ts_mean=3.0, add/sub=1.0, terminal=0.5
+        parsimony_penalty = self.parsimony_coeff * compute_weighted_complexity(individual)
 
         # --- Diversity Penalty (Phase 3) ---
         diversity_penalty = 0.0
@@ -570,7 +583,9 @@ class GeneticFactorMiningService(BaseMiningService):
                     diversity_penalty += self.diversity_penalty_coeff * sim
 
         ic_fitness = max(raw_fitness - diversity_penalty, 0.0)
-        complexity = float(len(individual))
+        # P1: 算子加权复杂度替代朴素节点计数
+        # NSGA-II 第二目标：复杂度越小越好
+        complexity = compute_weighted_complexity(individual)
         return (ic_fitness, complexity)
 
     def _penalty_fitness(self) -> tuple:
@@ -769,6 +784,23 @@ class GeneticFactorMiningService(BaseMiningService):
         # "_complete_index" 存储各股票对应的 DatetimeIndex（用于 ndarray → Series 转换）
         tree_key = zobrist_hash(tree)
         cached_all = self._cache_get(tree_key)
+
+        # P1: SymPy 规范形去重 — zobrist 未命中时，检查代数等价表达式
+        # 例如 add(a, sub(b, a)) ≡ b，zobrist 不同但 SymPy 规范形相同
+        sympy_hit = False
+        if cached_all is None or "_complete" not in cached_all:
+            try:
+                canon_key = sympy_canonical_key(tree)
+                with self._sympy_key_lock:
+                    mapped_key = self._sympy_key_map.get(canon_key)
+                if mapped_key is not None:
+                    cached_all = self._cache_get(mapped_key)
+                    if cached_all is not None and "_complete" in cached_all:
+                        tree_key = mapped_key  # 复用已有缓存的 key
+                        sympy_hit = True
+            except Exception:
+                pass  # SymPy 不可用或失败，降级为纯 zobrist
+
         if cached_all is not None and "_complete" in cached_all:
             # 从缓存恢复：numpy ndarray → pd.Series（按需包装）
             complete_cache = cached_all["_complete"]
@@ -845,6 +877,16 @@ class GeneticFactorMiningService(BaseMiningService):
                 "_complete": complete_np,
                 "_complete_index": complete_index,
             })
+
+            # P1: 记录 SymPy 规范形 → zobrist key 映射
+            # 后续代数等价表达式可通过此映射复用缓存
+            if not sympy_hit:
+                try:
+                    with self._sympy_key_lock:
+                        if canon_key not in self._sympy_key_map:
+                            self._sympy_key_map[canon_key] = tree_key
+                except Exception:
+                    pass
 
         if len(factor_values_dict) < 2:
             return (0.0,)
