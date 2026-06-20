@@ -72,7 +72,7 @@ class FactorAnalyzer:
         """
         discovered_factors = []
         n_candidates = len(mining_result.candidates)
-        _validation_timeout = 120.0  # 单因子验证超时 120s
+        _validation_timeout = 30.0  # 单因子验证超时 30s（降低从120s，避免慢因子拖累整体）
         _total_validation_start = time.time()
 
         logger.info(f"开始统一验证 {n_candidates} 个候选因子...")

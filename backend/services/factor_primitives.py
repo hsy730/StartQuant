@@ -917,6 +917,81 @@ def compute_weighted_complexity(tree) -> float:
     return total
 
 
+def count_duplicate_subtrees(tree) -> dict:
+    """检测表达式树中的重复子树
+
+    遍历所有子树（包括内部节点和叶子），用 Zobrist 哈希检测重复。
+    重复子树是 GP "表达式膨胀"（bloat）的典型特征：
+    同一个子表达式在树中多次出现，增加计算成本但不提升表达能力。
+
+    通过在适应度评估中对重复子树施加惩罚，GP 会自然倾向于
+    产生无重复子表达式的紧凑表达式。
+
+    Returns
+    -------
+    dict
+        n_duplicates : int
+            重复子树数量（不含第一次出现）
+        duplicate_ratio : float
+            重复子树占比 [0, 1]
+        unique_subtrees : int
+            唯一子树数量
+        total_subtrees : int
+            总子树数量
+    """
+    subtree_hashes: set = set()
+    n_duplicates = 0
+    total_subtrees = 0
+
+    def _hash_subtree(start: int) -> tuple:
+        nonlocal n_duplicates, total_subtrees
+        node = tree[start]
+        arity = getattr(node, "arity", 0)
+        name = getattr(node, "name", str(node))
+        node_val = _get_zobrist_value(name)
+
+        if arity == 0:
+            h = node_val
+            next_idx = start + 1
+        else:
+            children = []
+            idx = start + 1
+            for _ in range(arity):
+                child_hash, idx = _hash_subtree(idx)
+                children.append(child_hash)
+
+            if name in _COMMUTATIVE_OPS:
+                children.sort()
+
+            result = node_val
+            for pos, ch in enumerate(children):
+                seed = _POSITION_SEEDS[pos % len(_POSITION_SEEDS)]
+                result ^= (ch * seed) & _MASK64
+
+            h = result
+            next_idx = idx
+
+        total_subtrees += 1
+        if h in subtree_hashes:
+            n_duplicates += 1
+        else:
+            subtree_hashes.add(h)
+
+        return h, next_idx
+
+    _hash_subtree(0)
+
+    unique_subtrees = len(subtree_hashes)
+    duplicate_ratio = n_duplicates / total_subtrees if total_subtrees > 0 else 0.0
+
+    return {
+        "n_duplicates": n_duplicates,
+        "duplicate_ratio": duplicate_ratio,
+        "unique_subtrees": unique_subtrees,
+        "total_subtrees": total_subtrees,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Zobrist hash for efficient duplicate detection (cache key)
 # Based on: Burlacu (2025) "Zobrist Hash-based Duplicate Detection in SR"

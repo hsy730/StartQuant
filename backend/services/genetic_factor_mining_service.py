@@ -51,6 +51,7 @@ from backend.services.factor_primitives import (  # noqa: E402
     zobrist_hash,
     simplify_gp_expression,
     compute_weighted_complexity,
+    count_duplicate_subtrees,
     sympy_canonical_key,
 )
 from backend.utils.safe_math import safe_divide, safe_ir  # noqa: E402
@@ -523,6 +524,14 @@ class GeneticFactorMiningService(BaseMiningService):
         # ts_corr=4.0, log/sqrt/rank=2.0, ts_mean=3.0, add/sub=1.0, terminal=0.5
         parsimony_penalty = self.parsimony_coeff * compute_weighted_complexity(individual)
 
+        # --- Subtree Duplicate Penalty (P1增强: 抑制表达式膨胀) ---
+        # 检测单个表达式内部的重复子树，对重复施加额外惩罚
+        # 重复子树 = 冗余计算，不提升表达能力但增加复杂度
+        dup_info = count_duplicate_subtrees(individual)
+        # 惩罚独立于 parsimony_coeff，因为重复子树的危害远大于单纯节点数
+        # 10个重复子树 → 惩罚 1.0（远大于 IC 值 0.03~0.1），有效抑制膨胀
+        dup_penalty = dup_info["n_duplicates"] * 0.1
+
         # --- Diversity Penalty (Phase 3) ---
         diversity_penalty = 0.0
         if (
@@ -537,7 +546,7 @@ class GeneticFactorMiningService(BaseMiningService):
                 if sim > 0.7:
                     diversity_penalty += self.diversity_penalty_coeff * sim
 
-        adjusted_fitness = raw_fitness - parsimony_penalty - diversity_penalty
+        adjusted_fitness = raw_fitness - parsimony_penalty - dup_penalty - diversity_penalty
         return (adjusted_fitness,)
 
     def _evaluate_factor_multi(self, individual) -> tuple:
@@ -584,8 +593,11 @@ class GeneticFactorMiningService(BaseMiningService):
 
         ic_fitness = max(raw_fitness - diversity_penalty, 0.0)
         # P1: 算子加权复杂度替代朴素节点计数
+        # P1增强: 加入子表达式重复惩罚（重复子树增加复杂度但不提升表达能力）
         # NSGA-II 第二目标：复杂度越小越好
-        complexity = compute_weighted_complexity(individual)
+        dup_info = count_duplicate_subtrees(individual)
+        # 重复惩罚独立于 parsimony_coeff，10个重复 → +1.0 复杂度
+        complexity = compute_weighted_complexity(individual) + dup_info["n_duplicates"] * 0.1
         return (ic_fitness, complexity)
 
     def _penalty_fitness(self) -> tuple:
@@ -1336,7 +1348,7 @@ class GeneticFactorMiningService(BaseMiningService):
                     # TimeoutError，仍会阻塞等待线程完成。
                     # 修复：不使用 with 语句，超时后直接 shutdown(wait=False)
                     # 放弃线程，让主流程继续。
-                    _validation_timeout = 120.0  # 单因子验证超时 120s
+                    _validation_timeout = 30.0  # 单因子验证超时 30s
                     def _do_validate():
                         return factor_validation_service.validate_factor(
                             factor_values=fv,
@@ -1474,18 +1486,89 @@ class GeneticFactorMiningService(BaseMiningService):
                     (offspring[i],) = self.toolbox.mutate(offspring[i])
                     del offspring[i].fitness.values
 
+            # ---- Phase 2.5: Online Simplification (SymPy) ----
+            # 业界标准方案：在每次交叉/变异后，立即对新生成的个体做 SymPy 简化
+            # 消除代数等价的冗余（如 add(a,sub(b,a))→b, mul(x,1)→x）
+            # 参考: Javed & Gobet (2021) "On-the-fly simplification of GP models"
+            # 注意：不透明函数（如 TSRANK/STD）的重复无法通过 SymPy 消除，
+            #       由适应度中的子表达式重复惩罚（dup_penalty）抑制
+            n_simplified = 0
+            for i, ind in enumerate(offspring):
+                if not ind.fitness.valid:
+                    try:
+                        original_str = str(ind)
+                        simplified_str = simplify_gp_expression(original_str)
+                        if simplified_str != original_str and simplified_str:
+                            new_tree = gp.PrimitiveTree.from_string(
+                                simplified_str, self.pset
+                            )
+                            # 验证树非空、结构完整、编译成功
+                            if len(new_tree) == 0:
+                                continue
+                            # height 计算会检测结构完整性（缺少子节点会 IndexError）
+                            _ = new_tree.height
+                            gp.compile(new_tree, self.pset)
+                            # 用简化后的个体替换原始个体
+                            offspring[i] = type(ind)(new_tree)
+                            n_simplified += 1
+                    except Exception:
+                        pass  # 简化失败，保留原始个体
+            if n_simplified > 0:
+                logger.info(f"  Gen {gen}: 在线简化 {n_simplified} 个个体")
+
             # ---- Phase 3: Diversity protection – replace duplicates ----
+            # P1 增强：分层深度去重
+            #   第一层 zobrist_hash：O(1) 检测结构相同 + 交换律同构（add(a,b)=add(b,a)）
+            #   第二层 sympy_canonical_key：检测代数等价（add(a,sub(b,a))≡b）
+            #   对比范围：offspring 内部 + 父代 population + 精英 elites
             if diversity_protection:
-                seen_exprs: Dict[str, int] = {}
-                n_duplicates = 0
+                seen_zobrist: set = set()
+                seen_sympy: set = set()
+
+                # 预加载父代和精英的去重键
+                for ind in list(population) + list(elites):
+                    seen_zobrist.add(zobrist_hash(ind))
+                    try:
+                        seen_sympy.add(sympy_canonical_key(ind))
+                    except Exception:
+                        pass
+
+                n_struct_dup = 0
+                n_algebraic_dup = 0
                 for i, ind in enumerate(offspring):
-                    expr_key = str(ind)
-                    if expr_key in seen_exprs:
+                    zkey = zobrist_hash(ind)
+                    if zkey in seen_zobrist:
+                        # 结构重复（含交换律同构）
                         new_ind = self.toolbox.individual()
                         offspring[i] = new_ind
-                        n_duplicates += 1
-                    else:
-                        seen_exprs[expr_key] = i
+                        n_struct_dup += 1
+                        seen_zobrist.add(zobrist_hash(new_ind))
+                        try:
+                            seen_sympy.add(sympy_canonical_key(new_ind))
+                        except Exception:
+                            pass
+                        continue
+
+                    # 深度去重：SymPy 规范形检测代数等价
+                    try:
+                        skey = sympy_canonical_key(ind)
+                        if skey in seen_sympy:
+                            new_ind = self.toolbox.individual()
+                            offspring[i] = new_ind
+                            n_algebraic_dup += 1
+                            seen_zobrist.add(zobrist_hash(new_ind))
+                            seen_sympy.add(sympy_canonical_key(new_ind))
+                        else:
+                            seen_zobrist.add(zkey)
+                            seen_sympy.add(skey)
+                    except Exception:
+                        seen_zobrist.add(zkey)
+
+                if n_struct_dup + n_algebraic_dup > 0:
+                    logger.info(
+                        f"  Gen {gen}: 去重 {n_struct_dup} 结构重复 + "
+                        f"{n_algebraic_dup} 代数等价重复"
+                    )
 
             # ---- Re-evaluate invalid individuals (serial, avoid nested ThreadPool deadlock) ----
             invalid = [ind for ind in offspring if not ind.fitness.valid]
@@ -1607,14 +1690,14 @@ class GeneticFactorMiningService(BaseMiningService):
         halloffame.update(population)
         self._halloffame = halloffame
 
-        # 委托通用进化循环（简化版：无日志、无NSGA2、无去重保护）
+        # 委托通用进化循环（简化版：无日志、无NSGA2，但启用去重保护）
         self._evolutionary_loop(
             population,
             n_generations,
             halloffame,
             logbook=None,
             use_nsga2=False,
-            diversity_protection=False,
+            diversity_protection=True,
             progress=False,
         )
 

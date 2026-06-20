@@ -6,6 +6,7 @@
 """
 
 import logging
+import time
 from typing import Dict, Optional
 import pandas as pd
 import numpy as np
@@ -87,28 +88,38 @@ class FactorValidationService:
         }
 
         # IC验证：优先使用alphalens（多股票场景），回退到自实现（单股票场景）
+        _t = time.time()
         results["ic_validation"] = self._validate_ic(
             factor_values, return_values, factor_data=factor_data
         )
+        logger.debug(f"[验证计时] IC: {time.time()-_t:.3f}s")
 
+        _t = time.time()
         results["rank_ic_validation"] = self._validate_rank_ic(
             factor_values, return_values
         )
+        logger.debug(f"[验证计时] RankIC: {time.time()-_t:.3f}s")
 
         # IR验证：优先使用alphalens IC序列
+        _t = time.time()
         results["ir_validation"] = self._validate_ir(
             factor_values, return_values, factor_data=factor_data
         )
+        logger.debug(f"[验证计时] IR: {time.time()-_t:.3f}s")
 
         # 换手率验证：优先使用alphalens，回退到自实现
+        _t = time.time()
         results["turnover_validation"] = self._validate_turnover(
             factor_values,
             cross_sectional_panel=cross_sectional_panel,
             factor_data=factor_data,
         )
+        logger.debug(f"[验证计时] Turnover: {time.time()-_t:.3f}s")
 
         # 4. 稳定性验证
+        _t = time.time()
         results["stability_validation"] = self._validate_stability(factor_values)
+        logger.debug(f"[验证计时] Stability: {time.time()-_t:.3f}s")
 
         # 5. 相关性验证
         if existing_factors:
@@ -119,9 +130,11 @@ class FactorValidationService:
             results["correlation_validation"] = {"passed": True, "max_correlation": 0.0}
 
         # 6. 未来函数检测（Look-ahead Bias Detection）
+        _t = time.time()
         results["lookahead_bias"] = self.detect_lookahead_bias(
             factor_values, return_values
         )
+        logger.debug(f"[验证计时] LookaheadBias: {time.time()-_t:.3f}s")
 
         # overall_passed: 原有验证项全部通过 且 无高风险/严重未来函数
         base_checks_passed = all(
