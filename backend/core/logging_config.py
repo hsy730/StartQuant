@@ -3,11 +3,26 @@
 
 提供统一的日志初始化，支持控制台输出 + 文件持久化（带轮转）。
 所有模块通过 logging.getLogger(__name__) 获取的 logger 均自动生效。
+
+关键：FlushRotatingFileHandler 每次写日志后立即 flush，
+确保 asyncio.to_thread 等后台线程的日志实时可见（否则进程退出才刷盘）。
 """
 
 import logging
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
+
+
+class FlushRotatingFileHandler(RotatingFileHandler):
+    """每次 emit 后立即 flush 的轮转文件 Handler
+
+    解决问题：asyncio.to_thread 后台线程的日志默认被 OS 文件缓冲区持有，
+    导致日志文件长时间不更新，用户误以为程序卡死。
+    """
+
+    def emit(self, record: logging.LogRecord) -> None:
+        super().emit(record)
+        self.flush()
 
 
 def setup_logging(log_dir: Path, log_level: str = "INFO"):
@@ -31,13 +46,15 @@ def setup_logging(log_dir: Path, log_level: str = "INFO"):
     # 检查是否已添加文件 handler（uvicorn 会添加控制台 handler，
     # 但不会添加文件 handler，所以只检查文件 handler 是否存在）
     has_file_handler = any(
-        isinstance(h, RotatingFileHandler) for h in root_logger.handlers
+        isinstance(h, (RotatingFileHandler, FlushRotatingFileHandler))
+        for h in root_logger.handlers
     )
     if has_file_handler:
         return
 
-    # 文件 handler（轮转）— 始终添加，不受 uvicorn handler 影响
-    file_handler = RotatingFileHandler(
+    # 文件 handler（轮转 + 即时 flush）— 始终添加，不受 uvicorn handler 影响
+    # 使用 FlushRotatingFileHandler 确保后台线程日志实时写入磁盘
+    file_handler = FlushRotatingFileHandler(
         filename=log_dir / "factorhub.log",
         maxBytes=10 * 1024 * 1024,  # 10MB
         backupCount=5,

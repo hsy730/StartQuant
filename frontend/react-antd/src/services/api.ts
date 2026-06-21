@@ -236,6 +236,11 @@ export const api: {
     return request.post(`/factors/${id}/copy`)
   },
 
+  // 简化因子表达式
+  simplifyFactor(id: number) {
+    return request.post(`/factors/${id}/simplify`)
+  },
+
   // 因子暴露度分析
   analyzeExposure(data: {
     factor_name: string

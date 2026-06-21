@@ -432,30 +432,62 @@ class BaseMiningService(ABC):
         将时间序列分为 cv_folds 段，计算每段IC，
         返回 1.0 - (min_fold_ic / max_fold_ic)，值域 [0, 1]。
         IC一致的因子惩罚≈0，IC不稳定的因子惩罚→1。
+
+        性能保护：
+        - 超时5秒自动返回0（避免阻塞进化循环）
+        - 最多采样10只股票（避免全量遍历慢）
         """
         if self.cv_folds < 2:
             return 0.0
 
+        _t_start = time.time()
+        logger.info(f"  [诊断] _cv_penalty 开始: cv_folds={self.cv_folds}, 输入 {len(factor_values_dict)} 只股票")
+
         fold_ics: List[float] = []
-        for stock_code, fv in factor_values_dict.items():
+        # 采样限制：进化循环中每只股票都算CV太慢，最多取10只
+        _stock_items = list(factor_values_dict.items())
+        if len(_stock_items) > 10:
+            import random
+            _stock_items = random.sample(_stock_items, 10)
+            logger.info(f"  [诊断] _cv_penalty 采样 {len(_stock_items)}/{len(factor_values_dict)} 只股票")
+
+        for stock_code, fv in _stock_items:
+            # 超时保护：单次_cv_penalty总耗时>5秒直接返回0
+            if time.time() - _t_start > 5.0:
+                logger.warning(
+                    f"  [诊断] _cv_penalty 超时(5s)，已收集 {len(fold_ics)} 个fold_ic，提前返回0"
+                )
+                return 0.0
+
             ret = self.stock_pool_return_values.get(stock_code)
             if ret is None:
                 continue
-            aligned = pd.DataFrame({"factor": fv, "return": ret}).dropna()
-            if len(aligned) < self.cv_folds * 20:
+            # 使用 numpy 直接对齐，避免 pd.DataFrame 开销
+            idx = fv.index.intersection(ret.index)
+            if len(idx) < self.cv_folds * 20:
+                continue
+            f_arr = fv.reindex(idx).values
+            r_arr = ret.reindex(idx).values
+            valid = ~(np.isnan(f_arr) | np.isnan(r_arr))
+            f_valid = f_arr[valid]
+            r_valid = r_arr[valid]
+            n = len(f_valid)
+            if n < self.cv_folds * 20:
                 continue
 
-            n = len(aligned)
             fold_size = n // self.cv_folds
             for k in range(self.cv_folds):
                 start = k * fold_size
                 end = start + fold_size if k < self.cv_folds - 1 else n
-                segment = aligned.iloc[start:end]
-                if len(segment) >= 10:
-                    ic_result = spearmanr(segment["factor"], segment["return"])
+                if end - start < 10:
+                    continue
+                try:
+                    ic_result = spearmanr(f_valid[start:end], r_valid[start:end])
                     ic = ic_result[0]
                     if not np.isnan(ic):
                         fold_ics.append(abs(ic))
+                except Exception:
+                    pass
 
         if len(fold_ics) < self.cv_folds:
             return 0.0
@@ -465,7 +497,10 @@ class BaseMiningService(ABC):
         if max_ic < 1e-10:
             return 1.0
         penalty = 1.0 - (min_ic / max_ic)
-        return max(0.0, min(penalty, 1.0))
+        result = max(0.0, min(penalty, 1.0))
+        _t_elapsed = time.time() - _t_start
+        logger.info(f"  [诊断] _cv_penalty 完成: {len(fold_ics)}个fold_ic, penalty={result:.4f}, 耗时={_t_elapsed:.3f}s")
+        return result
 
     # ------------------------------------------------------------------
     # 适应度路由

@@ -1517,3 +1517,147 @@ def sympy_canonical_key(tree) -> str:
     except Exception:
         # Fallback: use prefix string as key (still correct, just less dedup)
         return expr_str
+
+
+def _parse_math_expr_to_sympy(expr_str: str):
+    """Parse a standard math expression into a SymPy expression.
+
+    Extracts method chains (e.g. ``close.rolling(20).mean()``) as atomic
+    placeholders, distinguishes function names from variable names (to avoid
+    ``open`` being parsed as a builtin), and returns the SymPy expression
+    along with the placeholder→chain mapping.
+
+    Returns
+    -------
+    tuple or None
+        ``(sympy_expr, chains)`` on success, ``None`` on failure.
+    """
+    if not _SYMPY_AVAILABLE:
+        return None
+
+    import ast as _ast
+
+    try:
+        tree = _ast.parse(expr_str, mode="eval")
+    except SyntaxError:
+        return None
+
+    chains = {}
+
+    class _MethodChainExtractor(_ast.NodeTransformer):
+        def visit_Call(self, node):
+            # 方法调用 (func 是 Attribute，如 close.rolling(20).mean())
+            if isinstance(node.func, _ast.Attribute):
+                chain_str = _ast.unparse(node)
+                existing = next(
+                    (k for k, v in chains.items() if v == chain_str), None
+                )
+                if existing:
+                    return _ast.Name(id=existing, ctx=_ast.Load())
+                placeholder = f"_v{len(chains)}"
+                chains[placeholder] = chain_str
+                return _ast.Name(id=placeholder, ctx=_ast.Load())
+            # 普通函数调用 (如 safe_divide(a, b))，递归处理参数
+            self.generic_visit(node)
+            return node
+
+    extractor = _MethodChainExtractor()
+    new_tree = extractor.visit(tree)
+    math_expr = _ast.unparse(new_tree)
+
+    try:
+        # 区分函数名和变量名，避免 open 等内置名被误解析
+        function_names = set()
+        variable_names = set()
+        for node in _ast.walk(new_tree):
+            if isinstance(node, _ast.Call) and isinstance(node.func, _ast.Name):
+                function_names.add(node.func.id)
+            elif isinstance(node, _ast.Name):
+                variable_names.add(node.id)
+
+        local_dict = {}
+        for name in function_names:
+            local_dict[name] = sp.Function(name)
+        for name in variable_names - function_names:
+            local_dict[name] = sp.Symbol(name)
+
+        sympy_expr = sp.parse_expr(
+            math_expr, local_dict=local_dict, evaluate=True
+        )
+        return sympy_expr, chains
+    except Exception as e:
+        logger.warning(f"SymPy解析失败 '{math_expr}': {e}")
+        return None
+
+
+def simplify_math_expression(expr_str: str) -> tuple:
+    """Simplify a standard math expression (with optional pandas method chains).
+
+    Extracts method chains (e.g. ``close.rolling(20).mean()``) as atomic
+    placeholders, simplifies the remaining pure-math part with SymPy, then
+    substitutes the placeholders back.
+
+    Unlike :func:`simplify_gp_expression` which handles DEAP prefix notation,
+    this works on standard Python math syntax such as ``(close - open) / close``.
+
+    Returns
+    -------
+    tuple
+        ``(simplified_expr, changed)`` where *changed* is True when the
+        simplified result differs from the input.
+    """
+    import re as _re
+
+    parsed = _parse_math_expr_to_sympy(expr_str)
+    if parsed is None:
+        return expr_str, False
+
+    sympy_expr, chains = parsed
+
+    try:
+        simplified = sp.simplify(sympy_expr)
+        # 尝试 expand 获取更简形式（如 (close-open)/close → 1-open/close）
+        expanded = sp.expand(simplified)
+        if len(str(expanded)) <= len(str(simplified)):
+            simplified = expanded
+        result = str(simplified)
+    except Exception as e:
+        logger.warning(f"SymPy简化失败: {e}")
+        return expr_str, False
+
+    # 替换占位符回原方法链（用词边界精确匹配）
+    for placeholder, chain in chains.items():
+        result = _re.sub(
+            r"\b" + _re.escape(placeholder) + r"\b",
+            lambda m, c=chain: c,
+            result,
+        )
+
+    # 规范化比较（去除空白差异）
+    original_normalized = _re.sub(r"\s+", "", expr_str)
+    result_normalized = _re.sub(r"\s+", "", result)
+    if result_normalized == original_normalized:
+        return expr_str, False
+    return result, True
+
+
+def math_expression_canonical_key(expr_str: str) -> Optional[str]:
+    """Compute a canonical-form key for a standard math expression.
+
+    Two expressions that are algebraically equivalent (e.g.
+    ``(close - open) / close`` and ``1 - open/close``) will produce the
+    same key, enabling duplicate detection across the factor library.
+
+    Returns ``None`` if SymPy is unavailable or parsing fails.
+    """
+    parsed = _parse_math_expr_to_sympy(expr_str)
+    if parsed is None:
+        return None
+
+    sympy_expr, _ = parsed
+    try:
+        simplified = sp.simplify(sympy_expr)
+        return sp.srepr(simplified)
+    except Exception:
+        return None
+

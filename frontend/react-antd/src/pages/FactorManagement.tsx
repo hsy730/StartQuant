@@ -29,7 +29,8 @@ import {
   CopyOutlined,
   QuestionCircleOutlined,
   WarningOutlined,
-  DatabaseOutlined
+  DatabaseOutlined,
+  ThunderboltOutlined
 } from '@ant-design/icons'
 import { api } from '@/services/api'
 import './FactorManagement.css'
@@ -74,6 +75,18 @@ const FactorManagement: React.FC = () => {
   const [createModalVisible, setCreateModalVisible] = useState(false)
   const [form] = Form.useForm()
   const [selectedFormulaType, setSelectedFormulaType] = useState<string>('expression')
+
+  // 简化弹窗状态
+  const [simplifyModalVisible, setSimplifyModalVisible] = useState(false)
+  const [simplifyLoading, setSimplifyLoading] = useState(false)
+  const [simplifyResult, setSimplifyResult] = useState<{
+    factorId: number
+    factorName: string
+    original: string
+    simplified: string
+    changed: boolean
+    duplicates: Array<{ id: number; name: string; code: string; category: string }>
+  } | null>(null)
 
   // 公式类型帮助内容（用于Tooltip）
   const getFormulaHelpContent = (formulaType: string) => {
@@ -304,6 +317,51 @@ const FactorManagement: React.FC = () => {
     }
   }
 
+  // 简化因子表达式
+  const handleSimplifyFactor = async (record: Factor) => {
+    setSimplifyLoading(true)
+    try {
+      const response = await api.simplifyFactor(record.id) as any
+      if (response.success) {
+        setSimplifyResult({
+          factorId: record.id,
+          factorName: record.name,
+          original: response.data.original,
+          simplified: response.data.simplified,
+          changed: response.data.changed,
+          duplicates: response.data.duplicates || []
+        })
+        setSimplifyModalVisible(true)
+      } else {
+        message.info(response.message || '无法简化该因子')
+      }
+    } catch (error) {
+      message.error('简化失败')
+    } finally {
+      setSimplifyLoading(false)
+    }
+  }
+
+  // 应用简化结果
+  const handleApplySimplify = async () => {
+    if (!simplifyResult) return
+    try {
+      const response = await api.updateFactor(simplifyResult.factorId, {
+        code: simplifyResult.simplified
+      }) as any
+      if (response.success) {
+        message.success('因子表达式已简化并保存')
+        setSimplifyModalVisible(false)
+        setSimplifyResult(null)
+        loadFactors()
+      } else {
+        message.error(response.message || '保存失败')
+      }
+    } catch (error) {
+      message.error('保存失败')
+    }
+  }
+
   // 表格列定义
   const columns: ColumnsType<Factor> = [
     {
@@ -347,7 +405,7 @@ const FactorManagement: React.FC = () => {
     {
       title: '操作',
       key: 'action',
-      width: 200,
+      width: 280,
       fixed: 'right',
       render: (_: any, record: Factor) => (
         <Space size="small">
@@ -366,6 +424,15 @@ const FactorManagement: React.FC = () => {
             onClick={() => handleCopyFactor(record.id, record.name)}
           >
             复制
+          </Button>
+          <Button
+            type="link"
+            size="small"
+            icon={<ThunderboltOutlined />}
+            loading={simplifyLoading}
+            onClick={() => handleSimplifyFactor(record)}
+          >
+            简化
           </Button>
           {record.source === 'user' && (
             <Button
@@ -621,6 +688,153 @@ const FactorManagement: React.FC = () => {
             </Space>
           </Form.Item>
         </Form>
+      </Modal>
+
+      {/* 简化因子预览弹窗 */}
+      <Modal
+        title="因子表达式简化"
+        open={simplifyModalVisible}
+        onCancel={() => {
+          setSimplifyModalVisible(false)
+          setSimplifyResult(null)
+        }}
+        footer={
+          simplifyResult?.changed ? (
+            <Space>
+              <Button onClick={() => {
+                setSimplifyModalVisible(false)
+                setSimplifyResult(null)
+              }}>
+                取消
+              </Button>
+              <Button type="primary" onClick={handleApplySimplify}>
+                应用简化
+              </Button>
+            </Space>
+          ) : (
+            <Button onClick={() => {
+              setSimplifyModalVisible(false)
+              setSimplifyResult(null)
+            }}>
+              关闭
+            </Button>
+          )
+        }
+        width={700}
+        destroyOnHidden
+      >
+        {simplifyResult && (
+          <div>
+            <p style={{ marginBottom: '12px' }}>
+              <strong>因子：</strong>{simplifyResult.factorName}
+            </p>
+            {simplifyResult.changed ? (
+              <>
+                <div style={{ marginBottom: '16px' }}>
+                  <div style={{ marginBottom: '6px', color: '#666', fontSize: '13px' }}>
+                    原表达式
+                  </div>
+                  <pre style={{
+                    background: '#f6f8fa',
+                    padding: '12px',
+                    borderRadius: '6px',
+                    fontSize: '13px',
+                    fontFamily: 'Consolas, Monaco, monospace',
+                    margin: 0,
+                    maxHeight: '200px',
+                    overflow: 'auto'
+                  }}>
+                    {simplifyResult.original}
+                  </pre>
+                </div>
+                <div>
+                  <div style={{ marginBottom: '6px', color: '#52c41a', fontSize: '13px' }}>
+                    简化后表达式
+                  </div>
+                  <pre style={{
+                    background: '#f6f8fa',
+                    padding: '12px',
+                    borderRadius: '6px',
+                    fontSize: '13px',
+                    fontFamily: 'Consolas, Monaco, monospace',
+                    margin: 0,
+                    border: '1px solid #b7eb8f',
+                    maxHeight: '200px',
+                    overflow: 'auto'
+                  }}>
+                    {simplifyResult.simplified}
+                  </pre>
+                </div>
+                <p style={{ marginTop: '12px', color: '#999', fontSize: '12px' }}>
+                  点击"应用简化"将使用简化后的表达式更新因子。原表达式将被覆盖。
+                </p>
+              </>
+            ) : (
+              <div style={{ textAlign: 'center', padding: '40px 0' }}>
+                <CheckOutlined style={{ fontSize: '48px', color: '#52c41a' }} />
+                <p style={{ marginTop: '16px', color: '#666' }}>
+                  表达式已是最简形式，无需进一步简化。
+                </p>
+                <pre style={{
+                  background: '#f6f8fa',
+                  padding: '12px',
+                  borderRadius: '6px',
+                  fontSize: '13px',
+                  fontFamily: 'Consolas, Monaco, monospace',
+                  margin: '16px 0 0',
+                  textAlign: 'left',
+                  maxHeight: '200px',
+                  overflow: 'auto'
+                }}>
+                  {simplifyResult.simplified}
+                </pre>
+              </div>
+            )}
+            {simplifyResult.duplicates.length > 0 && (
+              <div style={{
+                marginTop: '16px',
+                padding: '12px',
+                background: '#fffbe6',
+                border: '1px solid #ffe58f',
+                borderRadius: '6px'
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', marginBottom: '8px' }}>
+                  <WarningOutlined style={{ color: '#faad14', marginRight: '8px' }} />
+                  <strong style={{ color: '#d48806' }}>
+                    发现 {simplifyResult.duplicates.length} 个代数等价的重复因子
+                  </strong>
+                </div>
+                <p style={{ margin: '0 0 8px', fontSize: '12px', color: '#8c8c8c' }}>
+                  以下因子的表达式与简化后结果代数等价，建议检查并清理重复：
+                </p>
+                {simplifyResult.duplicates.map((dup) => (
+                  <div key={dup.id} style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    padding: '6px 8px',
+                    marginBottom: '4px',
+                    background: '#fff',
+                    borderRadius: '4px',
+                    fontSize: '13px'
+                  }}>
+                    <Tag color="orange" style={{ marginRight: '8px' }}>{dup.category || '-'}</Tag>
+                    <span style={{ fontWeight: 500, marginRight: '8px' }}>{dup.name}</span>
+                    <code style={{ color: '#8c8c8c', fontSize: '12px', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {dup.code}
+                    </code>
+                    <Button
+                      type="link"
+                      size="small"
+                      onClick={() => navigate(`/factor-detail?id=${dup.id}`)}
+                    >
+                      查看
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </Modal>
       </div>
     </div>

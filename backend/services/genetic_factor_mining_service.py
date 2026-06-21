@@ -22,7 +22,7 @@ import operator
 import os
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError
+from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError, wait
 from typing import List, Dict, Optional
 from collections import OrderedDict
 import pandas as pd
@@ -367,16 +367,28 @@ class GeneticFactorMiningService(BaseMiningService):
 
         Uses Zobrist hash as key for O(1) lookup and isomorphic tree detection.
         """
-        with self._cache_lock:
+        _locked = self._cache_lock.acquire(timeout=5.0)
+        if not _locked:
+            logger.warning(f"[诊断] _cache_get 无法获取 _cache_lock（5s超时），tree_key={tree_key}")
+            return None
+        try:
             return self._factor_cache.get(tree_key)
+        finally:
+            self._cache_lock.release()
 
     def _cache_set(self, tree_key: int, values: Dict):
         """Store factor values in the LRU cache."""
-        with self._cache_lock:
+        _locked = self._cache_lock.acquire(timeout=5.0)
+        if not _locked:
+            logger.warning(f"[诊断] _cache_set 无法获取 _cache_lock（5s超时），tree_key={tree_key}")
+            return
+        try:
             if len(self._factor_cache) >= self.max_cache_size:
                 # evict oldest entry (OrderedDict FIFO)
                 self._factor_cache.popitem(last=False)
             self._factor_cache[tree_key] = values
+        finally:
+            self._cache_lock.release()
 
     def _cache_clear(self):
         """Clear the factor value cache (call once per generation).
@@ -386,8 +398,14 @@ class GeneticFactorMiningService(BaseMiningService):
           （因为 _refresh_stock_sample 每代随机抽样评估股票）。
         - 保留上一代缓存会导致使用过期的因子值。
         """
-        with self._cache_lock:
+        _locked = self._cache_lock.acquire(timeout=5.0)
+        if not _locked:
+            logger.warning("[诊断] _cache_clear 无法获取 _cache_lock（5s超时），跳过")
+            return
+        try:
             self._factor_cache.clear()
+        finally:
+            self._cache_lock.release()
         # P1: 同步清理 SymPy 规范形映射
         with self._sympy_key_lock:
             self._sympy_key_map.clear()
@@ -404,22 +422,38 @@ class GeneticFactorMiningService(BaseMiningService):
 
         使用线程池 + future.result(timeout) 实现超时，
         超时后返回 None（降级为纯 zobrist 去重，功能不受影响）。
-        """
-        import concurrent.futures
 
+        ⚠️ 已知陷阱：``with ThreadPoolExecutor`` 退出时 ``shutdown(wait=True)``
+        会等待工作线程完成。即使 ``future.result(timeout)`` 已超时返回 None，
+        如果底层 ``sympy_canonical_key`` 仍在运行，``shutdown`` 会一直阻塞。
+        因此改用显式 ``shutdown`` + 耗时诊断日志。
+        """
         def _compute():
             return sympy_canonical_key(tree)
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(_compute)
-            try:
-                return future.result(timeout=timeout)
-            except concurrent.futures.TimeoutError:
+        executor = ThreadPoolExecutor(max_workers=1)
+        future = executor.submit(_compute)
+        try:
+            result = future.result(timeout=timeout)
+            _t_shutdown_start = time.time()
+            executor.shutdown(wait=True)
+            _t_shutdown = time.time() - _t_shutdown_start
+            if _t_shutdown > 1.0:
                 logger.warning(
-                    f"SymPy规范形计算超时（>{timeout}s），"
-                    f"树节点数={len(tree)}，跳过该优化"
+                    f"SymPy shutdown耗时 {_t_shutdown:.1f}s"
+                    f"（树节点数={len(tree)}），线程未及时退出"
                 )
-                return None
+            return result
+        except TimeoutError:
+            logger.warning(
+                f"SymPy规范形计算超时（>{timeout}s），"
+                f"树节点数={len(tree)}，跳过该优化"
+            )
+            # shutdown(wait=False) 不等待卡死的线程，避免阻塞主流程。
+            # 卡死的线程会在后台继续运行，最终被垃圾回收。
+            # ⚠️ 不能用 wait=True，否则会阻塞到 sp.simplify() 返回（实测可达 490+ 秒）。
+            executor.shutdown(wait=False)
+            return None
 
     def release_memory(self):
         """释放大对象占用的内存，在挖掘任务完成后调用
@@ -430,8 +464,14 @@ class GeneticFactorMiningService(BaseMiningService):
         因为取消只是设置 flag，mine_factors() 仍在子线程中运行。
         """
         super().release_memory()
-        with self._cache_lock:
-            self._factor_cache = OrderedDict()
+        _locked = self._cache_lock.acquire(timeout=5.0)
+        if not _locked:
+            logger.warning("[诊断] release_memory 无法获取 _cache_lock（5s超时），跳过缓存清理")
+        else:
+            try:
+                self._factor_cache = OrderedDict()
+            finally:
+                self._cache_lock.release()
         self._halloffame = None
         self.tradable_mask = None
         logger.info(f"[{self._service_name}] 遗传规划内存已释放（含因子缓存）")
@@ -606,8 +646,9 @@ class GeneticFactorMiningService(BaseMiningService):
                 raw_fitness = self._evaluate_single_stock_ic(individual)[0]
             else:
                 raw_fitness = self._evaluate_single_stock_ic(individual)[0]
+            logger.info(f"  [诊断] _evaluate_factor_multi: 截面IC评估返回 raw_fitness={raw_fitness:.4f}")
         except Exception as e:
-            logger.debug(f"NSGA2适应度评估失败: {e}")
+            logger.warning(f"NSGA2适应度评估失败: {e}")
             return (0.0, 1.0)
 
         # --- Diversity Penalty (Phase 3, applied to IC objective only) ---
@@ -638,6 +679,7 @@ class GeneticFactorMiningService(BaseMiningService):
         else:
             dup_penalty = 0.3 + (n_dups - 2) * 0.4
         complexity = compute_weighted_complexity(individual) + dup_penalty
+        logger.info(f"  [诊断] _evaluate_factor_multi: 返回 ic_fitness={ic_fitness:.4f}, complexity={complexity:.2f}")
         return (ic_fitness, complexity)
 
     def _penalty_fitness(self) -> tuple:
@@ -673,6 +715,7 @@ class GeneticFactorMiningService(BaseMiningService):
                 return pd.Series(val, index=index) if index is not None else None
             return val  # 兼容旧格式（pd.Series 直存，理论上不会再出现）
 
+        _t_start = time.time()
         try:
             func = compile_tree(tree, self.pset)
         except Exception as e:
@@ -709,7 +752,11 @@ class GeneticFactorMiningService(BaseMiningService):
             return None
 
         # Phase 4: store in cache (numpy array + shared index)
-        with self._cache_lock:
+        _locked = self._cache_lock.acquire(timeout=5.0)
+        if not _locked:
+            logger.warning(f"[诊断] _eval_on_stock 无法获取 _cache_lock（5s超时），stock={stock_code}")
+            return result
+        try:
             cached = self._factor_cache.get(tree_key)
             if cached is None:
                 cached = {"_index": result.index}
@@ -719,7 +766,12 @@ class GeneticFactorMiningService(BaseMiningService):
             elif "_index" not in cached:
                 cached["_index"] = result.index
             cached[stock_code] = result.values  # 存储 numpy ndarray
+        finally:
+            self._cache_lock.release()
 
+        _t_elapsed = time.time() - _t_start
+        if _t_elapsed > 1.0:
+            logger.info(f"  [诊断] _eval_tree_on_stock 慢执行: stock={stock_code}, 耗时={_t_elapsed:.2f}s")
         return result
 
     def _eval_compiled_on_stock(
@@ -746,10 +798,12 @@ class GeneticFactorMiningService(BaseMiningService):
                 return pd.Series(val, index=index) if index is not None else None
             return val  # 兼容旧格式
 
+        _t_start = time.time()
         # Build ordered positional args matching factor_0 … factor_N
         # 提取 .values 转为 numpy 数组，避免原语中的 pandas 索引对齐开销
         ordered_np = []
         index = None
+        _data_len = 0
         for i in range(len(self.base_factor_values)):
             info = stock_base_factors.get(f"factor_{i}")
             if info is None:
@@ -757,6 +811,7 @@ class GeneticFactorMiningService(BaseMiningService):
             series = info["values"]
             if index is None:
                 index = series.index
+                _data_len = len(series)
             ordered_np.append(series.values)
 
         try:
@@ -765,7 +820,12 @@ class GeneticFactorMiningService(BaseMiningService):
             _t0 = time.time()
             result = compiled_func(*ordered_np)
             _elapsed = time.time() - _t0
-            if _elapsed > 5.0:
+            # 降低阈值：每次都记录，便于定位慢股票（之前>1s才记录）
+            logger.info(
+                f"GP树执行 股票={stock_code} 耗时={_elapsed:.3f}s "
+                f"数据长度={_data_len}"
+            )
+            if _elapsed > 3.0:
                 logger.warning(
                     f"GP树执行耗时 {_elapsed:.1f}s（股票 {stock_code}），超过阈值跳过"
                 )
@@ -803,7 +863,11 @@ class GeneticFactorMiningService(BaseMiningService):
         result_np = result_series.values
 
         # Phase 4: store in cache (numpy array + shared index)
-        with self._cache_lock:
+        _locked = self._cache_lock.acquire(timeout=5.0)
+        if not _locked:
+            logger.warning(f"[诊断] _eval_compiled_on_stock 无法获取 _cache_lock（5s超时），stock={stock_code}")
+            return result_series  # 返回结果但不缓存
+        try:
             cached = self._factor_cache.get(tree_key)
             if cached is None:
                 cached = {"_index": index}
@@ -813,7 +877,12 @@ class GeneticFactorMiningService(BaseMiningService):
             elif "_index" not in cached:
                 cached["_index"] = index
             cached[stock_code] = result_np  # 存储 numpy ndarray
+        finally:
+            self._cache_lock.release()
 
+        _t_elapsed = time.time() - _t_start
+        if _t_elapsed > 1.0:
+            logger.info(f"  [诊断] _eval_compiled_on_stock 慢执行: stock={stock_code}, 耗时={_t_elapsed:.2f}s")
         return result_series
 
     def _evaluate_cross_sectional_ic(self, tree) -> tuple:
@@ -831,6 +900,18 @@ class GeneticFactorMiningService(BaseMiningService):
         _t0 = time.time()
         eval_codes = self._sampled_stock_codes
         factor_values_dict: Dict[str, pd.Series] = {}
+        # 性能诊断：各环节耗时
+        _t_sympy = 0.0
+        _t_compile = 0.0
+        _t_parallel = 0.0
+        _t_fast_ic = 0.0
+        _t_cv = 0.0
+
+        # 入口日志：记录开始评估的树信息（用于定位卡住的个体）
+        logger.info(
+            f"截面IC评估开始 树高度={tree.height} 节点数={len(tree)} "
+            f"表达式预览={str(tree)[:80]}"
+        )
 
         # Phase 4: check if full result is cached
         # 缓存中 "_complete" 键存储横截面IC的完整结果（所有股票的因子值），
@@ -843,8 +924,12 @@ class GeneticFactorMiningService(BaseMiningService):
         # ⚠️ 超时保护：sp.simplify() 对复杂 GP 树可能极慢甚至死循环（实测卡住 16+ 分钟）
         sympy_hit = False
         if cached_all is None or "_complete" not in cached_all:
+            logger.info(f"  [诊断] Zobrist cache miss, 准备SymPy规范形检查... 树节点={len(tree)}")
             try:
+                _t_sympy_start = time.time()
                 canon_key = self._sympy_canonical_key_with_timeout(tree, timeout=3.0)
+                _t_sympy = time.time() - _t_sympy_start
+                logger.info(f"  SymPy规范形 耗时={_t_sympy:.2f}s 结果={'命中' if canon_key is not None else 'None/超时'}")
                 if canon_key is not None:
                     with self._sympy_key_lock:
                         mapped_key = self._sympy_key_map.get(canon_key)
@@ -853,6 +938,7 @@ class GeneticFactorMiningService(BaseMiningService):
                         if cached_all is not None and "_complete" in cached_all:
                             tree_key = mapped_key  # 复用已有缓存的 key
                             sympy_hit = True
+                            logger.info(f"  [诊断] SymPy规范形命中! 复用已有缓存")
             except Exception:
                 pass  # SymPy 不可用或失败/超时，降级为纯 zobrist
 
@@ -873,9 +959,13 @@ class GeneticFactorMiningService(BaseMiningService):
         else:
             # 编译 GP 树一次，复用于所有股票（原来每只股票编译一次，50只股票=50次编译）
             try:
+                _t_compile_start = time.time()
+                logger.info(f"  GP树编译开始... 节点数={len(tree)}")
                 compiled_func = compile_tree(tree, self.pset)
+                _t_compile = time.time() - _t_compile_start
+                logger.info(f"  GP树编译完成 耗时={_t_compile:.2f}s")
             except Exception as e:
-                logger.debug(f"编译表达式失败: {e}")
+                logger.warning(f"编译表达式失败: {e}")
                 return (0.0,)
 
             # 并行评估所有股票（numpy 运算释放 GIL，线程可真正并行）
@@ -886,38 +976,63 @@ class GeneticFactorMiningService(BaseMiningService):
 
             def _eval_one_stock(code: str):
                 """单股票评估闭包（供线程池调用）"""
+                _stock_t0 = time.time()
                 base_factors = self.stock_pool_base_factor_values.get(code)
                 if base_factors is None:
-                    return code, None
+                    return code, None, 0.0
                 fv = self._eval_compiled_on_stock(
                     compiled_func, tree_key, code, base_factors
                 )
+                _stock_elapsed = time.time() - _stock_t0
+                if _stock_elapsed > 0.5:
+                    logger.info(f"    股票 {code} 评估耗时={_stock_elapsed:.2f}s")
                 if fv is None:
-                    return code, None
+                    return code, None, _stock_elapsed
                 fv_clean = fv.dropna()
                 if len(fv_clean) >= 10:
-                    return code, fv_clean
-                return code, None
+                    return code, fv_clean, _stock_elapsed
+                return code, None, _stock_elapsed
 
-            with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                futures = {
-                    executor.submit(_eval_one_stock, code): code
-                    for code in eval_codes
-                }
-                for future in as_completed(futures):
-                    try:
-                        # 每只股票评估超时 8 秒（含 GP 树执行 + 后处理）
-                        code, fv = future.result(timeout=8.0)
-                        if fv is not None:
-                            factor_values_dict[code] = fv
-                    except TimeoutError:
-                        code = futures[future]
-                        logger.warning(
-                            f"股票 {code} 因子评估超时（>8s），跳过该股票"
-                        )
-                    except Exception as e:
-                        code = futures[future]
-                        logger.debug(f"评估股票 {code} 因子失败: {e}")
+            _t_parallel_start = time.time()
+            logger.info(f"  并行评估开始: {len(eval_codes)}只股票, max_workers={max_workers}")
+            # ⚠️ 不使用 with ThreadPoolExecutor，因为退出时 shutdown(wait=True)
+            # 会阻塞等待卡死的线程（compiled_func 卡在 C 扩展中无法中断）。
+            # 改用显式 executor + wait(timeout) 实现全局超时。
+            executor = ThreadPoolExecutor(max_workers=max_workers)
+            futures = {
+                executor.submit(_eval_one_stock, code): code
+                for code in eval_codes
+            }
+            # 全局超时 15 秒（从30s缩短）：嵌套 ts 算子可能导致每只股票数秒，
+            # 15s 足够大多数正常个体完成，同时避免慢个体拖累整体
+            _PARALLEL_TIMEOUT = 15.0
+            done, not_done = wait(futures, timeout=_PARALLEL_TIMEOUT)
+            n_done = len(done)
+            n_timeout = len(not_done)
+            for future in done:
+                try:
+                    code, fv, stock_elapsed = future.result(timeout=0.1)
+                    if fv is not None:
+                        factor_values_dict[code] = fv
+                except Exception as e:
+                    code = futures[future]
+                    logger.debug(f"评估股票 {code} 因子失败: {e}")
+            if not_done:
+                for future in not_done:
+                    code = futures[future]
+                    logger.warning(
+                        f"股票 {code} 因子评估全局超时（>{_PARALLEL_TIMEOUT}s），跳过"
+                    )
+                # 不等待卡死的线程，避免阻塞主流程
+                executor.shutdown(wait=False)
+            else:
+                executor.shutdown(wait=True)
+            _t_parallel = time.time() - _t_parallel_start
+            logger.info(
+                f"  并行评估完成: {n_done}/{len(eval_codes)}只成功, "
+                f"{n_timeout}只超时, 总耗时={_t_parallel:.2f}s"
+            )
+            logger.info(f"  [诊断] 开始构建缓存数据... factor_values_dict={len(factor_values_dict)}项")
 
             # Phase 4: cache the complete result (numpy arrays for memory efficiency)
             # 将 pd.Series 拆分为 ndarray + DatetimeIndex 分别存储，
@@ -928,10 +1043,12 @@ class GeneticFactorMiningService(BaseMiningService):
                 complete_np[code] = fv.values if isinstance(fv, pd.Series) else fv
                 if isinstance(fv, pd.Series):
                     complete_index[code] = fv.index
+            logger.info(f"  [诊断] 缓存数据构建完成，准备调用_cache_set...")
             self._cache_set(tree_key, {
                 "_complete": complete_np,
                 "_complete_index": complete_index,
             })
+            logger.info(f"  [诊断] _cache_set 完成")
 
             # P1: 记录 SymPy 规范形 → zobrist key 映射
             # 后续代数等价表达式可通过此映射复用缓存
@@ -942,9 +1059,14 @@ class GeneticFactorMiningService(BaseMiningService):
                             self._sympy_key_map[canon_key] = tree_key
                 except Exception:
                     pass
+            logger.info(f"  [诊断] SymPy key map 更新完成")
+
+        logger.info(f"  [诊断] 退出缓存/计算分支，factor_values_dict={len(factor_values_dict)}项")
 
         if len(factor_values_dict) < 2:
             return (0.0,)
+
+        logger.info(f"  [诊断] 准备调用 _fast_cross_sectional_ic...")
 
         try:
             # ---- 轻量级横截面IC计算（替代 alphalens 全流程） ----
@@ -965,11 +1087,15 @@ class GeneticFactorMiningService(BaseMiningService):
             # 轻量级实现直接按日期截面计算 Spearman IC 再取均值，
             # 与 alphalens 的 Spearman IC 语义一致（规则7.1），耗时约 5-10ms，
             # 加速 10-20 倍。
+            _t_fast_ic_start = time.time()
             best_ic, best_ir = self._fast_cross_sectional_ic(factor_values_dict)
+            _t_fast_ic = time.time() - _t_fast_ic_start
+            logger.info(f"  [诊断] _fast_cross_sectional_ic 完成, best_ic={best_ic:.4f}, best_ir={best_ir:.4f}")
 
             # 收集原始IC/IR用于代际Z-Score计算（与 _route_fitness 行为一致）
             self._gen_ic_values.append(best_ic)
             self._gen_ir_values.append(best_ir)
+            logger.info(f"  [诊断] IC/IR 值已收集，进入适应度路由...")
 
             # 根据 fitness_objective 路由适应度（与 _route_fitness 逻辑一致）
             if self.fitness_objective == "ir_ratio":
@@ -1005,15 +1131,29 @@ class GeneticFactorMiningService(BaseMiningService):
                 raw_fitness = 0.6 * norm_ic + 0.4 * norm_ir
             else:  # ic_mean (default)
                 raw_fitness = best_ic
+            logger.info(f"  [诊断] 适应度路由完成, raw_fitness={raw_fitness:.4f}")
 
             # Phase 6: cross-validation penalty
+            _t_cv_start = time.time()
             cv_penalty = self._cv_penalty(factor_values_dict)
+            _t_cv = time.time() - _t_cv_start
             raw_fitness = raw_fitness * (1.0 - cv_penalty)
+            logger.info(f"  [诊断] CV惩罚完成, cv_penalty={cv_penalty:.4f}, adjusted_fitness={raw_fitness:.4f}")
 
             _elapsed = time.time() - _t0
-            if _elapsed > 5.0:
+            # 每次评估都记录详细耗时（info级别），便于定位慢个体
+            logger.info(
+                f"截面IC评估 总耗时={_elapsed:.2f}s "
+                f"树节点={len(tree)} 高度={tree.height} 股票数={len(eval_codes)} "
+                f"有效股票={len(factor_values_dict)} "
+                f"SymPy={'命中' if sympy_hit else f'{_t_sympy:.2f}s'} "
+                f"编译={_t_compile:.2f}s 并行={_t_parallel:.2f}s "
+                f"快速IC={_t_fast_ic:.2f}s CV={_t_cv:.2f}s "
+                f"raw_fitness={raw_fitness:.4f}"
+            )
+            if _elapsed > 10.0:
                 logger.warning(
-                    f"截面IC评估耗时 {_elapsed:.1f}s（阈值5s），"
+                    f"截面IC评估严重超时 {_elapsed:.1f}s（>10s），"
                     f"树节点数={len(tree)}, 股票数={len(eval_codes)}"
                 )
             return (raw_fitness,)
@@ -1058,6 +1198,8 @@ class GeneticFactorMiningService(BaseMiningService):
         Returns:
             (best_ic, best_ir) — 与 _extract_best_ic_ir 返回格式一致
         """
+        _t_ic_start = time.time()
+        logger.info(f"  [诊断] _fast_cross_sectional_ic 开始, 输入 {len(factor_values_dict)} 只股票")
         # ---- 构建统一日期索引 ----
         # 收集所有股票的日期索引，取交集
         all_dates = None
@@ -1072,6 +1214,8 @@ class GeneticFactorMiningService(BaseMiningService):
                 all_dates = all_dates.intersection(dates)
 
         if all_dates is None or len(all_dates) < 5:
+            _t_ic = time.time() - _t_ic_start
+            logger.info(f"  [诊断] _fast_cross_sectional_ic 提前退出: all_dates={None if all_dates is None else len(all_dates)} (<5), 耗时={_t_ic:.3f}s")
             return (0.0, 0.0)
 
         # ---- 构建 numpy 矩阵：shape (n_dates, n_stocks) ----
@@ -1094,6 +1238,7 @@ class GeneticFactorMiningService(BaseMiningService):
 
         factor_matrix = np.column_stack(factor_cols)  # (n_dates, n_stocks)
         return_matrix = np.column_stack(return_cols)   # (n_dates, n_stocks)
+        logger.info(f"  [诊断] numpy矩阵构建完成: shape={factor_matrix.shape}, n_dates={len(all_dates)}")
 
         # ---- 逐行（逐日期）计算 Spearman IC ----
         # 对每行的因子值和收益率分别排名，然后计算 Pearson 相关
@@ -1122,7 +1267,11 @@ class GeneticFactorMiningService(BaseMiningService):
             ic = (f_centered * r_centered).sum() / denom
             daily_ics.append(ic)
 
+        logger.info(f"  [诊断] Spearman IC循环完成: {len(daily_ics)}/{len(all_dates)} 有效日期")
+
         if len(daily_ics) < 2:
+            _t_ic = time.time() - _t_ic_start
+            logger.info(f"  [诊断] _fast_cross_sectional_ic 提前退出: 有效IC<2, 耗时={_t_ic:.3f}s")
             return (0.0, 0.0)
 
         ic_arr = np.array(daily_ics)
@@ -1134,6 +1283,8 @@ class GeneticFactorMiningService(BaseMiningService):
         if best_ir is None:
             best_ir = 0.0
 
+        _t_ic = time.time() - _t_ic_start
+        logger.info(f"  [诊断] _fast_cross_sectional_ic 完成: mean_ic={mean_ic:.4f}, ir={best_ir:.4f}, 耗时={_t_ic:.3f}s")
         return (mean_ic, best_ir)
 
     def _evaluate_single_stock_ic(self, tree) -> tuple:
@@ -1360,13 +1511,65 @@ class GeneticFactorMiningService(BaseMiningService):
         # _evaluate_cross_sectional_ic 内部已有 ThreadPoolExecutor 并行评估股票，
         # 外层再并行会导致嵌套线程池死锁（外层4线程 × 内层4线程 = 16线程争用）。
         # 串行评估每个个体，内层并行已足够高效。
+        #
+        # ⚠️ 单个体超时保护：某些 GP 树（深度嵌套 ts_corr/rolling）可能导致
+        # compile_tree 或执行阶段卡死数分钟。用线程池 + wait(timeout) 实现
+        # 超时跳过，避免单个个体阻塞整个初始评估。
         best_init_fitness = 0.0
+        _init_eval_start = time.time()
+        _SINGLE_INDIVIDUAL_TIMEOUT = 30.0  # 单个体最大允许耗时（秒），从60s缩短
         for i, ind in enumerate(population):
-            fit = self.toolbox.evaluate(ind)
+            _ind_t0 = time.time()
+
+            # ⚠️ 不再使用外层 ThreadPoolExecutor 包装！
+            # 原因：_evaluate_cross_sectional_ic 内部已有 ThreadPoolExecutor 并行评估股票，
+            # 嵌套 ThreadPoolExecutor 会导致 GIL 死锁/线程饥饿：
+            #   - 内层卡死线程 shutdown(wait=False) 后仍持有 GIL
+            #   - 外层新线程无法获得 CPU 时间片 → 完全阻塞
+            # 改为直接调用 + 树复杂度预检（从根源避免慢个体）
+            _should_skip = False
+            # 预检1: 嵌套时序算子过多 → 直接跳过（ts_corr/ts_std 嵌套 >2层 极慢）
+            _ts_op_count = sum(1 for node in ind if hasattr(node, 'name') and
+                              node.name.startswith('ts_') and 'corr' in node.name)
+            if _ts_op_count >= 2:
+                logger.info(
+                    f"初始评估 [{i+1}/{len(population)}] 跳过: "
+                    f"{_ts_op_count}个ts_corr嵌套 (阈值>=2), "
+                    f"树高度={ind.height}, 节点数={len(ind)}"
+                )
+                fit = self._penalty_fitness() if self.use_nsga2 else (0.0,)
+                _should_skip = True
+
+            if not _should_skip:
+                try:
+                    # 单个个体评估超时保护（30秒）
+                    _eval_executor = ThreadPoolExecutor(max_workers=1)
+                    _eval_future = _eval_executor.submit(self.toolbox.evaluate, ind)
+                    try:
+                        fit = _eval_future.result(timeout=30.0)
+                    except TimeoutError:
+                        logger.warning(
+                            f"初始评估 [{i+1}/{len(population)}] 超时(30s)，"
+                            f"表达式={str(ind)[:80]}"
+                        )
+                        _eval_future.cancel()
+                        fit = self._penalty_fitness() if self.use_nsga2 else (0.0,)
+                    finally:
+                        _eval_executor.shutdown(wait=False)
+                except Exception as e:
+                    logger.warning(f"初始评估 [{i+1}/{len(population)}] 异常: {e}")
+                    fit = self._penalty_fitness() if self.use_nsga2 else (0.0,)
+
+            _ind_elapsed = time.time() - _ind_t0
             ind.fitness.values = fit
             primary_fit = float(fit[0]) if fit else 0.0
             if primary_fit > best_init_fitness:
                 best_init_fitness = primary_fit
+            logger.info(
+                f"初始评估 [{i+1}/{len(population)}] "
+                f"耗时={_ind_elapsed:.2f}s, fitness={primary_fit:.4f}, "
+                f"best={best_init_fitness:.4f}, 树高度={ind.height}, 节点数={len(ind)}"
+            )
 
             # 报告初始评估进度（初始评估 + 进化代数 = 总阶段数）
             if self.progress_callback and (i + 1) % 5 == 0:
@@ -1374,6 +1577,9 @@ class GeneticFactorMiningService(BaseMiningService):
                 self.progress_callback(
                     0, total_phases, best_init_fitness, primary_fit
                 )
+
+        _init_eval_total = time.time() - _init_eval_start
+        logger.info(f"初始评估完成: 共{len(population)}个体, 总耗时={_init_eval_total:.1f}s")
 
         # Update Z-Score normalization stats from initial population
         self._update_zscore_stats()
@@ -1626,6 +1832,8 @@ class GeneticFactorMiningService(BaseMiningService):
                 logger.info(f"挖掘任务在第 {gen} 代被用户取消")
                 break
 
+            _gen_start = time.time()
+            logger.info(f"=== Gen {gen}/{n_generations} 开始 ===")
             self._current_generation = gen
             self._refresh_stock_sample()
 
@@ -1799,24 +2007,61 @@ class GeneticFactorMiningService(BaseMiningService):
             invalid = [ind for ind in offspring if not ind.fitness.valid]
             if invalid:
                 _eval_start = time.time()
+                logger.info(
+                    f"  Gen {gen}: 开始评估 {len(invalid)} 个无效个体..."
+                )
                 fitnesses = []
                 for idx, ind in enumerate(invalid):
                     _ind_t0 = time.time()
-                    try:
-                        fit = self.toolbox.evaluate(ind)
-                        _ind_elapsed = time.time() - _ind_t0
-                        logger.info(
-                            f"  Gen {gen+1} 个体 [{idx+1}/{len(invalid)}] 评估完成 "
-                            f"({_ind_elapsed:.2f}s)"
-                        )
-                        fitnesses.append(fit)
-                    except Exception as e:
-                        _ind_elapsed = time.time() - _ind_t0
+
+                    # 代际超时保护：如果单个个体评估超过60秒，跳过
+                    # 如果整个代评估超过300秒，强制终止
+                    _gen_elapsed = time.time() - _eval_start
+                    if _gen_elapsed > 300:
                         logger.warning(
-                            f"  Gen {gen+1} 个体 [{idx+1}/{len(invalid)}] 评估异常 "
-                            f"({_ind_elapsed:.2f}s): {e}"
+                            f"  Gen {gen}: 代际评估超时（{_gen_elapsed:.0f}s > 300s），"
+                            f"强制终止剩余 {len(invalid) - idx} 个个体"
                         )
-                        fitnesses.append(self._penalty_fitness())
+                        break
+
+                    # 同初始评估：不使用外层 ThreadPoolExecutor，避免 GIL 死锁
+                    _ts_op_count = sum(1 for node in ind if hasattr(node, 'name') and
+                                      node.name.startswith('ts_') and 'corr' in node.name)
+                    if _ts_op_count >= 2:
+                        logger.info(
+                            f"  Gen {gen+1} 个体 [{idx+1}/{len(invalid)}] 跳过: "
+                            f"{_ts_op_count}个ts_corr嵌套"
+                        )
+                        fit = self._penalty_fitness() if self.use_nsga2 else (0.0,)
+                    else:
+                        try:
+                            # 单个个体评估超时保护（30秒）
+                            # 使用单线程 ThreadPoolExecutor 作为超时包装器
+                            _eval_executor = ThreadPoolExecutor(max_workers=1)
+                            _eval_future = _eval_executor.submit(self.toolbox.evaluate, ind)
+                            try:
+                                fit = _eval_future.result(timeout=30.0)
+                            except TimeoutError:
+                                logger.warning(
+                                    f"  Gen {gen+1} 个体 [{idx+1}/{len(invalid)}] 评估超时(30s)，"
+                                    f"表达式={str(ind)[:80]}"
+                                )
+                                _eval_future.cancel()
+                                fit = self._penalty_fitness() if self.use_nsga2 else (0.0,)
+                            finally:
+                                _eval_executor.shutdown(wait=False)
+                        except Exception as e:
+                            logger.warning(
+                                f"  Gen {gen+1} 个体 [{idx+1}/{len(invalid)}] 评估异常: {e}"
+                            )
+                            fit = self._penalty_fitness() if self.use_nsga2 else (0.0,)
+
+                    _ind_elapsed = time.time() - _ind_t0
+                    logger.info(
+                        f"  Gen {gen+1} 个体 [{idx+1}/{len(invalid)}] 评估完成 "
+                        f"({_ind_elapsed:.2f}s)"
+                    )
+                    fitnesses.append(fit)
                 _eval_elapsed = time.time() - _eval_start
                 logger.info(
                     f"Gen {gen+1} 评估 {len(invalid)} 个个体，"
@@ -1860,6 +2105,8 @@ class GeneticFactorMiningService(BaseMiningService):
                     f"Generation {gen}/{n_generations} - Best: {best_fit:.4f}, "
                     f"Avg: {avg_fit:.4f}, Elite: {self.elite_size}"
                 )
+                _gen_elapsed = time.time() - _gen_start
+                logger.info(f"=== Gen {gen}/{n_generations} 完成, 耗时 {_gen_elapsed:.1f}s ===")
 
         return population
 
@@ -1885,7 +2132,20 @@ class GeneticFactorMiningService(BaseMiningService):
         for idx, ind in enumerate(population):
             _ind_t0 = time.time()
             try:
-                fit = self.toolbox.evaluate(ind)
+                # 单个个体评估超时保护（30秒）
+                _eval_executor = ThreadPoolExecutor(max_workers=1)
+                _eval_future = _eval_executor.submit(self.toolbox.evaluate, ind)
+                try:
+                    fit = _eval_future.result(timeout=30.0)
+                except TimeoutError:
+                    logger.warning(
+                        f"  初始评估 [{idx+1}/{self.population_size}] 超时(30s)，"
+                        f"表达式={str(ind)[:80]}"
+                    )
+                    _eval_future.cancel()
+                    fit = (0.0,)
+                finally:
+                    _eval_executor.shutdown(wait=False)
                 _ind_elapsed = time.time() - _ind_t0
                 if (idx + 1) % 5 == 0 or idx == 0:
                     logger.info(

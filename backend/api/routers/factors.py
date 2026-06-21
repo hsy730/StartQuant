@@ -517,6 +517,81 @@ async def copy_factor(factor_id: int):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post("/{factor_id}/simplify")
+async def simplify_factor(factor_id: int):
+    """简化因子表达式
+
+    对已有因子的表达式进行代数简化（如 ``(close - open) / close`` → ``1 - open/close``），
+    返回简化结果供用户预览，不直接保存。同时检测因子库中是否存在与简化后表达式
+    代数等价的其他因子，提示用户处理重复。
+    """
+    try:
+        factors = factor_service.get_all_factors()
+        factor = next((f for f in factors if f.get("id") == factor_id), None)
+
+        if not factor:
+            raise HTTPException(status_code=404, detail="因子不存在")
+
+        original_code = factor.get("code", "")
+        formula_type = factor.get("formula_type", "expression")
+
+        if formula_type != "expression":
+            return {
+                "success": False,
+                "message": "仅支持表达式类型的因子简化",
+            }
+
+        if not original_code:
+            return {
+                "success": False,
+                "message": "因子表达式为空",
+            }
+
+        from backend.services.factor_primitives import (
+            simplify_math_expression,
+            math_expression_canonical_key,
+        )
+
+        simplified_code, changed = simplify_math_expression(original_code)
+
+        # 检测因子库中是否存在与简化后表达式代数等价的其他因子
+        duplicates = []
+        target_key = math_expression_canonical_key(simplified_code)
+        if target_key is not None:
+            for f in factors:
+                if f.get("id") == factor_id:
+                    continue
+                f_code = f.get("code", "")
+                if not f_code:
+                    continue
+                f_key = math_expression_canonical_key(f_code)
+                if f_key is not None and f_key == target_key:
+                    duplicates.append(
+                        {
+                            "id": f.get("id"),
+                            "name": f.get("name", ""),
+                            "code": f_code,
+                            "category": f.get("category", ""),
+                        }
+                    )
+
+        return {
+            "success": True,
+            "data": {
+                "original": original_code,
+                "simplified": simplified_code,
+                "changed": changed,
+                "duplicates": duplicates,
+            },
+            "message": "简化成功" if changed else "表达式已是最简形式，无需简化",
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"简化因子表达式失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ========== 生成因子（generated_factors）管理端点 ==========
 
 

@@ -58,7 +58,7 @@ class GeneticMiningRequest(BaseModel):
     ic_threshold: float = 0.03
     parsimony_coeff: float = 0.001
     diversity_penalty_coeff: float = 0.1
-    cv_folds: int = 0
+    cv_folds: int = 3
     use_extended_primitives: bool = True
     max_tree_depth: int = 17
     use_nsga2: bool = True

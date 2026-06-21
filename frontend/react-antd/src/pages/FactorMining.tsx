@@ -331,7 +331,7 @@ const ProcessInfoDisplay: React.FC<{ info: Record<string, any> }> = ({ info }) =
       // Phase 2-7: quality-boosting defaults
       parsimony_coeff: 0.001,
       diversity_penalty_coeff: 0.1,
-      cv_folds: 0,
+      cv_folds: 3,
       use_extended_primitives: true,
       max_tree_depth: 17,
       use_nsga2: true,
