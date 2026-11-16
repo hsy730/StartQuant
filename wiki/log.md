@@ -770,3 +770,6 @@
 
 ## 2026-11-16 | 更新 | GeneticFactorMiningService
 - 真实数据实测校准：IC 面板缓存与基线三组用例完全等价（修正预热期样本口径）；HOF 默认 operator.eq 已能去重结构重复，Zobrist 仅增量合并交换律同构；列顺序排序消除基线顺序敏感；真实 A/B 单次评估 −17%
+
+## 2026-11-16 | 更新 | GeneticFactorMiningService
+- 可复现性：评估股票抽样前对候选池排序，同种子跨进程 n_eval 与 fitness 历史逐位一致；实测 ts_corr 硬跳过的性能前提不成立但去掉无质量收益（3 种子噪声内、循环 +11%），保留原逻辑

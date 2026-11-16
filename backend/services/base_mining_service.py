@@ -607,8 +607,13 @@ class BaseMiningService(ABC):
         )
 
     def _refresh_stock_sample(self):
-        """刷新评估样本（随机抽样）"""
-        available = list(self.stock_pool_base_factor_values.keys())
+        """刷新评估样本（随机抽样）
+
+        ``stock_pool_base_factor_values`` 由多线程预计算填充，进程间键顺序
+        不确定；必须先排序再抽样，否则同一随机种子在不同进程会抽到不同
+        股票集合，A/B 与复现实验无法比较。
+        """
+        available = sorted(self.stock_pool_base_factor_values.keys())
         if len(available) <= self.max_eval_stocks:
             self._sampled_stock_codes = available
         else:
