@@ -42,7 +42,6 @@ except ImportError:
 from backend.services.base_mining_service import BaseMiningService  # noqa: E402
 from backend.services.factor_validation_service import factor_validation_service  # noqa: E402
 from backend.services.factor_primitives import (  # noqa: E402
-    create_pset,
     create_pset_numpy,
     tree_to_expression,
     tree_to_placeholder_expr,
@@ -141,6 +140,8 @@ class GeneticFactorMiningService(BaseMiningService):
         max_tree_depth: int = 17,
         # ---- NSGA-II ----
         use_nsga2: bool = True,
+        # ---- SymPy 代数等价去重（默认关闭：simplify 对大树上无超时保护，易卡死）----
+        use_sympy_dedup: bool = False,
         # ---- Factor pool sampling ----
         max_base_factors: int = 30,
     ):
@@ -179,6 +180,8 @@ class GeneticFactorMiningService(BaseMiningService):
 
         # NSGA-II
         self.use_nsga2 = use_nsga2
+        # SymPy 代数等价去重开关（评估路径与 Phase 3 去重共用）
+        self.use_sympy_dedup = use_sympy_dedup
 
         self._current_generation: int = 0
         # _task_id 用于 checkpoint 保存时关联挖掘任务。
@@ -222,9 +225,23 @@ class GeneticFactorMiningService(BaseMiningService):
         - 注意：此覆写必须在 super().set_stock_pool() 之后清空，
           因为基类方法中遍历 stock_pool_data 计算派生值。
         """
+        # 重建股票池时需要重新抽样（_refresh_stock_sample 默认只在样本为空时抽样）
+        self._sampled_stock_codes = []
         super().set_stock_pool(stock_codes, start_date, end_date)
         self.stock_pool_data = {}
         logger.info(f"[{self._service_name}] stock_pool_data 已释放")
+
+    def _refresh_stock_sample(self):
+        """固定评估股票样本：整轮进化只抽样一次。
+
+        基类每代随机重抽评估股票，精英（沿用上一代 fitness）与子代
+        （在新样本上计算）的适应度因此不可比，NSGA-II / 锦标赛退化为
+        噪声比较。遗传规划需要所有个体在同一评估样本上比较，
+        所以仅在首次调用时抽样，后续代直接复用。
+        """
+        if self._sampled_stock_codes:
+            return
+        super()._refresh_stock_sample()
 
     # ------------------------------------------------------------------
     # Tradable mask construction (limit-up/down detection)
@@ -365,12 +382,6 @@ class GeneticFactorMiningService(BaseMiningService):
             n_factors,
             extended=self.use_extended_primitives,
         )
-        # 保留 pd.Series 版 pset 用于表达式转换（tree_to_expression 需要）
-        self._pset_series = create_pset(
-            n_factors,
-            extended=self.use_extended_primitives,
-            tradable_mask=self.tradable_mask,
-        )
 
         self.toolbox = base.Toolbox()
         # Phase 7: deeper initial trees when extended primitives + parsimony control bloat
@@ -479,26 +490,6 @@ class GeneticFactorMiningService(BaseMiningService):
         finally:
             self._cache_lock.release()
 
-    def _cache_clear(self):
-        """Clear the factor value cache (call once per generation).
-
-        每代清空缓存的原因：
-        - 同一棵树在不同代的适应度评估中可能产生不同的因子值
-          （因为 _refresh_stock_sample 每代随机抽样评估股票）。
-        - 保留上一代缓存会导致使用过期的因子值。
-        """
-        _locked = self._cache_lock.acquire(timeout=5.0)
-        if not _locked:
-            logger.warning("[诊断] _cache_clear 无法获取 _cache_lock（5s超时），跳过")
-            return
-        try:
-            self._factor_cache.clear()
-        finally:
-            self._cache_lock.release()
-        # P1: 同步清理 SymPy 规范形映射
-        with self._sympy_key_lock:
-            self._sympy_key_map.clear()
-
     # ------------------------------------------------------------------
     # 内存管理
     # ------------------------------------------------------------------
@@ -541,6 +532,11 @@ class GeneticFactorMiningService(BaseMiningService):
             # shutdown(wait=False) 不等待卡死的线程，避免阻塞主流程。
             # 卡死的线程会在后台继续运行，最终被垃圾回收。
             # ⚠️ 不能用 wait=True，否则会阻塞到 sp.simplify() 返回（实测可达 490+ 秒）。
+            executor.shutdown(wait=False)
+            return None
+        except Exception as e:
+            # sympy 缺失或表达式无法解析：降级为纯 zobrist 去重
+            logger.debug("SymPy规范形计算失败，降级为纯 zobrist: %s", e)
             executor.shutdown(wait=False)
             return None
 
@@ -753,7 +749,9 @@ class GeneticFactorMiningService(BaseMiningService):
                 if sim > 0.7:
                     diversity_penalty += self.diversity_penalty_coeff * sim
 
-        ic_fitness = max(raw_fitness - diversity_penalty, 0.0)
+        # 不截断到 0：负 IC 个体之间仍需保留相对排序，
+        # 否则劣质个体全部并列，NSGA-II 的支配关系与拥挤度失去区分度。
+        ic_fitness = raw_fitness - diversity_penalty
         # P1: 算子加权复杂度替代朴素节点计数
         # P1增强: 加入子表达式重复惩罚（重复子树增加复杂度但不提升表达能力）
         # NSGA-II 第二目标：复杂度越小越好
@@ -858,7 +856,7 @@ class GeneticFactorMiningService(BaseMiningService):
 
         _t_elapsed = time.time() - _t_start
         if _t_elapsed > 1.0:
-            logger.info(f"  [诊断] _eval_tree_on_stock 慢执行: stock={stock_code}, 耗时={_t_elapsed:.2f}s")
+            logger.debug(f"  [诊断] _eval_tree_on_stock 慢执行: stock={stock_code}, 耗时={_t_elapsed:.2f}s")
         return result
 
     def _eval_compiled_on_stock(
@@ -907,10 +905,13 @@ class GeneticFactorMiningService(BaseMiningService):
             _t0 = time.time()
             result = compiled_func(*ordered_np)
             _elapsed = time.time() - _t0
-            # 降低阈值：每次都记录，便于定位慢股票（之前>1s才记录）
-            logger.info(
-                f"GP树执行 股票={stock_code} 耗时={_elapsed:.3f}s "
-                f"数据长度={_data_len}"
+            # 单只股票执行日志：热路径（20 股 × 50 个体 × 20 代 = 2 万次），
+            # 降到 DEBUG 并改用惰性格式化，避免 f-string + 双 handler 写盘开销
+            logger.debug(
+                "GP树执行 股票=%s 耗时=%.3fs 数据长度=%s",
+                stock_code,
+                _elapsed,
+                _data_len,
             )
             if _elapsed > 3.0:
                 logger.warning(
@@ -969,7 +970,7 @@ class GeneticFactorMiningService(BaseMiningService):
 
         _t_elapsed = time.time() - _t_start
         if _t_elapsed > 1.0:
-            logger.info(f"  [诊断] _eval_compiled_on_stock 慢执行: stock={stock_code}, 耗时={_t_elapsed:.2f}s")
+            logger.debug(f"  [诊断] _eval_compiled_on_stock 慢执行: stock={stock_code}, 耗时={_t_elapsed:.2f}s")
         return result_series
 
     def _evaluate_cross_sectional_ic(self, tree) -> tuple:
@@ -988,17 +989,19 @@ class GeneticFactorMiningService(BaseMiningService):
         eval_codes = self._sampled_stock_codes
         factor_values_dict: Dict[str, pd.Series] = {}
         # 性能诊断：各环节耗时
-        _t_sympy = 0.0
         _t_compile = 0.0
         _t_parallel = 0.0
         _t_fast_ic = 0.0
         _t_cv = 0.0
 
-        # 入口日志：记录开始评估的树信息（用于定位卡住的个体）
-        logger.info(
-            f"截面IC评估开始 树高度={tree.height} 节点数={len(tree)} "
-            f"表达式预览={str(tree)[:80]}"
-        )
+        # 热路径：str(tree) 对大树开销明显，仅在 DEBUG 时构造预览
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(
+                "截面IC评估开始 树高度=%s 节点数=%s 表达式预览=%s",
+                tree.height,
+                len(tree),
+                str(tree)[:80],
+            )
 
         # Phase 4: check if full result is cached
         # 缓存中 "_complete" 键存储横截面IC的完整结果（所有股票的因子值），
@@ -1008,15 +1011,15 @@ class GeneticFactorMiningService(BaseMiningService):
 
         # P1: SymPy 规范形去重 — zobrist 未命中时，检查代数等价表达式
         # 例如 add(a, sub(b, a)) ≡ b，zobrist 不同但 SymPy 规范形相同
-        # ⚠️ 超时保护：sp.simplify() 对复杂 GP 树可能极慢甚至死循环（实测卡住 16+ 分钟）
+        # 默认关闭：sp.simplify() 对复杂 GP 树可能极慢甚至死循环（实测卡住 16+ 分钟），
+        # 而代数等价命中率很低，代价远大于收益。仅在 use_sympy_dedup=True 时启用。
         sympy_hit = False
-        if cached_all is None or "_complete" not in cached_all:
-            logger.info(f"  [诊断] Zobrist cache miss, 准备SymPy规范形检查... 树节点={len(tree)}")
+        canon_key = None
+        if self.use_sympy_dedup and (
+            cached_all is None or "_complete" not in cached_all
+        ):
             try:
-                _t_sympy_start = time.time()
                 canon_key = self._sympy_canonical_key_with_timeout(tree, timeout=3.0)
-                _t_sympy = time.time() - _t_sympy_start
-                logger.info(f"  SymPy规范形 耗时={_t_sympy:.2f}s 结果={'命中' if canon_key is not None else 'None/超时'}")
                 if canon_key is not None:
                     with self._sympy_key_lock:
                         mapped_key = self._sympy_key_map.get(canon_key)
@@ -1025,7 +1028,7 @@ class GeneticFactorMiningService(BaseMiningService):
                         if cached_all is not None and "_complete" in cached_all:
                             tree_key = mapped_key  # 复用已有缓存的 key
                             sympy_hit = True
-                            logger.info(f"  [诊断] SymPy规范形命中! 复用已有缓存")
+                            logger.debug("SymPy规范形命中，复用已有缓存")
             except Exception:
                 pass  # SymPy 不可用或失败/超时，降级为纯 zobrist
 
@@ -1047,10 +1050,9 @@ class GeneticFactorMiningService(BaseMiningService):
             # 编译 GP 树一次，复用于所有股票（原来每只股票编译一次，50只股票=50次编译）
             try:
                 _t_compile_start = time.time()
-                logger.info(f"  GP树编译开始... 节点数={len(tree)}")
                 compiled_func = compile_tree(tree, self.pset)
                 _t_compile = time.time() - _t_compile_start
-                logger.info(f"  GP树编译完成 耗时={_t_compile:.2f}s")
+                logger.debug("GP树编译完成 节点数=%s 耗时=%.3fs", len(tree), _t_compile)
             except Exception as e:
                 logger.warning(f"编译表达式失败: {e}")
                 return (0.0,)
@@ -1072,7 +1074,7 @@ class GeneticFactorMiningService(BaseMiningService):
                 )
                 _stock_elapsed = time.time() - _stock_t0
                 if _stock_elapsed > 0.5:
-                    logger.info(f"    股票 {code} 评估耗时={_stock_elapsed:.2f}s")
+                    logger.debug("    股票 %s 评估耗时=%.2fs", code, _stock_elapsed)
                 if fv is None:
                     return code, None, _stock_elapsed
                 fv_clean = fv.dropna()
@@ -1081,7 +1083,9 @@ class GeneticFactorMiningService(BaseMiningService):
                 return code, None, _stock_elapsed
 
             _t_parallel_start = time.time()
-            logger.info(f"  并行评估开始: {len(eval_codes)}只股票, max_workers={max_workers}")
+            logger.debug(
+                "并行评估开始: %s只股票, max_workers=%s", len(eval_codes), max_workers
+            )
             # ⚠️ 不使用 with ThreadPoolExecutor，因为退出时 shutdown(wait=True)
             # 会阻塞等待卡死的线程（compiled_func 卡在 C 扩展中无法中断）。
             # 改用显式 executor + wait(timeout) 实现全局超时。
@@ -1115,11 +1119,14 @@ class GeneticFactorMiningService(BaseMiningService):
             else:
                 executor.shutdown(wait=True)
             _t_parallel = time.time() - _t_parallel_start
-            logger.info(
-                f"  并行评估完成: {n_done}/{len(eval_codes)}只成功, "
-                f"{n_timeout}只超时, 总耗时={_t_parallel:.2f}s"
+            logger.debug(
+                "  并行评估完成: %s/%s只成功, %s只超时, 总耗时=%.2fs",
+                n_done,
+                len(eval_codes),
+                n_timeout,
+                _t_parallel,
             )
-            logger.info(f"  [诊断] 开始构建缓存数据... factor_values_dict={len(factor_values_dict)}项")
+            logger.debug(f"  [诊断] 开始构建缓存数据... factor_values_dict={len(factor_values_dict)}项")
 
             # Phase 4: cache the complete result (numpy arrays for memory efficiency)
             # 将 pd.Series 拆分为 ndarray + DatetimeIndex 分别存储，
@@ -1130,30 +1137,30 @@ class GeneticFactorMiningService(BaseMiningService):
                 complete_np[code] = fv.values if isinstance(fv, pd.Series) else fv
                 if isinstance(fv, pd.Series):
                     complete_index[code] = fv.index
-            logger.info(f"  [诊断] 缓存数据构建完成，准备调用_cache_set...")
+            logger.debug(f"  [诊断] 缓存数据构建完成，准备调用_cache_set...")
             self._cache_set(tree_key, {
                 "_complete": complete_np,
                 "_complete_index": complete_index,
             })
-            logger.info(f"  [诊断] _cache_set 完成")
+            logger.debug(f"  [诊断] _cache_set 完成")
 
             # P1: 记录 SymPy 规范形 → zobrist key 映射
-            # 后续代数等价表达式可通过此映射复用缓存
-            if not sympy_hit:
+            # 后续代数等价表达式可通过此映射复用缓存（仅在启用 SymPy 去重时构建）
+            if canon_key is not None and not sympy_hit:
                 try:
                     with self._sympy_key_lock:
                         if canon_key not in self._sympy_key_map:
                             self._sympy_key_map[canon_key] = tree_key
                 except Exception:
                     pass
-            logger.info(f"  [诊断] SymPy key map 更新完成")
+                logger.debug(f"  [诊断] SymPy key map 更新完成")
 
-        logger.info(f"  [诊断] 退出缓存/计算分支，factor_values_dict={len(factor_values_dict)}项")
+        logger.debug(f"  [诊断] 退出缓存/计算分支，factor_values_dict={len(factor_values_dict)}项")
 
         if len(factor_values_dict) < 2:
             return (0.0,)
 
-        logger.info(f"  [诊断] 准备调用 _fast_cross_sectional_ic...")
+        logger.debug(f"  [诊断] 准备调用 _fast_cross_sectional_ic...")
 
         try:
             # ---- 轻量级横截面IC计算（替代 alphalens 全流程） ----
@@ -1177,12 +1184,12 @@ class GeneticFactorMiningService(BaseMiningService):
             _t_fast_ic_start = time.time()
             best_ic, best_ir = self._fast_cross_sectional_ic(factor_values_dict)
             _t_fast_ic = time.time() - _t_fast_ic_start
-            logger.info(f"  [诊断] _fast_cross_sectional_ic 完成, best_ic={best_ic:.4f}, best_ir={best_ir:.4f}")
+            logger.debug(f"  [诊断] _fast_cross_sectional_ic 完成, best_ic={best_ic:.4f}, best_ir={best_ir:.4f}")
 
             # 收集原始IC/IR用于代际Z-Score计算（与 _route_fitness 行为一致）
             self._gen_ic_values.append(best_ic)
             self._gen_ir_values.append(best_ir)
-            logger.info(f"  [诊断] IC/IR 值已收集，进入适应度路由...")
+            logger.debug(f"  [诊断] IC/IR 值已收集，进入适应度路由...")
 
             # 根据 fitness_objective 路由适应度（与 _route_fitness 逻辑一致）
             if self.fitness_objective == "ir_ratio":
@@ -1218,25 +1225,31 @@ class GeneticFactorMiningService(BaseMiningService):
                 raw_fitness = 0.6 * norm_ic + 0.4 * norm_ir
             else:  # ic_mean (default)
                 raw_fitness = best_ic
-            logger.info(f"  [诊断] 适应度路由完成, raw_fitness={raw_fitness:.4f}")
+            logger.debug(f"  [诊断] 适应度路由完成, raw_fitness={raw_fitness:.4f}")
 
             # Phase 6: cross-validation penalty
             _t_cv_start = time.time()
             cv_penalty = self._cv_penalty(factor_values_dict)
             _t_cv = time.time() - _t_cv_start
             raw_fitness = raw_fitness * (1.0 - cv_penalty)
-            logger.info(f"  [诊断] CV惩罚完成, cv_penalty={cv_penalty:.4f}, adjusted_fitness={raw_fitness:.4f}")
+            logger.debug(f"  [诊断] CV惩罚完成, cv_penalty={cv_penalty:.4f}, adjusted_fitness={raw_fitness:.4f}")
 
             _elapsed = time.time() - _t0
-            # 每次评估都记录详细耗时（info级别），便于定位慢个体
-            logger.info(
-                f"截面IC评估 总耗时={_elapsed:.2f}s "
-                f"树节点={len(tree)} 高度={tree.height} 股票数={len(eval_codes)} "
-                f"有效股票={len(factor_values_dict)} "
-                f"SymPy={'命中' if sympy_hit else f'{_t_sympy:.2f}s'} "
-                f"编译={_t_compile:.2f}s 并行={_t_parallel:.2f}s "
-                f"快速IC={_t_fast_ic:.2f}s CV={_t_cv:.2f}s "
-                f"raw_fitness={raw_fitness:.4f}"
+            # 逐个体耗时明细只在 DEBUG 输出，INFO 仅保留超时告警
+            logger.debug(
+                "截面IC评估 总耗时=%.2fs 树节点=%s 高度=%s 股票数=%s "
+                "有效股票=%s 编译=%.2fs 并行=%.2fs 快速IC=%.2fs CV=%.2fs "
+                "raw_fitness=%.4f",
+                _elapsed,
+                len(tree),
+                tree.height,
+                len(eval_codes),
+                len(factor_values_dict),
+                _t_compile,
+                _t_parallel,
+                _t_fast_ic,
+                _t_cv,
+                raw_fitness,
             )
             if _elapsed > 10.0:
                 logger.warning(
@@ -1286,7 +1299,7 @@ class GeneticFactorMiningService(BaseMiningService):
             (best_ic, best_ir) — 与 _extract_best_ic_ir 返回格式一致
         """
         _t_ic_start = time.time()
-        logger.info(f"  [诊断] _fast_cross_sectional_ic 开始, 输入 {len(factor_values_dict)} 只股票")
+        logger.debug(f"  [诊断] _fast_cross_sectional_ic 开始, 输入 {len(factor_values_dict)} 只股票")
         # ---- 构建统一日期索引 ----
         # 收集所有股票的日期索引，取交集
         all_dates = None
@@ -1302,7 +1315,7 @@ class GeneticFactorMiningService(BaseMiningService):
 
         if all_dates is None or len(all_dates) < 5:
             _t_ic = time.time() - _t_ic_start
-            logger.info(f"  [诊断] _fast_cross_sectional_ic 提前退出: all_dates={None if all_dates is None else len(all_dates)} (<5), 耗时={_t_ic:.3f}s")
+            logger.debug(f"  [诊断] _fast_cross_sectional_ic 提前退出: all_dates={None if all_dates is None else len(all_dates)} (<5), 耗时={_t_ic:.3f}s")
             return (0.0, 0.0)
 
         # ---- 构建 numpy 矩阵：shape (n_dates, n_stocks) ----
@@ -1325,7 +1338,7 @@ class GeneticFactorMiningService(BaseMiningService):
 
         factor_matrix = np.column_stack(factor_cols)  # (n_dates, n_stocks)
         return_matrix = np.column_stack(return_cols)   # (n_dates, n_stocks)
-        logger.info(f"  [诊断] numpy矩阵构建完成: shape={factor_matrix.shape}, n_dates={len(all_dates)}")
+        logger.debug(f"  [诊断] numpy矩阵构建完成: shape={factor_matrix.shape}, n_dates={len(all_dates)}")
 
         # ---- 逐行（逐日期）计算 Spearman IC ----
         # 对每行的因子值和收益率分别排名，然后计算 Pearson 相关
@@ -1354,11 +1367,11 @@ class GeneticFactorMiningService(BaseMiningService):
             ic = (f_centered * r_centered).sum() / denom
             daily_ics.append(ic)
 
-        logger.info(f"  [诊断] Spearman IC循环完成: {len(daily_ics)}/{len(all_dates)} 有效日期")
+        logger.debug(f"  [诊断] Spearman IC循环完成: {len(daily_ics)}/{len(all_dates)} 有效日期")
 
         if len(daily_ics) < 2:
             _t_ic = time.time() - _t_ic_start
-            logger.info(f"  [诊断] _fast_cross_sectional_ic 提前退出: 有效IC<2, 耗时={_t_ic:.3f}s")
+            logger.debug(f"  [诊断] _fast_cross_sectional_ic 提前退出: 有效IC<2, 耗时={_t_ic:.3f}s")
             return (0.0, 0.0)
 
         ic_arr = np.array(daily_ics)
@@ -1624,10 +1637,13 @@ class GeneticFactorMiningService(BaseMiningService):
             _ts_op_count = sum(1 for node in ind if hasattr(node, 'name') and
                               node.name.startswith('ts_') and 'corr' in node.name)
             if _ts_op_count >= 2:
-                logger.info(
-                    f"初始评估 [{i+1}/{len(population)}] 跳过: "
-                    f"{_ts_op_count}个ts_corr嵌套 (阈值>=2), "
-                    f"树高度={ind.height}, 节点数={len(ind)}"
+                logger.debug(
+                    "初始评估 [%s/%s] 跳过: %s个ts_corr嵌套 (阈值>=2), 树高度=%s, 节点数=%s",
+                    i + 1,
+                    len(population),
+                    _ts_op_count,
+                    ind.height,
+                    len(ind),
                 )
                 fit = self._penalty_fitness() if self.use_nsga2 else (0.0,)
                 _should_skip = True
@@ -1657,10 +1673,15 @@ class GeneticFactorMiningService(BaseMiningService):
             primary_fit = float(fit[0]) if fit else 0.0
             if primary_fit > best_init_fitness:
                 best_init_fitness = primary_fit
-            logger.info(
-                f"初始评估 [{i+1}/{len(population)}] "
-                f"耗时={_ind_elapsed:.2f}s, fitness={primary_fit:.4f}, "
-                f"best={best_init_fitness:.4f}, 树高度={ind.height}, 节点数={len(ind)}"
+            logger.debug(
+                "初始评估 [%s/%s] 耗时=%.2fs, fitness=%.4f, best=%.4f, 树高度=%s, 节点数=%s",
+                i + 1,
+                len(population),
+                _ind_elapsed,
+                primary_fit,
+                best_init_fitness,
+                ind.height,
+                len(ind),
             )
 
             # 报告初始评估进度（初始评估 + 进化代数 = 总阶段数）
@@ -1936,8 +1957,9 @@ class GeneticFactorMiningService(BaseMiningService):
             self._current_generation = gen
             self._refresh_stock_sample()
 
-            # Phase 4: clear factor value cache at generation boundary
-            self._cache_clear()
+            # Phase 4: 因子值缓存跨代保留
+            # 评估股票样本整轮固定（见 _refresh_stock_sample），同一棵树的
+            # 因子值在所有代都相同，无需按代清空缓存。
 
             # ---- Elitism: copy top elite_size individuals unchanged ----
             if use_nsga2:
@@ -2049,10 +2071,11 @@ class GeneticFactorMiningService(BaseMiningService):
             )
 
             # ---- Phase 3: Diversity protection – replace duplicates ----
-            # P1 增强：分层深度去重
+            # 分层去重：
             #   第一层 zobrist_hash：O(1) 检测结构相同 + 交换律同构（add(a,b)=add(b,a)）
-            #   第二层 sympy_canonical_key：检测代数等价（add(a,sub(b,a))≡b）
+            #   第二层 sympy_canonical_key（默认关闭）：检测代数等价（add(a,sub(b,a))≡b）
             #   对比范围：offspring 内部 + 父代 population + 精英 elites
+            use_sympy_dedup = self.use_sympy_dedup
             if diversity_protection:
                 seen_zobrist: set = set()
                 seen_sympy: set = set()
@@ -2060,10 +2083,12 @@ class GeneticFactorMiningService(BaseMiningService):
                 # 预加载父代和精英的去重键
                 for ind in list(population) + list(elites):
                     seen_zobrist.add(zobrist_hash(ind))
-                    try:
-                        seen_sympy.add(sympy_canonical_key(ind))
-                    except Exception:
-                        pass
+                    if use_sympy_dedup:
+                        skey = self._sympy_canonical_key_with_timeout(
+                            ind, timeout=3.0
+                        )
+                        if skey is not None:
+                            seen_sympy.add(skey)
 
                 n_struct_dup = 0
                 n_algebraic_dup = 0
@@ -2075,26 +2100,34 @@ class GeneticFactorMiningService(BaseMiningService):
                         offspring[i] = new_ind
                         n_struct_dup += 1
                         seen_zobrist.add(zobrist_hash(new_ind))
-                        try:
-                            seen_sympy.add(sympy_canonical_key(new_ind))
-                        except Exception:
-                            pass
+                        if use_sympy_dedup:
+                            skey = self._sympy_canonical_key_with_timeout(
+                                new_ind, timeout=3.0
+                            )
+                            if skey is not None:
+                                seen_sympy.add(skey)
                         continue
 
-                    # 深度去重：SymPy 规范形检测代数等价
-                    try:
-                        skey = sympy_canonical_key(ind)
-                        if skey in seen_sympy:
-                            new_ind = self.toolbox.individual()
-                            offspring[i] = new_ind
-                            n_algebraic_dup += 1
-                            seen_zobrist.add(zobrist_hash(new_ind))
-                            seen_sympy.add(sympy_canonical_key(new_ind))
-                        else:
-                            seen_zobrist.add(zkey)
-                            seen_sympy.add(skey)
-                    except Exception:
+                    if not use_sympy_dedup:
                         seen_zobrist.add(zkey)
+                        continue
+
+                    # 深度去重：SymPy 规范形检测代数等价（带超时，避免大树卡死）
+                    skey = self._sympy_canonical_key_with_timeout(ind, timeout=3.0)
+                    if skey is not None and skey in seen_sympy:
+                        new_ind = self.toolbox.individual()
+                        offspring[i] = new_ind
+                        n_algebraic_dup += 1
+                        seen_zobrist.add(zobrist_hash(new_ind))
+                        new_skey = self._sympy_canonical_key_with_timeout(
+                            new_ind, timeout=3.0
+                        )
+                        if new_skey is not None:
+                            seen_sympy.add(new_skey)
+                    else:
+                        seen_zobrist.add(zkey)
+                        if skey is not None:
+                            seen_sympy.add(skey)
 
                 if n_struct_dup + n_algebraic_dup > 0:
                     logger.info(
@@ -2127,9 +2160,12 @@ class GeneticFactorMiningService(BaseMiningService):
                     _ts_op_count = sum(1 for node in ind if hasattr(node, 'name') and
                                       node.name.startswith('ts_') and 'corr' in node.name)
                     if _ts_op_count >= 2:
-                        logger.info(
-                            f"  Gen {gen+1} 个体 [{idx+1}/{len(invalid)}] 跳过: "
-                            f"{_ts_op_count}个ts_corr嵌套"
+                        logger.debug(
+                            "  Gen %s 个体 [%s/%s] 跳过: %s个ts_corr嵌套",
+                            gen + 1,
+                            idx + 1,
+                            len(invalid),
+                            _ts_op_count,
                         )
                         fit = self._penalty_fitness() if self.use_nsga2 else (0.0,)
                     else:
@@ -2156,9 +2192,12 @@ class GeneticFactorMiningService(BaseMiningService):
                             fit = self._penalty_fitness() if self.use_nsga2 else (0.0,)
 
                     _ind_elapsed = time.time() - _ind_t0
-                    logger.info(
-                        f"  Gen {gen+1} 个体 [{idx+1}/{len(invalid)}] 评估完成 "
-                        f"({_ind_elapsed:.2f}s)"
+                    logger.debug(
+                        "  Gen %s 个体 [%s/%s] 评估完成 (%.2fs)",
+                        gen + 1,
+                        idx + 1,
+                        len(invalid),
+                        _ind_elapsed,
                     )
                     fitnesses.append(fit)
                 _eval_elapsed = time.time() - _eval_start
@@ -2166,8 +2205,16 @@ class GeneticFactorMiningService(BaseMiningService):
                     f"Gen {gen+1} 评估 {len(invalid)} 个个体，"
                     f"总耗时 {_eval_elapsed:.1f}s"
                 )
-                for ind, fit in zip(invalid, fitnesses):
-                    ind.fitness.values = fit
+                # 代际超时 break 时 fitnesses 可能短于 invalid，剩余个体的
+                # fitness 为空元组，随后 stats.compile 取 values[0] 会抛
+                # IndexError。缺失部分统一填惩罚值，保证种群 fitness 完整。
+                _fallback_fit = (
+                    self._penalty_fitness() if self.use_nsga2 else (0.0,)
+                )
+                for idx, ind in enumerate(invalid):
+                    ind.fitness.values = (
+                        fitnesses[idx] if idx < len(fitnesses) else _fallback_fit
+                    )
 
             # ---- Replace population: offspring + elites ----
             population[:] = offspring + elites

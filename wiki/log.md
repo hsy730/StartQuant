@@ -758,3 +758,9 @@
 
 ## 2026-11-16 | 更新 | GeneticFactorMiningService
 - 补充重复子树惩罚量纲的 A/B 实测结论，以及多进程多种子才能复现对比的测量要求
+
+## 2026-11-16 | 更新 | GeneticFactorMiningService
+- 修复 P0：代际超时后缺失 fitness 填惩罚值；评估股票样本整轮固定；NSGA-II IC 目标取消 0 截断
+
+## 2026-11-16 | 更新 | GeneticFactorMiningService
+- 第一批 P1：热路径日志降级 DEBUG；SymPy 去重改为 use_sympy_dedup 开关（默认关）；缓存跨代保留；删除未使用的 _pset_series
