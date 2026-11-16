@@ -188,3 +188,411 @@
 
 ## 2026-11-16 | 更新 | 内容目录
 - 第八批 7 个页面写入后同步 index.md
+
+## 2026-11-16 | 创建 | 相关性口径分离
+- 依据 factor_correlation_service.py 提炼横截面与时序两种相关口径
+
+## 2026-11-16 | 创建 | 多重共线性VIF筛查
+- 依据 factor_correlation_service.py 与 constants.py 提炼 VIF 分档与 RMS 指标
+
+## 2026-11-16 | 创建 | 因子暴露转移矩阵
+- 依据 factor_monitoring_service.py 提炼分位迁移、断点与周期性检测
+
+## 2026-11-16 | 创建 | FactorValidationService
+- 依据 factor_validation_service.py 提炼六项检查与评分扣减规则
+
+## 2026-11-16 | 创建 | AlphalensAnalysisService
+- 依据 alphalens_analysis_service.py 提炼数据准备与四类分析入口
+
+## 2026-11-16 | 创建 | FactorCorrelationService
+- 依据 factor_correlation_service.py 提炼八步流程与默认配置
+
+## 2026-11-16 | 创建 | 因子体检与相关性诊断链路
+- 汇总三个诊断服务的职责分工与到评估环节的衔接
+
+## 2026-11-16 | 更新 | 内容目录
+- 第九批 7 个页面写入后同步 index.md
+
+## 2026-11-16 | 创建 | 回归残差中性化
+- 依据 factor_neutralization_service.py 提炼三种中性化与样本门槛
+
+## 2026-11-16 | 创建 | 横截面分层与单调性
+- 依据 factor_return_analysis_service.py 提炼逐日分组、利差与单调判定
+
+## 2026-11-16 | 创建 | 加权IC与相关性折减
+- 依据 weighted_ic_service.py 提炼五种权重与高相关降权规则
+
+## 2026-11-16 | 创建 | FactorNeutralizationService
+- 依据 factor_neutralization_service.py 提炼三个入口与常量
+
+## 2026-11-16 | 创建 | FactorReturnAnalysisService
+- 依据 factor_return_analysis_service.py 提炼配置与四个分析方法
+
+## 2026-11-16 | 创建 | WeightedICService
+- 依据 weighted_ic_service.py 提炼配置、权重与重要性排序
+
+## 2026-11-16 | 创建 | 因子中性化与收益验证链路
+- 汇总中性化、分层、加权 IC 到评估回测的顺序与边界
+
+## 2026-11-16 | 更新 | 内容目录
+- 第十批 7 个页面写入后同步 index.md
+
+## 2026-11-16 | 创建 | 因子衰减与IC自相关
+- 依据 statistics_service.py 提炼多周期 IC 衰减、自相关与滚动稳定性口径
+
+## 2026-11-16 | 创建 | 策略对比两两显著性检验
+- 依据 strategy_comparison_service.py 提炼双检验、样本门槛与秩均值排名
+
+## 2026-11-16 | 创建 | 滑点自适应推荐
+- 依据 smart_slippage_detector.py 提炼板块基准、流动性、波动与换手惩罚
+
+## 2026-11-16 | 创建 | StatisticsService
+- 依据 statistics_service.py 提炼 14 个统计方法与常数IC守卫
+
+## 2026-11-16 | 创建 | TearSheetService
+- 依据 tear_sheet_service.py 提炼评分权重、公式与等级划分
+
+## 2026-11-16 | 创建 | StrategyComparisonService
+- 依据 strategy_comparison_service.py 提炼对比流程与缺失值处理
+
+## 2026-11-16 | 创建 | 因子报告与策略对比链路
+- 汇总报告汇总、独立统计、策略对比到导出的职责分工
+
+## 2026-11-16 | 更新 | 内容目录
+- 第十一批 7 个页面写入后同步 index.md
+
+## 2026-11-16 | 创建 | 分组排序学习
+- 依据 stock_ranker_service.py 提炼排序目标、分组与组内排名口径
+
+## 2026-11-16 | 创建 | 训练期统计量防泄漏
+- 依据训练切分与填充逻辑提炼组边界对齐与训练集中位数复用
+
+## 2026-11-16 | 创建 | 因子质量分级评分
+- 依据 factor_summary_service.py 提炼四项权重与七档评级
+
+## 2026-11-16 | 创建 | StockRankerService
+- 依据 stock_ranker_service.py 提炼训练配置、LRU 缓存与解释入口
+
+## 2026-11-16 | 创建 | FactorSummaryService
+- 依据 factor_summary_service.py 提炼摘要结构与质量分计算
+
+## 2026-11-16 | 创建 | VisualizationService
+- 依据 visualization_service.py 提炼八个绘图方法与降级策略
+
+## 2026-11-16 | 创建 | 排序模型训练与预测链路
+- 汇总预处理、防泄漏、排序训练、回测与解释的先后关系
+
+## 2026-11-16 | 更新 | 内容目录
+- 第十二批 7 个页面写入后同步 index.md
+
+## 2026-11-16 | 创建 | 适应度目标路由与Z-Score归一化
+- 依据 base_mining_service.py 提炼四种适应度目标、先验冷启动与 σ 下界保护
+
+## 2026-11-16 | 创建 | 交叉验证过拟合惩罚
+- 依据 base_mining_service.py 的分段 IC 惩罚提炼公式、采样与超时边界
+
+## 2026-11-16 | 创建 | 树模型预筛选两阶段管道
+- 依据 tree_prescreen 与 dual 服务提炼阶段划分、Top-K 与回退逻辑
+
+## 2026-11-16 | 创建 | BaseMiningService
+- 依据 base_mining_service.py 提炼构造默认值、共享缓存与生命周期方法
+
+## 2026-11-16 | 创建 | DualMiningService
+- 依据 dual_mining_service.py 提炼五种算法分派、参数分组与回退行为
+
+## 2026-11-16 | 创建 | ModelRegistry
+- 依据 model_registry.py 提炼框架/阶段枚举、版本命名与持久化规则
+
+## 2026-11-16 | 创建 | 挖掘算法调度与模型持久化链路
+- 汇总注册表、调度器、共享基类与模型版本中心的职责边界
+
+## 2026-11-16 | 更新 | 内容目录
+- 第十三批 7 个页面写入后同步 index.md
+
+## 2026-11-16 | 创建 | 挖掘结果统一验证口径
+- 依据 factor_analyzer.py 提炼预计算优先、IC/IR 绝对值与分数换算口径
+
+## 2026-11-16 | 创建 | 组合因子生成与预筛
+- 依据 factor_generator_service.py 提炼四类生成器、深度上限与预筛门限
+
+## 2026-11-16 | 创建 | 混合类型Phi_K相关性
+- 依据 phik_correlation_service.py 提炼分类列判定、双矩阵输出与降级行为
+
+## 2026-11-16 | 创建 | FactorAnalyzer
+- 依据 factor_analyzer.py 提炼逐条验证、超时保护与查重入库
+
+## 2026-11-16 | 创建 | FactorGeneratorService
+- 依据 factor_generator_service.py 提炼三类能力表、生成方法与预筛默认值
+
+## 2026-11-16 | 创建 | FactorImportService
+- 依据 factor_import_service.py 提炼双导入入口、默认列名与返回结构
+
+## 2026-11-16 | 创建 | 因子生成与统一验证入库链路
+- 汇总生成、导入、统一验证、版本留痕与质量评级的先后关系
+
+## 2026-11-16 | 更新 | 内容目录
+- 第十四批 7 个页面写入后同步 index.md
+
+## 2026-11-16 | 创建 | 统一响应信封与错误映射
+- 依据 main.py、路由与 api.ts 提炼 success/data 信封与状态码映射
+
+## 2026-11-16 | 创建 | 挖掘任务内存表与TTL回收
+- 依据 mining.py 提炼任务表、TTL、条数上限与关闭清理
+
+## 2026-11-16 | 创建 | 按耗时分级设置请求超时
+- 依据 api.ts 提炼默认 300 秒与各接口超时分档
+
+## 2026-11-16 | 创建 | FactorFlowAPI应用
+- 依据 main.py 提炼生命周期、CORS、路由前缀、SPA 回退与异常处理
+
+## 2026-11-16 | 创建 | ApiClient
+- 依据 api.ts 提炼 axios 配置、拦截器与七类方法覆盖
+
+## 2026-11-16 | 创建 | MiningTaskRouter
+- 依据 mining.py 提炼五种算法、默认参数、端点与内存常量
+
+## 2026-11-16 | 创建 | 挖掘任务提交与轮询链路
+- 汇总提交、状态轮询、结果获取、刷新接管与重启恢复
+
+## 2026-11-16 | 更新 | 内容目录
+- 第十五批 7 个页面写入后同步 index.md
+
+## 2026-11-16 | 创建 | 因子版本哈希缓存失效
+- 依据 analysis_service.py 提炼缓存键构造与因子代码哈希失效
+
+## 2026-11-16 | 创建 | 持仓时长与换手口径
+- 依据 position_analysis_service.py 提炼换手除二与连续区间口径
+
+## 2026-11-16 | 创建 | 代表样本选取最长有效序列
+- 依据 factor_data_utils.py 与暴露度服务提炼代表样本规则
+
+## 2026-11-16 | 创建 | FactorCalculator
+- 依据 factor_service.py 提炼 AST 校验、TALib 与麦语言函数
+
+## 2026-11-16 | 创建 | FactorService
+- 依据 factor_service.py 提炼预置加载、统计、门控与并行计算
+
+## 2026-11-16 | 创建 | AnalysisService
+- 依据 analysis_service.py 提炼固定预处理、alphalens、检测与缓存
+
+## 2026-11-16 | 创建 | 因子计算与缓存分析链路
+- 汇总代码解析、并行计算、缓存键与固定预处理的先后
+
+## 2026-11-16 | 更新 | 内容目录
+- 第十六批 7 个页面写入后同步 index.md
+
+## 2026-11-16 | 创建 | 数据库会话生命周期管理
+- 依据 database.py 提炼 get_db、with_db 与废弃接口的会话管理规则
+
+## 2026-11-16 | 创建 | 向量化滚动IC
+- 依据 ic_calculator.py 提炼滑动窗口排名与向量化 Pearson 实现
+
+## 2026-11-16 | 创建 | 仓储层提交与回滚边界
+- 依据 factor_repository.py 提炼写操作提交、回滚与批量删除语义
+
+## 2026-11-16 | 创建 | FactorRepository
+- 依据 factor_repository.py 提炼查询过滤、硬删除与预置保护
+
+## 2026-11-16 | 创建 | AnalysisCacheRepository
+- 依据 factor_repository.py 提炼缓存查询、写入与按天清理
+
+## 2026-11-16 | 创建 | 因子与缓存数据模型
+- 依据 models/factor.py 提炼 factors 与 analysis_cache 两表字段
+
+## 2026-11-16 | 创建 | 因子持久化与缓存数据链路
+- 汇总会话、仓储、表结构与事务边界的串联关系
+
+## 2026-11-16 | 更新 | 内容目录
+- 第十七批 7 个页面写入后同步 index.md
+
+## 2026-11-16 | 创建 | JSON安全序列化
+- 依据 serialization.py 提炼 NaN/Inf 归 null 与递归类型转换规则
+
+## 2026-11-16 | 创建 | 配置默认值与目录自举
+- 依据 settings.py 提炼默认值、目录创建与样本库复制时机
+
+## 2026-11-16 | 创建 | 面板按资产分组计算
+- 依据 return_calculator.py 提炼 MultiIndex 分组与未来收益语义
+
+## 2026-11-16 | 创建 | Settings
+- 依据 settings.py 提炼路径派生、默认参数与初始化副作用
+
+## 2026-11-16 | 创建 | SerializationUtils
+- 依据 serialization.py 提炼两个对外函数与类型映射
+
+## 2026-11-16 | 创建 | ReturnCalculator
+- 依据 return_calculator.py 提炼唯一函数与面板分组方式
+
+## 2026-11-16 | 创建 | 配置与序列化基础设施链路
+- 汇总配置自举、响应清洗与收益口径三者的分工
+
+## 2026-11-16 | 更新 | 内容目录
+- 第十八批 7 个页面写入后同步 index.md
+
+## 2026-11-16 | 创建 | 当前版本唯一性
+- 依据 factor_version_repository.py 提炼 is_current 单标记的维护顺序
+
+## 2026-11-16 | 创建 | 重启时中断任务回收
+- 依据 mining_task_repository.py 提炼启动时批量标注 aborted 的规则
+
+## 2026-11-16 | 创建 | 生成因子去重与保存标记
+- 依据 generated_factor_repository.py 提炼表达式去重与双状态字段
+
+## 2026-11-16 | 创建 | GeneratedFactorRepository
+- 依据生成因子仓储提炼查询过滤、保存标记与字典输出
+
+## 2026-11-16 | 创建 | MiningTaskRepository
+- 依据挖掘任务仓储提炼状态流转、分页查询与摘要输出
+
+## 2026-11-16 | 创建 | FactorVersionRepository
+- 依据版本仓储提炼创建、当前版本切换与批量删除
+
+## 2026-11-16 | 创建 | 生成因子、任务与版本持久化链路
+- 汇总三类仓储的去重、状态与单当前标记职责
+
+## 2026-11-16 | 更新 | 内容目录
+- 第十九批 7 个页面写入后同步 index.md
+
+## 2026-11-16 | 创建 | 日志即时刷盘与幂等初始化
+- 依据 logging_config.py 与 main.py 提炼刷盘时机与重复挂载保护
+
+## 2026-11-16 | 创建 | 先子后父删除关联记录
+- 依据 backtest_repository.py 提炼两级删除顺序与事务回滚
+
+## 2026-11-16 | 创建 | JSON字段入库前转字典
+- 依据 backtest_repository.py 提炼净值与分层收益的落库前转换
+
+## 2026-11-16 | 创建 | BacktestRepository
+- 依据回测仓储提炼保存、分页、关联删除与统计方法
+
+## 2026-11-16 | 创建 | CacheRepository
+- 依据缓存仓储提炼元数据 CRUD、访问更新与过期统计
+
+## 2026-11-16 | 创建 | 回测与交易记录模型
+- 依据 backtest.py 与 cache_metadata.py 提炼三张表字段与行为方法
+
+## 2026-11-16 | 创建 | 回测结果与缓存元数据持久化链路
+- 汇总回测落库、关联删除与缓存元数据统计的分工
+
+## 2026-11-16 | 更新 | 内容目录
+- 第二十批 7 个页面写入后同步 index.md
+
+## 2026-11-16 | 创建 | GFlowNet表达式状态机
+- 依据 gflownet 服务提炼节点状态、动作空间与轨迹平衡损失
+
+## 2026-11-16 | 创建 | 符号回归复杂度与样本门槛
+- 依据 pysr 服务提炼尺寸深度约束、算子默认值与最小样本
+
+## 2026-11-16 | 创建 | 表达式相似度去重与惩罚
+- 依据 gflownet 服务与 factor_primitives 提炼双阈值规则
+
+## 2026-11-16 | 创建 | GeneticFactorMiningService
+- 依据遗传规划服务提炼默认参数、工具集与选择策略
+
+## 2026-11-16 | 创建 | PySRFactorMiningService
+- 依据符号回归服务提炼参数默认值、评估路径与排序
+
+## 2026-11-16 | 创建 | GFlowNetMiningService
+- 依据 GFlowNet 服务提炼训练循环、HoF 与返回结构
+
+## 2026-11-16 | 创建 | 三种表达式挖掘实现对比
+- 汇总三种算法的搜索方式与共享验证口径
+
+## 2026-11-16 | 更新 | 内容目录
+- 第二十一批 7 个页面写入后同步 index.md
+
+## 2026-11-16 | 创建 | 异常值检测双口径与处理方法
+- 依据 data_preprocessing_service.py 提炼 std/IQR 判定与四种处理方式
+
+## 2026-11-16 | 创建 | 回测薄编排层
+- 依据 backtest_service.py 提炼全量委托与结果 engine 标记
+
+## 2026-11-16 | 创建 | 隐因子序列建模
+- 依据 deep_factor_mining_service.py 提炼窗口、网络与训练参数
+
+## 2026-11-16 | 创建 | DeepFactorMiningService
+- 依据深度挖掘服务提炼流程、返回结构与模型持久化
+
+## 2026-11-16 | 创建 | TreePrescreenMiningService
+- 依据树预筛服务提炼模型选择、阈值与下游算法透传
+
+## 2026-11-16 | 创建 | DataPreprocessingService
+- 依据预处理服务提炼六个公开能力与默认行为
+
+## 2026-11-16 | 创建 | 树预筛与深度挖掘链路
+- 汇总两阶段预筛、隐因子训练与共享验证口径
+
+## 2026-11-16 | 更新 | 内容目录
+- 第二十二批 7 个页面写入后同步 index.md
+
+## 2026-11-16 | 创建 | 事件响应阈值分组
+- 依据有效性服务提炼横截面与全局分位阈值的分组口径
+
+## 2026-11-16 | 创建 | 时间序列分位与变异系数
+- 依据暴露服务提炼分位计算、滚动窗口与变异系数口径
+
+## 2026-11-16 | 创建 | 滚动均值断点与傅里叶周期
+- 依据监测服务提炼断点阈值与 FFT 周期识别方法
+
+## 2026-11-16 | 创建 | FactorEffectivenessService
+- 依据有效性服务提炼入口、alphalens 优先级与四类结果
+
+## 2026-11-16 | 创建 | FactorExposureService
+- 依据暴露服务提炼四个入口与分布统计口径
+
+## 2026-11-16 | 创建 | FactorMonitoringService
+- 依据监测服务提炼滚动带、断点、周期与迁移矩阵
+
+## 2026-11-16 | 创建 | 因子有效性、暴露与动态监测分工
+- 汇总三个服务分别回答的预测力、位置与结构变化问题
+
+## 2026-11-16 | 更新 | 内容目录
+- 第二十三批 7 个页面写入后同步 index.md
+
+## 2026-11-16 | 创建 | IC显著性单样本t检验
+- 依据增强分析服务提炼逐日 IC 序列的检验前置条件与输出
+
+## 2026-11-16 | 创建 | 单票集中度占位实现
+- 依据持仓服务提炼单标的固定返回值与简化说明
+
+## 2026-11-16 | 创建 | 滑点成本敏感性分级
+- 依据滑点检测器提炼成本公式、分档阈值与建议条件
+
+## 2026-11-16 | 创建 | EnhancedAnalysisService
+- 依据增强分析服务提炼两个入口与委托口径
+
+## 2026-11-16 | 创建 | PositionAnalysisService
+- 依据持仓服务提炼三个入口与统计字段
+
+## 2026-11-16 | 创建 | SmartSlippageDetector
+- 依据滑点检测器提炼输入形式、偏好档位与报告输出
+
+## 2026-11-16 | 创建 | 组合持仓与交易成本评估链路
+- 汇总持仓统计、集中度占位与滑点敏感性的分工
+
+## 2026-11-16 | 更新 | 内容目录
+- 第二十四批 7 个页面写入后同步 index.md
+
+## 2026-11-16 | 创建 | 算子加权复杂度
+- 依据 factor_primitives.py 的权重表提炼四档算子代价与终端权重
+
+## 2026-11-16 | 创建 | Zobrist哈希同构去重
+- 依据 factor_primitives.py 提炼交换律排序、位置种子与重复子树替换规则
+
+## 2026-11-16 | 创建 | 魔法值集中管控
+- 依据 constants.py 提炼市场参数、阈值、窗口与键名常量
+
+## 2026-11-16 | 创建 | FactorPrimitives
+- 依据 factor_primitives.py 提炼算子、原语集三态构造与表达式工具
+
+## 2026-11-16 | 创建 | 全局常量模块
+- 依据 constants.py 提炼常量分组与 Keys/ChineseKeys 双键名体系
+
+## 2026-11-16 | 创建 | AnalysisRouter
+- 依据 analysis.py 提炼 19 个端点、代码解析函数与依赖服务
+
+## 2026-11-16 | 创建 | 表达式去重与简化链路
+- 汇总结构指纹、代数规范键与两类惩罚的分工
+
+## 2026-11-16 | 更新 | 内容目录
+- 第二十五批 7 个页面写入后同步 index.md
