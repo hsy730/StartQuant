@@ -9,13 +9,11 @@
 
 ## 是什么
 
-`backend/utils/serialization.py` 提供的 JSON 安全序列化工具函数集。
+`backend/utils/serialization.py` 中的 JSON 安全序列化工具函数集，负责把数值与容器对象清洗成可被 JSON 序列化的形式。
 
 ## 关键事实
 
-- `safe_numeric_value(value, default=None)` 返回 float 或 `None`，NaN 与 Inf 归为 `None`。
-- `sanitize_dict` 递归处理 dict、list、tuple、ndarray 与 Series。
-- `np.bool_` 转 bool，`np.integer` 转 int，`np.floating` 转 float。
-- `pd.Timestamp` 转字符串，`pd.Timedelta` 转 `None`。
-- 未知类型先尝试 float 转换，失败返回 `None`。
-- 与 [[安全除法]] 共同维持不可计算即 null 的对外语义，规则见 [[JSON安全序列化]]。
+- 提供标量清洗与容器递归清洗两类入口，NaN、Inf 与转换失败的值统一归为 null。
+- 递归范围覆盖 dict、list、tuple、ndarray 与 Series，并识别 numpy 标量类型与 pandas 时间类型。
+- 时间戳输出字符串，时间差与未知类型无法转换时返回 null。
+- 与 [[安全除法]] 共同维持「不可计算即 null」的对外语义。

@@ -13,8 +13,7 @@
 
 ## 关键事实
 
-- 唯一对外函数为 `calculate_future_return(df, price_column="close", period=1)`。
-- 计算式为 `pct_change(period).shift(-period)`，即 t 日决策、t+N 日收益。
-- 索引为 MultiIndex 时按 `level=1`（资产）分组后 `transform`，保留原索引结构。
-- 单层索引直接对价格列计算。
+- 唯一对外函数按价格列与持有期计算未来收益。
+- 计算式为按持有期变动率后向前平移，即 t 日决策、t+N 日收益。
+- 面板数据按资产分组计算并保留原索引结构，单层索引直接对价格列计算。
 - 分组口径见 [[面板按资产分组计算]]，产出的收益序列供 [[横截面SpearmanIC]] 使用。

@@ -13,9 +13,8 @@
 
 ## 关键事实
 
-- 类定义在 `backend/services/factor_preprocessing_pipeline.py` 第 81 行，参数由 `PreprocessingConfig` dataclass 提供。
-- 默认配置：MAD 去极值、`winsorize_n_sigma=3.0`、Z-score 标准化、联合中性化开启、缺失值填 0、`min_samples=10`、横截面模式。
-- 对外方法：`process_single_factor`、`process_factor_dataframe`、`process_multi_stock_factors`，返回（处理后数据, 处理统计字典）。
-- 内部执行顺序：缺失值处理 → 无限值清理 → 去极值 → 中性化（默认 `_neutralize_joint` 联合回归）→ 标准化。
-- 样本数低于 `min_samples` 时原样返回并标记 `skipped`，同时记录 warning 日志。
-- 处理规则来源见 [[因子预处理四步顺序]]，下游消费者见 [[因子研究链路]]。
+- 行为由配置对象驱动，默认采用 MAD 去极值、Z-score 标准化与联合中性化。
+- 内部顺序固定：缺失值处理、无穷值清理、去极值、中性化、标准化。
+- 同时提供单因子、数据框与多股票三种粒度的入口，均返回处理结果与统计信息。
+- 样本不足最小要求时原样返回并标记跳过，同时记录告警。
+- 顺序与规则见 [[因子预处理四步顺序]]，下游消费见 [[因子研究链路]]。

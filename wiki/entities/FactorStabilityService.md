@@ -9,13 +9,12 @@
 
 ## 是什么
 
-`backend/services/factor_stability_service.py` 中的因子稳定性服务，从分布、时序、离散度与滚动四个角度评估因子是否稳定。
+`backend/services/factor_stability_service.py` 中的因子稳定性服务，从分布、时序、离散度与滚动四个角度判断因子表现是否可延续。
 
 ## 关键事实
 
-- 类定义在该文件第 29 行，常量 `MIN_STABILITY_DAYS`、`ANNUAL_TRADING_DAYS`、`SEMI_ANNUAL_WINDOW` 来自 `backend/constants.py`。
-- `calculate_distribution_stability(factor_series, window=ANNUAL_TRADING_DAYS)` 按年度窗口切段比较，长度不足 `window × 2` 时抛 `ValueError`。
-- `calculate_time_series_stability` 评估序列自身的时序稳定性。
-- `calculate_coefficient_of_variation` 用变异系数衡量离散程度。
-- `calculate_rolling_stability(windows=[20, 60, SEMI_ANNUAL_WINDOW, ANNUAL_TRADING_DAYS])` 多窗口滚动评估。
-- 窗口规则见 [[稳定性判定窗口]]，稳定性得分会进入 [[ComprehensiveScoringService]] 的评分。
+- 判定窗口常量来自 [[全局常量模块]]，年度窗口是默认主口径。
+- 分布稳定性按年度窗口切段比较，样本跨度不足下限时直接报错。
+- 另有独立入口分别衡量时序稳定性、变异系数与多窗口滚动稳定性。
+- 窗口取值规则见 [[稳定性判定窗口]]。
+- 稳定性得分会进入综合评分，见 [[ComprehensiveScoringService]]。

@@ -9,14 +9,12 @@
 
 ## 是什么
 
-`backend/services/dual_mining_service.py` 第 58 行的统一挖掘调度器，用一个入口在五种算法之间切换并转发股票池与进度回调。
+`backend/services/dual_mining_service.py` 中的统一挖掘调度器，用一个入口在多种算法之间切换并转发股票池与进度回调。
 
 ## 关键事实
 
-- `SUPPORTED_ALGORITHMS` 包含 `genetic`、`pysr`、`tree_prescreen`、`gflownet`、`deep_implicit` 五种模式。
-- 构造参数按算法分组保存为 `_gp_params`、`_pysr_params`、`_tree_prescreen_params`、`_gflownet_params`、`_deep_factor_params`。
-- `mine_factors()` 按 `algorithm` 分派；未知算法记录告警并回退到 `genetic`。
-- 每个结果附加 `source` 字段标识来源算法；可选依赖缺失时返回 `success=False`、`best_factors=[]` 与缺失说明。
-- `set_stock_pool()` 先缓存股票代码与起止日期，子服务创建后再通过 `_pass_stock_pool_to_service()` 传递。
-- 进度回调统一追加 `algorithm` 关键字；树模型预筛选中非数值的阶段名会被过滤，避免污染数值进度。
-- 子服务类型与共享能力来自 [[BaseMiningService]]，工厂注册与取用见 [[MiningAlgorithmRegistry]]。
+- 维护受支持算法名单与「算法 → 参数组」映射，构造时按算法分组保存参数。
+- 派发时按算法名路由，遇到未知算法记录告警并回退到默认算法。
+- 每个结果附带来源算法标识；可选依赖缺失时返回失败标记与缺失说明而不抛异常。
+- 股票池先暂存，待子服务创建后再传递；进度回调统一追加算法标识，并过滤非数值的阶段名。
+- 子服务共享能力来自 [[BaseMiningService]]，工厂注册与取用见 [[MiningAlgorithmRegistry]]。

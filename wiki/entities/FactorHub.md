@@ -9,13 +9,12 @@
 
 ## 是什么
 
-FactorHub（FactorFlow）是本地量化因子研究平台，覆盖因子管理、智能挖掘、多维分析、回测验证与组合优化。
+FactorHub（FactorFlow）是一个本地部署的量化因子研究平台，覆盖因子管理、智能挖掘、多维分析、回测验证与组合优化。
 
 ## 关键事实
 
-- 技术栈：后端 Python 3.12 + FastAPI + SQLAlchemy + SQLite；计算依赖 pandas、numpy、empyrical、scipy、vectorbt。
-- 前端位于 `frontend/react-antd`，使用 React 18 + Ant Design 5 + TypeScript + Vite。
-- 启动方式：`python start_api.py` 仅启动后端（默认 8000 端口）；`python start_all.py` 同时启动前后端并自动打开浏览器。
-- 后端按层划分：`backend/api/routers`、`backend/services`、`backend/models`、`backend/repositories`、`backend/utils`、`backend/strategies`。
-- 日志写入 `logs/factorhub.log`，单文件 10MB 轮转、保留 5 份备份。
-- 核心计算走统一入口：[[FactorPreprocessingPipeline]]、[[WeightOptimizer]]、[[安全除法]]。
+- 前后端分离：后端 Python 加 FastAPI、SQLAlchemy 与 SQLite，前端 React 加 Ant Design 与 TypeScript。
+- 计算栈以 pandas、numpy、scipy、empyrical、vectorbt 为主。
+- 后端按路由、服务、模型、仓储、工具、策略分层，依赖方向单向向下。
+- 提供仅启动后端与一键启动前后端两种脚本，日志落本地文件并按大小轮转。
+- 核心计算统一走公共入口，如 [[FactorPreprocessingPipeline]]，避免各服务各自实现。

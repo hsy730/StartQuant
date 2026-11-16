@@ -9,13 +9,12 @@
 
 ## 是什么
 
-`backend/services/factor_version_service.py` 中的因子版本服务，负责版本创建、历史查询、对比与回滚，模块底部导出全局实例 `factor_version_service`。
+`backend/services/factor_version_service.py` 中的因子版本服务，编排版本创建、历史查询、对比与回滚，模块底部导出全局实例 `factor_version_service`。
 
 ## 关键事实
 
-- 类定义在该文件第 12 行，通过 `FactorVersionRepository` 读写 `factor_versions` 表，通过 `FactorRepository` 读写 `factors` 表。
-- 对外方法：`create_version`、`rollback_to_version`、`get_version_history`、`get_current_version_info`、`delete_version`、`compare_versions`。
-- 版本号由 `_generate_version_code` 生成，规则为 `v{count // 10 + 1}.{count % 10}`。
-- 回滚流程先备份当前版本（变更原因标注"回滚前自动备份"），再覆盖 `factors` 表的 code 与 description，最后把目标版本设为 `is_current`。
-- `FactorVersionModel` 字段为 id、factor_id、version_code、code、description、change_reason、created_at、is_current。
+- 通过 `FactorVersionRepository` 读写版本表，通过 [[FactorRepository]] 读写因子主表。
+- 版本号由版本计数递增生成，以主版本加次版本的形式编码。
+- 回滚先自动备份当前版本，再覆盖因子代码与描述，最后切换当前标记。
+- 版本模型记录因子、版本号、代码、描述、变更原因、创建时间与当前标记。
 - 规则说明见 [[版本快照与回滚]]，因子定义来源见 [[FormulaCompilerService]]。

@@ -13,10 +13,8 @@
 
 ## 关键事实
 
-- 类定义在该文件第 20 行，缓存目录默认 `settings.AKSHARE_CACHE_DIR`，数据以 `{md5}.pkl` 落盘。
-- 元数据（键、TTL、访问统计、过期标记）存数据库，由 `CacheRepository` 读写，与磁盘数据分离。
-- 对外方法：`get`、`set`、`delete`、`exists`、`cleanup_expired`、`get_stats`、`clear_all`。
-- `set(cache_key, data, ttl=None)` 中 `ttl=None` 表示永不过期，单位秒；`get` 命中时更新访问统计，过期或文件损坏时返回 `default`。
-- 缓存文件损坏会自动删除文件与元数据，不向调用方抛异常。
-- 命中与未命中次数保存在实例内存字段 `_hits`、`_misses` 中，`get_stats` 汇总输出。
+- 数据以哈希命名的 pickle 文件落盘，元数据存数据库并由 [[CacheRepository]] 读写，两者分离。
+- TTL 为秒级概念，取空值表示永不过期，命中时刷新访问统计。
+- 过期或文件损坏一律按未命中处理，损坏时自动删除文件与元数据，不向调用方抛异常。
+- 命中与未命中计数保存在实例内存中，由统计方法汇总输出。
 - 设计规则见 [[缓存键与TTL失效]]，主要调用方为 [[DataService]]。

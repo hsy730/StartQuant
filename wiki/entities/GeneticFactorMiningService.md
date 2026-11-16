@@ -14,9 +14,7 @@
 ## 关键事实
 
 - 继承 [[BaseMiningService]]，服务名为「遗传规划」。
-- 默认 `population_size=50`、`n_generations=20`、`cx_prob=0.7`、`mut_prob=0.3`、`elite_size=5`。
-- 默认 `parsimony_coeff=0.001`、`diversity_penalty_coeff=0.1`、`max_tree_depth=17`、`max_base_factors=30`。
-- 工具集使用单点交叉 `cxOnePoint`、均匀变异 `mutUniform` 并挂深度限制装饰器，防止表达式膨胀。
-- 选择默认使用 `selTournament`（`tournsize=3`），可切换为 NSGA-II。
-- 每代保留精英个体，支持取消标志与进度回调。
+- 用单点交叉与均匀变异配合深度限制装饰器，抑制表达式膨胀。
+- 选择默认采用锦标赛，可切换为 NSGA-II；每代保留精英个体。
+- 支持简约度惩罚、多样性惩罚、树深与基础因子数量上限等搜索约束。
 - 与 [[PySRFactorMiningService]]、[[GFlowNetMiningService]] 共用基类的适应度路由与验证口径。

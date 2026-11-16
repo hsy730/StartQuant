@@ -9,17 +9,12 @@
 
 ## 是什么
 
-`backend/services/statistics_service.py` 第 40 行的高级统计分析服务，为因子有效性、稳定性、交互与拥挤度提供统计检验方法。
+`backend/services/statistics_service.py` 中的高级统计分析服务，为因子有效性、稳定性、交互与拥挤度提供统计检验方法。
 
 ## 关键事实
 
-- `t_test_ic(ic_series, confidence_level=0.95)` 对 IC 序列做单样本 t 检验，输出 t 值、p 值、是否显著、均值、标准差与置信区间。
-- 常数 IC 序列（标准差小于 1e-10）单独处理：均值为正时 t 值记为无穷、p 值为 0，均值为 0 时 p 值为 1，避免退化结果，与 [[零波动率边界处理]] 同一思路。
-- `test_monotonicity(quantile_returns, alternative="increasing")` 对各层均值做 Spearman 秩相关单向检验，p 值小于 0.05 视为单调。
-- `calculate_factor_decay(df, factor_name, max_periods=10)` 逐期计算 IC 得到衰减曲线；`calculate_ic_predictability(ic_series, lag=5)` 输出 IC 自相关序列与其绝对值均值。
-- `calculate_periodic_ic(..., period="M")` 按周期重采样求 IC；`calculate_rolling_ic_stability` 默认窗口为 20/60/120/252 日。
-- `calculate_market_regime_ic` 按给定市场环境分组求 IC；`analyze_factor_interactions` 用二阶多项式特征描述因子交互项。
-- `calculate_factor_crowding` 以 `1 / (1 + 滚动标准差)` 表示拥挤度，窗口默认 20；`calculate_turnover` 以信号差分绝对值均值定义换手率。
-- 分层收益统计委托 `calculate_risk_metrics` 计算年化收益与夏普，IC 计算委托 `calculate_ic`，除法统一走 [[安全除法]]，体现 [[单一真相源]]。
-- `calculate_factor_correlation_matrix` 对因子列做 Spearman 相关矩阵，与 [[FactorCorrelationService]] 的完整诊断相比只提供矩阵本身。
-- scipy 调用由 `_suppress_scipy_warnings` 上下文管理器局部抑制告警，不影响其他模块。
+- 覆盖面分四类：IC 显著性检验、分层收益单调性检验、IC 的时间维度分析（衰减、可预测性、分周期与滚动稳定性、市场环境分组）以及因子关系分析（交互、拥挤度、换手、相关矩阵）。
+- 退化输入（常数序列、样本不足）有单独处理，与 [[零波动率边界处理]] 同一思路，不产出无意义的无穷值。
+- 分层收益与 IC 的计算一律委托既有实现，除法统一走 [[安全除法]]，不重复定义口径，体现 [[单一真相源]]。
+- 相关性只产出矩阵本身，完整诊断由 [[FactorCorrelationService]] 承担。
+- scipy 告警在局部上下文内抑制，不外溢到其他模块。

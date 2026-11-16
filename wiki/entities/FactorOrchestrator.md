@@ -13,10 +13,8 @@
 
 ## 关键事实
 
-- 类定义在该文件第 78 行，构造参数为 `OrchestratorConfig`；`PipelineStatus` 枚举与 `PipelineStageResult` 定义在第 29、42 行。
-- `OrchestratorConfig` 默认开启阶段：未来函数检测、IC 分析、Alphalens、分组回测、Tear Sheet；`enable_shap_analysis=False` 默认关闭。
-- 失败与告警配置：`fail_fast_on_bias=True`、`ic_threshold=0.02`。
-- 输出控制：`include_raw_data=False`、`include_intermediate_results=True`。
-- 主要入口 `validate(expression, stock_codes, start_date, end_date)`，另有 `batch_validate` 批量执行。
-- 阶段实现为 `_stage_compute_factor`、`_stage_lookahead_detection`、`_stage_ic_analysis`、`_stage_alphalens_analysis`、`_stage_quantile_backtest`、`_stage_tear_sheet`、`_stage_shap_analysis`。
-- 结果含 `status`（PASSED / REJECTED / PARTIAL）、`report_markdown` 与结构化报告；流水线规则见 [[一键验证流水线]]。
+- 以配置对象描述流水线，各阶段可开关，默认启用偏差检测、IC、分组回测与报告类阶段。
+- 偏差检测默认失败即终止，IC 设有通过阈值。
+- 各阶段实现为独立步骤，结果汇总为状态、Markdown 报告与结构化数据三部分。
+- 状态区分通过、拒绝与部分通过三档。
+- 流水线设计见 [[一键验证流水线]]。

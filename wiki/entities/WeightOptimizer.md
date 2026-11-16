@@ -13,9 +13,8 @@
 
 ## 关键事实
 
-- 类定义在 `backend/services/weight_optimizer_service.py` 第 18 行，`METHODS` 支持 6 种方法：equal_weight、ic_weight、ir_weight、max_sharpe、min_variance、risk_parity。
-- 入口 `calculate_weights(factor_values, factor_names, method="equal_weight", returns=None, factor_data_dict=None)` 返回 `{"weights": {因子: 权重}, "method": 方法名}`。
-- 传入未知 method 时记录 warning 并回退到等权，不抛异常。
-- 入口对 `factor_values` 做防御性复制，不修改调用方传入的数据。
-- 传入 alphalens 格式的 `factor_data_dict` 时，IC/IR 加权委托 alphalens 计算横截面 IC，口径与 [[横截面SpearmanIC]] 一致。
-- 组合权重是 [[因子研究链路]] 的最后一环，前序环节见 [[FactorPreprocessingPipeline]]。
+- 支持等权、IC 加权、IR 加权、最大夏普、最小方差与风险平价六种方法。
+- 单一入口返回权重字典与方法名，入参数据做防御性复制，不修改调用方数据。
+- 传入未知方法时告警并回退等权，不抛异常。
+- 传入 alphalens 格式数据时委托其计算横截面 IC，口径与 [[横截面SpearmanIC]] 一致。
+- 位于 [[因子研究链路]] 末端，前序预处理环节见 [[FactorPreprocessingPipeline]]。

@@ -9,14 +9,11 @@
 
 ## 是什么
 
-`backend/repositories/factor_version_repository.py` 中的因子版本仓储类。
+`backend/repositories/factor_version_repository.py` 中的因子版本仓储类，负责 `factor_versions` 表的读写与单当前版本约束的维护。
 
 ## 关键事实
 
-- `create` 新建版本并置 `is_current=True`，创建前先把该因子其他版本全部置为非当前。
-- `get_by_factor_id` 按创建时间倒序返回该因子的全部版本。
-- `get_current_version` 以 `factor_id` 与 `is_current` 两个条件取当前版本。
-- `get_by_version_code` 按因子与版本号定位。
-- `set_current` 先调用内部方法清空旧标记，再置目标版本为当前。
-- `delete_by_factor_id` 批量删除该因子全部版本并返回行数，`get_version_count` 返回版本数量。
+- 以因子为主线，支持按因子、版本号与当前标记三种方式检索版本。
+- 新建版本前先清除该因子其他版本的当前标记。
+- 版本列表按创建时间倒序返回，并支持按因子批量删除与数量统计。
 - 单当前约束见 [[当前版本唯一性]]，回滚流程由 [[FactorVersionService]] 编排。

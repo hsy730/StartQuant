@@ -9,13 +9,12 @@
 
 ## 是什么
 
-`backend/repositories/factor_repository.py` 中的因子表数据访问类，封装查询、写入、删除与来源计数。
+`backend/repositories/factor_repository.py` 中的因子表仓储类，封装因子记录的查询、写入、删除与来源计数。
 
 ## 关键事实
 
-- 构造时接收一个 SQLAlchemy `Session`，不自行创建连接。
-- `get_all` 支持按 `source` 过滤与 `active_only` 只取启用记录，结果按分类、名称排序。
-- `get_by_name` 默认只查启用记录，传 `include_inactive=True` 才包含禁用记录。
-- `delete` 为硬删除；记录 `source` 为 `preset` 时抛出 `ValueError("预置因子不能删除")`。
-- `get_preset_count` 与 `get_user_count` 分别统计 `source` 为 `preset`/`user` 且 `is_active=1` 的数量。
-- 向上被 [[FactorService]] 与 [[AnalysisService]] 调用，会话来源见 [[数据库会话生命周期管理]]。
+- 构造时注入 SQLAlchemy 会话，不自建连接。
+- 查询支持按来源过滤与只看启用记录，结果按分类与名称排序。
+- 默认视角只含启用记录，需要时才显式包含已禁用记录。
+- 删除为硬删除，预置因子受保护不可删。
+- 向上被 [[FactorService]] 调用，会话来源见 [[数据库会话生命周期管理]]。

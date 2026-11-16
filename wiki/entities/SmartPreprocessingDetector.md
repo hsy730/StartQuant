@@ -9,13 +9,12 @@
 
 ## 是什么
 
-`backend/services/smart_preprocessing_detector.py` 中的智能预处理参数检测器，依据数据特征推荐预处理配置并给出置信度。
+`backend/services/smart_preprocessing_detector.py` 中的智能预处理参数检测器，依据数据特征推荐预处理配置并给出置信度与理由。
 
 ## 关键事实
 
-- 类定义在该文件第 66 行，数据特征由 `DataCharacteristics` 描述，推荐结果由 `PreprocessingRecommendation` 描述。
-- `analyze_data(...)` 计算股票数、日期数、总样本、板块、市值分布、因子偏度与峰度、行业数量与最小行业样本量、异常值比例、是否肥尾、波动率是否时变。
-- `recommend_config(...)` 输出 `config_dict`、`confidence`、`reasoning`、`data_characteristics`、`warnings`。
-- `_detect_market_board` 按股票代码识别板块，板块决定去极值 n_sigma 的取值范围。
-- `get_config_summary` 生成人类可读的配置摘要，供前端"智能模式"展示。
-- 设计原则见 [[智能默认与手动覆盖]]，推荐结果最终交给 [[FactorPreprocessingPipeline]] 执行。
+- 由两个数据描述对象构成：输入侧的数据特征快照与输出侧的推荐结果。
+- 流程分两步：先刻画数据规模、板块、市值分布、因子分布形态、行业集中度与异常值情况，再据此产出配置、置信度、理由与告警。
+- 板块由股票代码识别，板块类型决定去极值强度等参数的取值范围。
+- 另提供面向展示的配置摘要文本，供前端智能模式使用；推荐结果最终交给 [[FactorPreprocessingPipeline]] 执行。
+- 遵循 [[智能默认与手动覆盖]]，推荐只给默认值，不剥夺手动调整能力。

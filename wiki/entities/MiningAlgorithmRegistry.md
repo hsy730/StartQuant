@@ -9,13 +9,12 @@
 
 ## 是什么
 
-`backend/services/mining_algorithm_registry.py` 是因子挖掘算法的工厂注册表，按算法名创建对应的挖掘服务实例。
+`backend/services/mining_algorithm_registry.py` 中的挖掘算法工厂注册表，按算法名创建对应的挖掘服务实例。
 
 ## 关键事实
 
-- 核心接口为 `register_algorithm(name, factory)`、`create_algorithm(name, **kwargs)`、`get_registered_algorithms()`、`is_algorithm_registered(name)`。
-- 内置注册 5 个算法名：genetic、pysr、tree_prescreen、gflownet、deep_implicit，模块加载时由 `_register_builtin_algorithms()` 自动完成。
-- genetic 对应遗传算法服务，pysr 对应符号回归服务；tree_prescreen、gflownet、deep_implicit 共用一个工厂，最终实例化为 `DualMiningService`。
-- 三个统一调度算法通过 `downstream_algorithm` 指定下游挖掘算法，默认 genetic。
-- 请求未知算法名时记录 warning 并返回 `None`，不抛异常。
-- 新增算法只需实现工厂函数并在此文件注册，调用方无需改动。
+- 对外提供注册、创建、列举与存在性查询四类操作。
+- 模块加载时自动注册内置算法，覆盖遗传规划、符号回归与统一调度算法。
+- 统一调度算法通过下游算法参数复用同一工厂，默认下游为遗传规划。
+- 请求未知算法名时记录告警并返回空值，不抛异常。
+- 新增算法只需提供工厂函数并在此注册，调用方无需改动。

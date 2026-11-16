@@ -9,13 +9,12 @@
 
 ## 是什么
 
-`backend/services/formula_compiler_service.py` 中的公式编译器，把可视化公式树或表达式转换成可执行、可校验的因子代码。
+`backend/services/formula_compiler_service.py` 中的公式编译器，把可视化公式树或文本表达式转换成可执行、可校验的因子代码。
 
 ## 关键事实
 
-- 类定义在该文件第 12 行，核心入口 `compile_formula(formula_tree)` 递归调用 `_compile_node` 生成代码字符串。
-- `AVAILABLE_ELEMENTS` 定义四类因子元素：price（6 个行情字段）、indicators（9 个技术指标）、operators（9 个运算符）、statistics（7 个统计函数）。
-- `parse_expression(expression)` 用 `ast` 把文本表达式解析成公式树，`simplify_formula` 做结果化简，`get_available_elements` 供前端渲染元素库。
-- `validate_formula(formula_code)` 返回 `(是否通过, 错误消息)`，同时支持表达式与 `def` 函数两种形式。
-- 除法节点编译为 `safe_series_divide`，`zscore` 节点编译为 20 日滚动标准化。
+- 编译入口递归遍历公式树节点，产出代码字符串。
+- 内置元素库分行情字段、技术指标、运算符与统计函数四类，供前端渲染元素选择。
+- 另提供表达式解析成公式树、结果化简与代码校验三类辅助能力。
+- 除法统一编译为安全除法，标准化节点编译为滚动时序标准化。
 - 安全约束见 [[公式白名单沙箱]]，时序窗口约束见 [[时序标准化避免前视]]。

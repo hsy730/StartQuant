@@ -13,9 +13,8 @@
 
 ## 关键事实
 
-- 类定义在该文件第 81 行，构造参数含 `commission_rate=0.0003`、`slippage=0.0`、`slippage_mode="custom"`。
-- 主要入口：`single_factor_backtest`、`multi_factor_backtest`、`cross_sectional_backtest`、`chunked_single_factor_backtest`、`run_vectorbt_backtest_from_weights`。
-- 长区间回测先由 `_auto_chunk_config` 按频率与总 bar 数自动分块，再由 `_stitch_equity_curves` 拼接净值曲线。
-- 智能滑点由 `set_smart_slippage` 调用滑点检测器完成，返回结果含 recommended / conservative / aggressive 三档与 confidence、reasoning。
-- 指标计算包含 `calculate_metrics`、VaR/CVaR（`_calculate_var_cvar`）与交易明细格式化。
-- 成本参数的量纲约束见 [[量纲一致性]]，回测结论通常再由 [[ComprehensiveScoringService]] 汇总评分。
+- 构造参数集中管理手续费、滑点与滑点模式，成本参数量纲必须与收益口径一致，见 [[量纲一致性]]。
+- 对外按因子个数与截面方式区分多个回测入口，也支持直接由权重序列驱动回测。
+- 长区间回测先自动分块再拼接净值曲线，避免一次性加载全量数据。
+- 智能滑点能力委托滑点检测器，返回结果含分档建议、置信度与理由。
+- 指标计算含常规绩效指标与 VaR/CVaR；回测结论通常再由 [[ComprehensiveScoringService]] 汇总评分。
