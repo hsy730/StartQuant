@@ -735,7 +735,6 @@ class GeneticFactorMiningService(BaseMiningService):
                 raw_fitness = self._evaluate_single_stock_ic(individual)[0]
             else:
                 raw_fitness = self._evaluate_single_stock_ic(individual)[0]
-            logger.info(f"  [诊断] _evaluate_factor_multi: 截面IC评估返回 raw_fitness={raw_fitness:.4f}")
         except Exception as e:
             logger.warning(f"NSGA2适应度评估失败: {e}")
             return (0.0, 1.0)
@@ -768,7 +767,6 @@ class GeneticFactorMiningService(BaseMiningService):
         else:
             dup_penalty = 0.3 + (n_dups - 2) * 0.4
         complexity = compute_weighted_complexity(individual) + dup_penalty
-        logger.info(f"  [诊断] _evaluate_factor_multi: 返回 ic_fitness={ic_fitness:.4f}, complexity={complexity:.2f}")
         return (ic_fitness, complexity)
 
     def _penalty_fitness(self) -> tuple:
