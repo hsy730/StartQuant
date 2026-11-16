@@ -2,6 +2,8 @@
 
 > 设计哲学：**Smart Default + Optional Override**。系统智能推荐最优参数，高级用户可完全自定义。
 
+> 知识库：对话中产生可复用知识时，必须按 [wiki_schema.md](./wiki_schema.md) 的「维护触发」更新 `wiki/`，包括对应页面、`index.md` 与 `log.md`；无可复用知识则返回 `NO_CHANGE`。
+
 ---
 
 ## 量化数据预处理顺序
