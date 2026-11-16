@@ -773,3 +773,10 @@
 
 ## 2026-11-16 | 更新 | GeneticFactorMiningService
 - 可复现性：评估股票抽样前对候选池排序，同种子跨进程 n_eval 与 fitness 历史逐位一致；实测 ts_corr 硬跳过的性能前提不成立但去掉无质量收益（3 种子噪声内、循环 +11%），保留原逻辑
+
+## 2026-11-16 | 更新 | GeneticFactorMiningService
+- 语义核查：NSGA-II 下 HallOfFame 为字典序（IC 优先、复杂度仅次序项），无偏序错误；新增每代多样性观测日志，10/20 代实测唯一结构 50/50 无坍塌、无膨胀，故不加收敛早停
+
+## 2026-11-16 | 更新 | GeneticFactorMiningService
+- 修复截面 IC 口径：逐股 dropna 使 10 股池 484 天只剩 7 天（|IC| 虚高 0.25、样本外≈0）；改保留完整索引 + 按池规模放宽 min_stocks 后 200+ 天、|IC| 0.08~0.12
+- 修复交付表达式不一致：calculator 的 log/sqrt 非正→NaN、ts_corr_* 改 Spearman，树↔表达式 rho 由 0.84~0.97 升至多数 1.0；diversity_penalty_coeff 0.1→0.02（5 种子均值 +10%）

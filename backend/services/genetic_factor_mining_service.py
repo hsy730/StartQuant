@@ -143,7 +143,11 @@ class GeneticFactorMiningService(BaseMiningService):
         # ---- Phase 2: Parsimony pressure ----
         parsimony_coeff: float = 0.001,
         # ---- Phase 3 & 4: Diversity + cache ----
-        diversity_penalty_coeff: float = 0.1,
+        # 系数需与 IC 量纲匹配：修复逐股 dropna 后真实 |IC| 约 0.08~0.12，
+        # 原 0.1 意味着"与 1 个 HOF 成员相似即扣掉全部 IC"（HOF 最多 10 个，
+        # 可累计到 0.8+），实测 5 个种子上 0.1 → 0.02 使最优适应度均值
+        # 0.1035 → 0.1085、每代均值 0.0267 → 0.0293。
+        diversity_penalty_coeff: float = 0.02,
         max_cache_size: int = DEFAULT_MAX_CACHE_SIZE,
         # ---- Phase 6: Cross-validation ----
         cv_folds: int = 0,
@@ -1097,7 +1101,15 @@ class GeneticFactorMiningService(BaseMiningService):
                     continue
                 fv_clean = fv.dropna()
                 if len(fv_clean) >= 10:
-                    factor_values_dict[code] = fv_clean
+                    # 必须保留完整索引（含 NaN），不能只存 dropna() 后的序列。
+                    # 逐股 dropna() 会让每只股票的索引只剩"自身有效日"，而
+                    # _fast_cross_sectional_ic 对所有股票索引求交集，等价于要求
+                    # "当天所有股票都有效"。含 sqrt/log 的因子 NaN 极多，实测
+                    # 10 股池 484 天里只剩 7 天能算 IC，适应度退化为 7 天噪声
+                    # （|IC| 虚高到 0.25），HOF 全是对这 7 天的过拟合。
+                    # 逐日有效样本数应交由 _fast_cross_sectional_ic 的 valid
+                    # 掩码 + min_stocks 处理。
+                    factor_values_dict[code] = fv
                 else:
                     n_skipped += 1
 
@@ -1350,7 +1362,13 @@ class GeneticFactorMiningService(BaseMiningService):
         # 对每行的因子值和收益率分别排名，然后计算 Pearson 相关
         daily_ics: List[float] = []
         n_stocks = factor_matrix.shape[1]
-        min_stocks = min(10, n_stocks)
+        # 截面样本下限：大池保持 10 只；小池按 60% 比例放宽。
+        # 原实现 min(10, n_stocks) 在 10 只股票池上等于"要求 10 只全部有效"，
+        # 含 sqrt/log 的因子在很多股票上为 NaN，实测 484 天里只剩 7 天能算 IC，
+        # 适应度变成 7 天噪声（|IC| 虚高到 0.25），HOF 全是对这 7 天的过拟合。
+        min_stocks = min(
+            n_stocks, max(5, min(10, int(np.ceil(0.6 * n_stocks))))
+        )
 
         for i in range(len(all_dates)):
             f_row = factor_matrix[i]
@@ -2250,6 +2268,17 @@ class GeneticFactorMiningService(BaseMiningService):
                 logger.info(
                     f"Generation {gen}/{n_generations} - Best: {best_fit:.4f}, "
                     f"Avg: {avg_fit:.4f}, Elite: {self.elite_size}"
+                )
+                # 多样性观测（只读，不影响进化）：唯一结构数 / 树规模 / HOF 取舍
+                _uniq = len({zobrist_hash(ind) for ind in population})
+                _sizes = [len(ind) for ind in population]
+                _hof_sizes = [len(ind) for ind in halloffame]
+                _hof_ic = [float(ind.fitness.values[0]) for ind in halloffame]
+                logger.info(
+                    f"  多样性: 唯一结构 {_uniq}/{len(population)}, "
+                    f"树节点 mean={float(np.mean(_sizes)):.1f} max={max(_sizes)}, "
+                    f"HOF节点 mean={float(np.mean(_hof_sizes)):.1f} "
+                    f"max={max(_hof_sizes)}, HOF_IC {min(_hof_ic):.4f}~{max(_hof_ic):.4f}"
                 )
                 _gen_elapsed = time.time() - _gen_start
                 logger.info(f"=== Gen {gen}/{n_generations} 完成, 耗时 {_gen_elapsed:.1f}s ===")

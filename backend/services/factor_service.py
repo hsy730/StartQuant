@@ -531,9 +531,40 @@ class FactorCalculator:
             return s.rolling(window=n, min_periods=1).std()
 
         def ts_corr(x, y, n=5):
+            """滚动窗口相关（Spearman）。
+
+            与遗传规划的 ts_corr_N 基元、factor_primitives.ts_corr 保持同一
+            实现。历史实现为 pandas 的 Pearson（rolling().corr），导致挖掘出的
+            GP 树保存为表达式后计算出另一个因子（实测单算子 rho≈0.96~0.98，
+            嵌套后降至 0.84），复现失败。
+            """
+            from backend.services.factor_primitives import ts_corr_np
+
             xs = x if isinstance(x, pd.Series) else pd.Series(x)
             ys = y if isinstance(y, pd.Series) else pd.Series(y)
-            return xs.rolling(window=n, min_periods=2).corr(ys)
+            xs, ys = xs.align(ys, join="outer")
+            out = ts_corr_np(
+                xs.to_numpy(dtype=float), ys.to_numpy(dtype=float), int(n)
+            )
+            return pd.Series(out, index=xs.index)
+
+        def safe_log(x):
+            """对数：非正值映射为 NaN。
+
+            遗传规划用 safe_log_np（非正→NaN），而 np.log(0) 为 -inf，
+            -inf 在横截面排序中会成为极值，使保存的表达式与原树 IC 不一致。
+            """
+            if isinstance(x, pd.Series):
+                return np.log(x.where(x > 0))
+            arr = np.asarray(x, dtype=float)
+            return np.log(np.where(arr > 0, arr, np.nan))
+
+        def safe_sqrt(x):
+            """开方：负值映射为 NaN（与 safe_sqrt_np 一致）。"""
+            if isinstance(x, pd.Series):
+                return np.sqrt(x.where(x >= 0))
+            arr = np.asarray(x, dtype=float)
+            return np.sqrt(np.where(arr >= 0, arr, np.nan))
 
         def neg(x):
             return -x
@@ -620,8 +651,8 @@ class FactorCalculator:
             "div": div,
             "rank": rank,
             "abs": abs,
-            "log": np.log,
-            "sqrt": np.sqrt,
+            "log": safe_log,
+            "sqrt": safe_sqrt,
         }
 
     def calculate(self, df: pd.DataFrame, factor_code: str) -> pd.Series:
