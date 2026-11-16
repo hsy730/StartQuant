@@ -22,7 +22,7 @@ import operator
 import os
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError, wait
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from typing import List, Dict, Optional
 from collections import Counter, OrderedDict
 import pandas as pd
@@ -95,6 +95,18 @@ def _ensure_creator_types():
         )
     except RuntimeError:
         logger.debug("IndividualMulti已注册，跳过")
+
+
+def _same_tree_structure(a, b) -> bool:
+    """HallOfFame 去重谓词：Zobrist 哈希相同视为同一个体。
+
+    实测结论（见 test_hof）：DEAP 默认的 ``operator.eq`` 已能去除
+    结构完全相同的树（pset 内原语节点是共享对象，逐元素 == 成立），
+    但对交换律同构无能为力（``add(a, b)`` 与 ``add(b, a)`` 判不等）。
+    改用 Zobrist 哈希可额外合并 ``add``/``mul``/``max``/``min``
+    的交换律重复，避免 HOF 名额被等价因子占满。
+    """
+    return zobrist_hash(a) == zobrist_hash(b)
 
 
 class GeneticFactorMiningService(BaseMiningService):
@@ -192,6 +204,9 @@ class GeneticFactorMiningService(BaseMiningService):
         # Phase 4: factor value cache (keyed by Zobrist hash)
         self._factor_cache: OrderedDict = OrderedDict()
         self._cache_lock = threading.Lock()
+        # IC 面板缓存：(股票集合) → (all_dates, return_matrix, stock_codes)
+        # 股票样本整轮固定，收益矩阵与日期交集与个体无关，可复用
+        self._panel_cache: dict = {}
 
         # 终端使用统计：var_name → 累计出现次数（每代种群快照累加）
         # 用于诊断因子池冗余：从未进入 HOF 的终端即为"死终端"
@@ -227,6 +242,8 @@ class GeneticFactorMiningService(BaseMiningService):
         """
         # 重建股票池时需要重新抽样（_refresh_stock_sample 默认只在样本为空时抽样）
         self._sampled_stock_codes = []
+        # 收益矩阵与股票池绑定，换池后必须失效
+        self._panel_cache = {}
         super().set_stock_pool(stock_codes, start_date, end_date)
         self.stock_pool_data = {}
         logger.info(f"[{self._service_name}] stock_pool_data 已释放")
@@ -1057,73 +1074,39 @@ class GeneticFactorMiningService(BaseMiningService):
                 logger.warning(f"编译表达式失败: {e}")
                 return (0.0,)
 
-            # 并行评估所有股票（numpy 运算释放 GIL，线程可真正并行）
-            # 内存几乎不增加：所有线程共享只读的 stock_pool_base_factor_values
-            # 注意：外层进化循环可能同时评估多个个体（4线程），
-            # 所以内层线程数需要保守，避免线程爆炸（4外×4内=16线程）
-            max_workers = min(len(eval_codes), max(1, (os.cpu_count() or 4) // 2), 4)
-
-            def _eval_one_stock(code: str):
-                """单股票评估闭包（供线程池调用）"""
-                _stock_t0 = time.time()
+            # 串行逐股评估：实测 20 股 × 250 行时，4 线程因 GIL 竞争 + 每个体
+            # 新建线程池，反而比串行慢约 1.9x（1.69ms → 3.21ms）。
+            # 卡死保护由外层「逐个体 30s 超时」包装器承担。
+            _t_parallel_start = time.time()
+            n_skipped = 0
+            for code in eval_codes:
                 base_factors = self.stock_pool_base_factor_values.get(code)
                 if base_factors is None:
-                    return code, None, 0.0
-                fv = self._eval_compiled_on_stock(
-                    compiled_func, tree_key, code, base_factors
-                )
-                _stock_elapsed = time.time() - _stock_t0
-                if _stock_elapsed > 0.5:
-                    logger.debug("    股票 %s 评估耗时=%.2fs", code, _stock_elapsed)
+                    n_skipped += 1
+                    continue
+                try:
+                    fv = self._eval_compiled_on_stock(
+                        compiled_func, tree_key, code, base_factors
+                    )
+                except Exception as e:
+                    logger.debug("评估股票 %s 因子失败: %s", code, e)
+                    n_skipped += 1
+                    continue
                 if fv is None:
-                    return code, None, _stock_elapsed
+                    n_skipped += 1
+                    continue
                 fv_clean = fv.dropna()
                 if len(fv_clean) >= 10:
-                    return code, fv_clean, _stock_elapsed
-                return code, None, _stock_elapsed
+                    factor_values_dict[code] = fv_clean
+                else:
+                    n_skipped += 1
 
-            _t_parallel_start = time.time()
-            logger.debug(
-                "并行评估开始: %s只股票, max_workers=%s", len(eval_codes), max_workers
-            )
-            # ⚠️ 不使用 with ThreadPoolExecutor，因为退出时 shutdown(wait=True)
-            # 会阻塞等待卡死的线程（compiled_func 卡在 C 扩展中无法中断）。
-            # 改用显式 executor + wait(timeout) 实现全局超时。
-            executor = ThreadPoolExecutor(max_workers=max_workers)
-            futures = {
-                executor.submit(_eval_one_stock, code): code
-                for code in eval_codes
-            }
-            # 全局超时 15 秒（从30s缩短）：嵌套 ts 算子可能导致每只股票数秒，
-            # 15s 足够大多数正常个体完成，同时避免慢个体拖累整体
-            _PARALLEL_TIMEOUT = 15.0
-            done, not_done = wait(futures, timeout=_PARALLEL_TIMEOUT)
-            n_done = len(done)
-            n_timeout = len(not_done)
-            for future in done:
-                try:
-                    code, fv, stock_elapsed = future.result(timeout=0.1)
-                    if fv is not None:
-                        factor_values_dict[code] = fv
-                except Exception as e:
-                    code = futures[future]
-                    logger.debug(f"评估股票 {code} 因子失败: {e}")
-            if not_done:
-                for future in not_done:
-                    code = futures[future]
-                    logger.warning(
-                        f"股票 {code} 因子评估全局超时（>{_PARALLEL_TIMEOUT}s），跳过"
-                    )
-                # 不等待卡死的线程，避免阻塞主流程
-                executor.shutdown(wait=False)
-            else:
-                executor.shutdown(wait=True)
             _t_parallel = time.time() - _t_parallel_start
             logger.debug(
-                "  并行评估完成: %s/%s只成功, %s只超时, 总耗时=%.2fs",
-                n_done,
+                "逐股评估完成: %s/%s 只有效, %s 只跳过, 总耗时=%.3fs",
+                len(factor_values_dict),
                 len(eval_codes),
-                n_timeout,
+                n_skipped,
                 _t_parallel,
             )
             logger.debug(f"  [诊断] 开始构建缓存数据... factor_values_dict={len(factor_values_dict)}项")
@@ -1300,45 +1283,68 @@ class GeneticFactorMiningService(BaseMiningService):
         """
         _t_ic_start = time.time()
         logger.debug(f"  [诊断] _fast_cross_sectional_ic 开始, 输入 {len(factor_values_dict)} 只股票")
-        # ---- 构建统一日期索引 ----
-        # 收集所有股票的日期索引，取交集
-        all_dates = None
-        for stock_code, fv in factor_values_dict.items():
-            ret = self.stock_pool_return_values.get(stock_code)
-            if ret is None:
-                continue
-            dates = fv.index.intersection(ret.index)
-            if all_dates is None:
-                all_dates = dates
-            else:
-                all_dates = all_dates.intersection(dates)
+        # ---- 日期交集 + 收益矩阵（按股票集合缓存收益侧）----
+        # 收益矩阵与日期候选集与个体无关，可跨个体复用；
+        # 因子侧日期仍参与交集，保持与旧实现完全一致的样本口径。
+        panel_key = tuple(sorted(factor_values_dict.keys()))
+        panel = self._panel_cache.get(panel_key)
+        if panel is None:
+            stock_codes = []
+            ret_map = {}
+            for stock_code in panel_key:
+                ret = self.stock_pool_return_values.get(stock_code)
+                if ret is None:
+                    continue
+                ret_map[stock_code] = ret
+                stock_codes.append(stock_code)
 
-        if all_dates is None or len(all_dates) < 5:
-            _t_ic = time.time() - _t_ic_start
-            logger.debug(f"  [诊断] _fast_cross_sectional_ic 提前退出: all_dates={None if all_dates is None else len(all_dates)} (<5), 耗时={_t_ic:.3f}s")
+            if len(stock_codes) < 5:
+                self._panel_cache[panel_key] = (None, [])
+                logger.debug(
+                    "  [诊断] 面板不可用: 有效股票数=%s (<5)", len(stock_codes)
+                )
+                return (0.0, 0.0)
+
+            ret_df = pd.DataFrame(ret_map, columns=stock_codes)
+            panel = (ret_df, stock_codes)
+            self._panel_cache[panel_key] = panel
+            logger.debug(
+                "面板缓存构建: %s 股 × %s 天", len(stock_codes), len(ret_df.index)
+            )
+
+        ret_df, stock_codes = panel
+        if ret_df is None:
             return (0.0, 0.0)
 
-        # ---- 构建 numpy 矩阵：shape (n_dates, n_stocks) ----
-        stock_codes = []
+        # 与旧实现一致：逐股 factor.index ∩ return.index 后再取交集
+        all_dates = ret_df.index
+        for stock_code in stock_codes:
+            all_dates = all_dates.intersection(factor_values_dict[stock_code].index)
+
+        if len(all_dates) < 5:
+            logger.debug(
+                "  [诊断] _fast_cross_sectional_ic 提前退出: all_dates=%s (<5)",
+                len(all_dates),
+            )
+            return (0.0, 0.0)
+
+        return_matrix = ret_df.reindex(all_dates).values
+
+        # ---- 构建因子矩阵：shape (n_dates, n_stocks) ----
         factor_cols = []
-        return_cols = []
-        for stock_code, fv in factor_values_dict.items():
-            ret = self.stock_pool_return_values.get(stock_code)
-            if ret is None:
-                continue
-            # 对齐到统一日期索引
-            fv_aligned = fv.reindex(all_dates)
-            ret_aligned = ret.reindex(all_dates)
-            factor_cols.append(fv_aligned.values)
-            return_cols.append(ret_aligned.values)
-            stock_codes.append(stock_code)
-
-        if len(stock_codes) < 5:
-            return (0.0, 0.0)
+        for stock_code in stock_codes:
+            fv = factor_values_dict[stock_code]
+            if fv.index.equals(all_dates):
+                factor_cols.append(fv.values)
+            else:
+                factor_cols.append(fv.reindex(all_dates).values)
 
         factor_matrix = np.column_stack(factor_cols)  # (n_dates, n_stocks)
-        return_matrix = np.column_stack(return_cols)   # (n_dates, n_stocks)
-        logger.debug(f"  [诊断] numpy矩阵构建完成: shape={factor_matrix.shape}, n_dates={len(all_dates)}")
+        logger.debug(
+            "  [诊断] numpy矩阵构建完成: shape=%s, n_dates=%s",
+            factor_matrix.shape,
+            len(all_dates),
+        )
 
         # ---- 逐行（逐日期）计算 Spearman IC ----
         # 对每行的因子值和收益率分别排名，然后计算 Pearson 相关
@@ -1612,26 +1618,17 @@ class GeneticFactorMiningService(BaseMiningService):
                 f"初始种群去重: 替换{_n_init_deduped}个重复子树"
             )
 
-        # Evaluate initial population — 串行评估（避免嵌套 ThreadPoolExecutor 死锁）
-        # _evaluate_cross_sectional_ic 内部已有 ThreadPoolExecutor 并行评估股票，
-        # 外层再并行会导致嵌套线程池死锁（外层4线程 × 内层4线程 = 16线程争用）。
-        # 串行评估每个个体，内层并行已足够高效。
-        #
-        # ⚠️ 单个体超时保护：某些 GP 树（深度嵌套 ts_corr/rolling）可能导致
-        # compile_tree 或执行阶段卡死数分钟。用线程池 + wait(timeout) 实现
-        # 超时跳过，避免单个个体阻塞整个初始评估。
+        # Evaluate initial population — 串行评估
+        # _evaluate_cross_sectional_ic 内部已改为串行逐股（线程池实测负收益），
+        # 不存在嵌套线程池问题，逐个体串行评估即可。
+        # 慢个体由下方 ts_corr 计数预检过滤；初始评估不做单个体超时包装。
         best_init_fitness = 0.0
         _init_eval_start = time.time()
-        _SINGLE_INDIVIDUAL_TIMEOUT = 30.0  # 单个体最大允许耗时（秒），从60s缩短
         for i, ind in enumerate(population):
             _ind_t0 = time.time()
 
-            # ⚠️ 不再使用外层 ThreadPoolExecutor 包装！
-            # 原因：_evaluate_cross_sectional_ic 内部已有 ThreadPoolExecutor 并行评估股票，
-            # 嵌套 ThreadPoolExecutor 会导致 GIL 死锁/线程饥饿：
-            #   - 内层卡死线程 shutdown(wait=False) 后仍持有 GIL
-            #   - 外层新线程无法获得 CPU 时间片 → 完全阻塞
-            # 改为直接调用 + 树复杂度预检（从根源避免慢个体）
+            # 单个体评估直接调用：内部逐股评估已串行，外层再包线程池只增加调度开销。
+            # 慢个体由树复杂度预检（ts_corr 计数）与代际总预算共同控制。
             _should_skip = False
             # 预检1: 嵌套时序算子过多 → 直接跳过（ts_corr/ts_std 嵌套 >2层 极慢）
             _ts_op_count = sum(1 for node in ind if hasattr(node, 'name') and
@@ -1702,7 +1699,7 @@ class GeneticFactorMiningService(BaseMiningService):
 
         # Hall-of-Fame (stored as instance attr so evaluation can access it)
         hof_size = max(self.elite_size * 2, 10)
-        halloffame = tools.HallOfFame(hof_size)
+        halloffame = tools.HallOfFame(hof_size, similar=_same_tree_structure)
         halloffame.update(population)
         self._halloffame = halloffame  # expose for diversity penalty
 
@@ -2156,7 +2153,7 @@ class GeneticFactorMiningService(BaseMiningService):
                         )
                         break
 
-                    # 同初始评估：不使用外层 ThreadPoolExecutor，避免 GIL 死锁
+                    # 同初始评估：逐个体串行评估（内部逐股已串行）
                     _ts_op_count = sum(1 for node in ind if hasattr(node, 'name') and
                                       node.name.startswith('ts_') and 'corr' in node.name)
                     if _ts_op_count >= 2:
@@ -2320,7 +2317,7 @@ class GeneticFactorMiningService(BaseMiningService):
         # Update Z-Score normalization stats from initial population
         self._update_zscore_stats()
 
-        halloffame = tools.HallOfFame(5)
+        halloffame = tools.HallOfFame(5, similar=_same_tree_structure)
         halloffame.update(population)
         self._halloffame = halloffame
 

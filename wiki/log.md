@@ -764,3 +764,9 @@
 
 ## 2026-11-16 | 更新 | GeneticFactorMiningService
 - 第一批 P1：热路径日志降级 DEBUG；SymPy 去重改为 use_sympy_dedup 开关（默认关）；缓存跨代保留；删除未使用的 _pset_series
+
+## 2026-11-16 | 更新 | GeneticFactorMiningService
+- 第二批 P1：逐股评估串行化（线程池实测负收益）；IC 面板按股票集合缓存；HOF 按 Zobrist 去重；清理初始评估的死变量
+
+## 2026-11-16 | 更新 | GeneticFactorMiningService
+- 真实数据实测校准：IC 面板缓存与基线三组用例完全等价（修正预热期样本口径）；HOF 默认 operator.eq 已能去重结构重复，Zobrist 仅增量合并交换律同构；列顺序排序消除基线顺序敏感；真实 A/B 单次评估 −17%
