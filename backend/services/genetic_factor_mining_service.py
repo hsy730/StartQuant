@@ -24,7 +24,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError, wait
 from typing import List, Dict, Optional
-from collections import OrderedDict
+from collections import Counter, OrderedDict
 import pandas as pd
 import numpy as np
 import random
@@ -190,6 +190,10 @@ class GeneticFactorMiningService(BaseMiningService):
         self._factor_cache: OrderedDict = OrderedDict()
         self._cache_lock = threading.Lock()
 
+        # 终端使用统计：var_name → 累计出现次数（每代种群快照累加）
+        # 用于诊断因子池冗余：从未进入 HOF 的终端即为"死终端"
+        self._terminal_use_counts: Counter = Counter()
+
         # P1: SymPy canonical-form → Zobrist hash mapping
         # 用于检测代数等价表达式（如 add(a, sub(b, a)) ≡ b）
         # 仅在 zobrist 未命中时查询，避免每次评估都做 SymPy 简化
@@ -260,6 +264,91 @@ class GeneticFactorMiningService(BaseMiningService):
         except Exception as e:
             logger.warning(f"构建tradable_mask失败: {e}")
             return None
+
+    # ------------------------------------------------------------------
+    # 终端使用统计（诊断因子池冗余）
+    # ------------------------------------------------------------------
+
+    def _record_terminal_usage(self, population):
+        """累计当代种群中每个终端（基础因子）的出现次数。
+
+        每代种群快照累加，用于衡量"探索预算"被各终端分摊的情况。
+        """
+        for ind in population:
+            for node in ind:
+                if isinstance(node, gp.Terminal):
+                    value = str(node.value)
+                    if value.startswith("factor_"):
+                        self._terminal_use_counts[value] += 1
+
+    def _terminal_usage_report(self, halloffame) -> Dict:
+        """统计每个终端进入 HOF 的次数，并输出诊断日志。
+
+        判定规则：
+        - ``hof_hits == 0`` → 死终端（整轮进化从未产出 top 个体），可从因子池删除
+        - 死终端占比 ≥ 50% → 判定因子池冗余，输出裁剪建议
+        """
+        hof_counts: Counter = Counter()
+        for ind in halloffame:
+            for node in ind:
+                if isinstance(node, gp.Terminal):
+                    value = str(node.value)
+                    if value.startswith("factor_"):
+                        hof_counts[value] += 1
+
+        total_use = sum(self._terminal_use_counts.values())
+        hof_total = sum(hof_counts.values())
+
+        rows = []
+        for var_name, info in self.base_factor_values.items():
+            use = self._terminal_use_counts.get(var_name, 0)
+            hof = hof_counts.get(var_name, 0)
+            rows.append(
+                {
+                    "var": var_name,
+                    "code": info.get("code"),
+                    "population_hits": use,
+                    "population_share": round(use / total_use, 4) if total_use else 0.0,
+                    "hof_hits": hof,
+                    "hof_share": round(hof / hof_total, 4) if hof_total else 0.0,
+                    "dead": hof == 0,
+                }
+            )
+
+        rows.sort(key=lambda r: (r["hof_hits"], r["population_hits"]), reverse=True)
+        n_total = len(rows)
+        n_dead = sum(1 for r in rows if r["dead"])
+        dead_ratio = n_dead / n_total if n_total else 0.0
+
+        logger.info(
+            f"[终端使用统计] 基础因子={n_total}, HOF终端出现次数={hof_total}, "
+            f"死终端={n_dead} ({dead_ratio:.0%})"
+        )
+        for r in rows[: min(10, n_total)]:
+            logger.info(
+                f"  {r['var']} | HOF {r['hof_hits']}次 ({r['hof_share']:.0%}) | "
+                f"种群 {r['population_hits']}次 ({r['population_share']:.0%}) | "
+                f"{r['code']}"
+            )
+        if n_dead:
+            dead_desc = [f"{r['var']}({r['code']})" for r in rows if r["dead"]]
+            logger.info(
+                f"  从未进入HOF的终端 {n_dead} 个: "
+                + ", ".join(dead_desc[:15])
+                + (" ..." if n_dead > 15 else "")
+            )
+        if n_total and dead_ratio >= 0.5:
+            logger.warning(
+                f"超过一半基础因子（{n_dead}/{n_total}）从未进入HOF，因子池存在冗余；"
+                f"有效终端仅 {n_total - n_dead} 个，建议裁剪冗余因子并补充新的候选因子"
+            )
+
+        return {
+            "n_base_factors": n_total,
+            "n_dead_in_hof": n_dead,
+            "dead_ratio": round(dead_ratio, 4),
+            "terminals": rows,
+        }
 
     # ------------------------------------------------------------------
     # GP setup
@@ -1244,7 +1333,7 @@ class GeneticFactorMiningService(BaseMiningService):
         # 对每行的因子值和收益率分别排名，然后计算 Pearson 相关
         daily_ics: List[float] = []
         n_stocks = factor_matrix.shape[1]
-        min_stocks = min(5, n_stocks)
+        min_stocks = min(10, n_stocks)
 
         for i in range(len(all_dates)):
             f_row = factor_matrix[i]
@@ -1275,16 +1364,21 @@ class GeneticFactorMiningService(BaseMiningService):
             return (0.0, 0.0)
 
         ic_arr = np.array(daily_ics)
-        mean_ic = float(np.mean(np.abs(ic_arr)))  # 取绝对值的均值（与 _extract_best_ic_ir 一致）
-        std_ic = float(np.std(ic_arr))
+        # 有符号均值才是真实 IC；|IC| 不是无偏估计量（纯噪声下 mean(|IC|) ≈ sqrt(2/(π(N-1)))）
+        ic_mean = float(np.mean(ic_arr))
+        ic_std = float(np.std(ic_arr))
+        # 适应度方向无关（GP 可用 neg 翻转因子方向），但不改变 IC 的定义
+        mean_ic = abs(ic_mean)
 
-        # IR = IC_mean / IC_std（规则7.10：std≈0时返回None）
-        best_ir = safe_ir(mean_ic, std_ic, default=None)
-        if best_ir is None:
-            best_ir = 0.0
+        # IR 分子分母必须来自同一序列（规则7.10：std≈0时返回None）
+        best_ir = safe_ir(ic_mean, ic_std, default=None)
+        best_ir = abs(best_ir) if best_ir is not None else 0.0
 
         _t_ic = time.time() - _t_ic_start
-        logger.info(f"  [诊断] _fast_cross_sectional_ic 完成: mean_ic={mean_ic:.4f}, ir={best_ir:.4f}, 耗时={_t_ic:.3f}s")
+        logger.info(
+            f"  [诊断] _fast_cross_sectional_ic 完成: ic={ic_mean:.4f}, "
+            f"|ic|={mean_ic:.4f}, ir={best_ir:.4f}, 耗时={_t_ic:.3f}s"
+        )
         return (mean_ic, best_ir)
 
     def _evaluate_single_stock_ic(self, tree) -> tuple:
@@ -1581,6 +1675,9 @@ class GeneticFactorMiningService(BaseMiningService):
         _init_eval_total = time.time() - _init_eval_start
         logger.info(f"初始评估完成: 共{len(population)}个体, 总耗时={_init_eval_total:.1f}s")
 
+        # 终端使用统计：记录初始种群的终端分布
+        self._record_terminal_usage(population)
+
         # Update Z-Score normalization stats from initial population
         self._update_zscore_stats()
 
@@ -1604,6 +1701,9 @@ class GeneticFactorMiningService(BaseMiningService):
             diversity_protection=True,
             progress=True,
         )
+
+        # 终端使用统计：进化结束后统计各基础因子进入 HOF 的次数（诊断死终端）
+        terminal_usage = self._terminal_usage_report(halloffame)
 
         # Build result
         # 取消标记：_evolutionary_loop 检测到 _cancel_flag 后 break，
@@ -1786,6 +1886,7 @@ class GeneticFactorMiningService(BaseMiningService):
             "best_factors": best_factors,
             "logbook": logbook,
             "final_population_size": len(population),
+            "terminal_usage": terminal_usage,
         }
 
         # Release memory held by DEAP population and Hall-of-Fame objects
@@ -2072,6 +2173,9 @@ class GeneticFactorMiningService(BaseMiningService):
 
             # ---- Replace population: offspring + elites ----
             population[:] = offspring + elites
+
+            # 终端使用统计：累计当代种群的终端分布
+            self._record_terminal_usage(population)
 
             # Update Z-Score normalization stats from this generation's evaluations
             self._update_zscore_stats()

@@ -35,7 +35,12 @@ sys.modules.setdefault("backend.services.data_service", _mock.MagicMock(data_ser
 sys.modules.setdefault("backend.services.cache_service", _mock.MagicMock())
 sys.modules.setdefault("backend.services.factor_service", _mock.MagicMock())
 
-from backend.services.base_mining_service import BaseMiningService  # noqa: E402
+from backend.services.base_mining_service import (  # noqa: E402
+    BaseMiningService,
+    _get_cached_factor,
+    _make_data_fingerprint,
+    clear_base_factor_cache,
+)
 
 # ============================================================================
 # 测试辅助
@@ -868,6 +873,122 @@ class TestIntegrationScenarios:
 
         svc = CustomService(base_factors=[], data=create_mock_data())
         assert svc._service_name == "CustomAlgo"
+
+
+class TestBaseFactorDedupAndCache:
+    """基础因子去重选池与因子缓存测试"""
+
+    @staticmethod
+    def _make_series(n_codes=8, seed=7):
+        """构造互不相关的模拟因子序列"""
+        rng = np.random.RandomState(seed)
+        dates = pd.date_range("2023-01-01", periods=200, freq="B")
+        return {f"A{i}": pd.Series(rng.randn(200), index=dates) for i in range(n_codes)}
+
+    @staticmethod
+    def _calc_from(series_map):
+        """按因子代码返回对应序列的计算器（calculate(df, code)）"""
+        calc = MagicMock()
+        calc.calculate.side_effect = lambda df, code=None, *a, **k: series_map[code].copy()
+        return calc
+
+    def setup_method(self):
+        clear_base_factor_cache()
+
+    def test_init_dedup_respects_max_base_factors(self):
+        """初始化去重后数量不应超过 max_base_factors"""
+        series = self._make_series(8)
+        svc = create_service(
+            base_factors=list(series),
+            factor_calculator=self._calc_from(series),
+            max_base_factors=5,
+        )
+        assert len(svc.base_factor_codes) == 5
+        assert len(svc.base_factor_values) == 5
+
+    def test_refine_preserves_factor_count(self):
+        """截面二次选池必须保持因子数量不变（否则 pset 参数不匹配）"""
+        series = self._make_series(10)
+        svc = create_service(
+            base_factors=list(series),
+            factor_calculator=self._calc_from(series),
+            max_base_factors=5,
+        )
+        n_before = len(svc.base_factor_codes)
+        svc.stock_pool_data = {f"60000{i}": create_mock_data(seed=i) for i in range(6)}
+        svc._refine_base_factor_subset()
+        assert len(svc.base_factor_codes) == n_before
+        assert len(svc.base_factor_values) == n_before
+        assert sorted(svc.base_factor_values) == [f"factor_{i}" for i in range(n_before)]
+
+    def test_refine_drops_correlated_factors(self):
+        """截面高相关的因子应被替换掉"""
+        series = self._make_series(8)
+        # A5 与 A0 完全同源，必被剔除
+        series["A5"] = series["A0"].copy()
+        svc = create_service(
+            base_factors=list(series),
+            factor_calculator=self._calc_from(series),
+            max_base_factors=5,
+        )
+        svc.stock_pool_data = {f"60000{i}": create_mock_data(seed=i) for i in range(6)}
+        svc._refine_base_factor_subset()
+        kept = svc.base_factor_codes
+        assert len(kept) == 5
+        # 同源的两个因子不应同时保留（除非被数量下限强制回补）
+        assert not ("A0" in kept and "A5" in kept)
+
+    def test_refine_backfills_to_same_count(self):
+        """去重过狠时按 |IC| 回补，数量仍与 pset 终端数一致"""
+        series = self._make_series(8)
+        for i in range(1, 8):
+            series[f"A{i}"] = series["A0"].copy()
+        svc = create_service(
+            base_factors=list(series),
+            factor_calculator=self._calc_from(series),
+            max_base_factors=5,
+        )
+        n_before = len(svc.base_factor_codes)
+        svc.stock_pool_data = {f"60000{i}": create_mock_data(seed=i) for i in range(6)}
+        svc._refine_base_factor_subset()
+        assert len(svc.base_factor_codes) == n_before == len(svc.base_factor_values)
+
+    def test_refine_rolls_back_when_values_missing(self):
+        """因子值重建失败时应整体回退，不提交半成品状态"""
+        series = self._make_series(8)
+        svc = create_service(
+            base_factors=list(series),
+            factor_calculator=self._calc_from(series),
+            max_base_factors=5,
+        )
+        codes_before = list(svc.base_factor_codes)
+        svc.stock_pool_data = {f"60000{i}": create_mock_data(seed=i) for i in range(6)}
+        with patch("backend.services.base_mining_service._get_cached_factor", return_value=None):
+            svc._refine_base_factor_subset()
+        assert svc.base_factor_codes == codes_before
+        assert len(svc.base_factor_values) == len(codes_before)
+
+    def test_cache_distinguishes_different_stocks(self):
+        """不同股票的相同因子不得共用缓存（截面 IC 依赖此行为）"""
+        calc = MagicMock()
+        calc.calculate.side_effect = lambda df, code=None, *a, **k: df["close"].copy()
+        d1 = create_mock_data(seed=1)
+        d2 = create_mock_data(seed=2)
+        v1 = _get_cached_factor(d1, "close", calc)
+        v2 = _get_cached_factor(d2, "close", calc)
+        assert v1 is not None and v2 is not None
+        assert not v1.equals(v2)
+
+    def test_fingerprint_same_for_identical_data(self):
+        """相同数据应得到相同指纹（保证缓存命中）"""
+        d1 = create_mock_data(seed=3)
+        assert _make_data_fingerprint(d1) == _make_data_fingerprint(d1.copy())
+
+    def test_fingerprint_differs_across_stocks(self):
+        """相同区间不同股票应得到不同指纹"""
+        d1 = create_mock_data(seed=4)
+        d2 = create_mock_data(seed=5)
+        assert _make_data_fingerprint(d1) != _make_data_fingerprint(d2)
 
 
 if __name__ == "__main__":
