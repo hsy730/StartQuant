@@ -23,6 +23,8 @@ from enum import Enum
 from datetime import datetime
 import pandas as pd
 
+from backend.core.settings import settings
+
 logger = logging.getLogger(__name__)
 
 
@@ -306,7 +308,9 @@ class FactorOrchestrator:
 
         if parallel and len(expressions) > 1:
             # 并行执行
-            with ThreadPoolExecutor(max_workers=min(len(expressions), 4)) as executor:
+            with ThreadPoolExecutor(
+                max_workers=min(len(expressions), settings.VALIDATION_MAX_WORKERS)
+            ) as executor:
                 future_to_expr = {
                     executor.submit(
                         self.validate,

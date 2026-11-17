@@ -426,7 +426,9 @@ class AnalysisService:
 
         analyzable = [n for n in factor_names if n not in skip_factors]
         if analyzable:
-            with ThreadPoolExecutor(max_workers=min(len(analyzable), 4)) as executor:
+            with ThreadPoolExecutor(
+                max_workers=min(len(analyzable), settings.ANALYSIS_MAX_WORKERS)
+            ) as executor:
                 futures = {
                     executor.submit(_analyze_one, name): name for name in analyzable
                 }

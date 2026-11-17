@@ -23,6 +23,7 @@ from backend.core.market_board import MarketBoard, detect_market_board
 from backend.core.settings import settings
 from backend.services.cache_service import cache_service
 from backend.services.data_preprocessing_service import data_preprocessing_service
+from backend.utils.akshare_lock import AKSHARE_LOCK as _AKSHARE_LOCK
 
 logger = logging.getLogger(__name__)
 
@@ -123,29 +124,11 @@ class DataService:
         try:
             if stock_code.endswith(".SH"):
                 symbol = "sh" + stock_code.replace(".SH", "")
-                df = ak.stock_zh_a_daily(
-                    symbol=symbol,
-                    start_date=start_date.replace("-", ""),
-                    end_date=end_date.replace("-", ""),
-                    adjust="qfq",  # 前复权
-                )
             elif stock_code.endswith(".SZ"):
                 symbol = "sz" + stock_code.replace(".SZ", "")
-                df = ak.stock_zh_a_daily(
-                    symbol=symbol,
-                    start_date=start_date.replace("-", ""),
-                    end_date=end_date.replace("-", ""),
-                    adjust="qfq",
-                )
             elif stock_code.endswith(".BJ"):
                 # 北交所股票
                 symbol = "bj" + stock_code.replace(".BJ", "")
-                df = ak.stock_zh_a_daily(
-                    symbol=symbol,
-                    start_date=start_date.replace("-", ""),
-                    end_date=end_date.replace("-", ""),
-                    adjust="qfq",
-                )
             else:
                 # 尝试自动识别
                 # 添加市场前缀
@@ -158,11 +141,13 @@ class DataService:
                 else:
                     symbol = stock_code
 
+            # py_mini_racer 不支持并发，akshare 调用必须串行
+            with _AKSHARE_LOCK:
                 df = ak.stock_zh_a_daily(
                     symbol=symbol,
                     start_date=start_date.replace("-", ""),
                     end_date=end_date.replace("-", ""),
-                    adjust="qfq",
+                    adjust="qfq",  # 前复权
                 )
 
             # 标准化列名
@@ -214,13 +199,14 @@ class DataService:
 
         try:
             pure_code = stock_code.replace(".SH", "").replace(".SZ", "")
-            df = ak.stock_zh_a_hist_min_em(
-                symbol=pure_code,
-                period=period,
-                start_date=start_date,
-                end_date=end_date,
-                adjust="qfq",
-            )
+            with _AKSHARE_LOCK:
+                df = ak.stock_zh_a_hist_min_em(
+                    symbol=pure_code,
+                    period=period,
+                    start_date=start_date,
+                    end_date=end_date,
+                    adjust="qfq",
+                )
 
             # 标准化列名
             df = self._standardize_columns(df)
@@ -285,22 +271,29 @@ class DataService:
         start_date: str,
         end_date: str,
         use_cache: bool = True,
-        max_workers: int = 15,
+        max_workers: Optional[int] = None,
     ) -> dict[str, pd.DataFrame]:
         """
-        获取多个股票的数据（并行）
+        获取多个股票的数据（缓存读取并行，akshare 网络请求串行）
+
+        akshare 底层的 py_mini_racer 不是线程安全的，并发取数会崩进程，
+        因此本方法虽然用线程池并发，但真正的网络调用由 `_AKSHARE_LOCK`
+        串行化；冷缓存等价于逐只拉取，缓存命中仍可并行解码。
 
         Args:
             stock_codes: 股票代码列表
             start_date: 开始日期
             end_date: 结束日期
             use_cache: 是否使用缓存
-            max_workers: 并行线程数
+            max_workers: 并行线程数，None 时取 settings.DATA_FETCH_MAX_WORKERS
 
         Returns:
             字典，key为股票代码，value为对应的DataFrame
         """
         from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        if max_workers is None:
+            max_workers = settings.DATA_FETCH_MAX_WORKERS
 
         result = {}
 
@@ -588,7 +581,8 @@ class DataService:
 
         industry_map: Dict[str, str] = {}
         try:
-            industry_df = ak.stock_board_industry_name_em()
+            with _AKSHARE_LOCK:
+                industry_df = ak.stock_board_industry_name_em()
             industry_names = industry_df["板块名称"].tolist()
         except Exception as e:
             raise ValueError(f"获取申万行业列表失败: {e}")
@@ -596,7 +590,8 @@ class DataService:
         def _fetch_one_industry(name):
             local_map = {}
             try:
-                cons_df = ak.stock_board_industry_cons_em(symbol=name)
+                with _AKSHARE_LOCK:
+                    cons_df = ak.stock_board_industry_cons_em(symbol=name)
                 if "代码" in cons_df.columns:
                     for _, row in cons_df.iterrows():
                         code = str(row["代码"]).strip()
@@ -605,7 +600,9 @@ class DataService:
                 logger.debug(f"获取行业 {name} 成分股失败: {e}")
             return local_map
 
-        with ThreadPoolExecutor(max_workers=10) as executor:
+        with ThreadPoolExecutor(
+            max_workers=settings.INDUSTRY_FETCH_MAX_WORKERS
+        ) as executor:
             futures = {
                 executor.submit(_fetch_one_industry, name): name
                 for name in industry_names
@@ -636,7 +633,8 @@ class DataService:
         total_shares = None
         try:
             pure_code = stock_code.replace(".SH", "").replace(".SZ", "")
-            info_df = ak.stock_individual_info_em(symbol=pure_code)
+            with _AKSHARE_LOCK:
+                info_df = ak.stock_individual_info_em(symbol=pure_code)
             for _, row in info_df.iterrows():
                 if "总股本" in str(row.iloc[0]):
                     total_shares = float(row.iloc[1])

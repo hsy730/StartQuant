@@ -15,6 +15,7 @@ from backend.services.risk_metrics import (
     calculate_volatility,
     calculate_relative_metrics,
 )
+from backend.utils.akshare_lock import AKSHARE_LOCK
 from backend.utils.safe_math import safe_divide
 from backend.utils.ic_calculator import calculate_cross_sectional_ic_from_panel
 from backend.constants import ANNUAL_TRADING_DAYS, RISK_FREE_RATE
@@ -44,7 +45,8 @@ class FactorAttributionService:
         """
         try:
             # 获取上证指数数据 (sh000001 是上证指数的代码)
-            benchmark_df = ak.stock_zh_index_daily(symbol="sh000001")
+            with AKSHARE_LOCK:
+                benchmark_df = ak.stock_zh_index_daily(symbol="sh000001")
 
             # 转换日期格式
             benchmark_df["date"] = pd.to_datetime(benchmark_df["date"])

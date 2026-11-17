@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeou
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from backend.services.data_service import data_service
+from backend.utils.akshare_lock import AKSHARE_LOCK
 from backend.utils.serialization import sanitize_dict
 
 logger = logging.getLogger(__name__)
@@ -15,14 +16,15 @@ AKSHARE_TIMEOUT = 30  # akshare API调用超时时间（秒）
 
 
 def _call_akshare_with_timeout(func, *args, **kwargs):
-    """带超时的akshare API调用"""
-    with ThreadPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(func, *args, **kwargs)
-        try:
-            return future.result(timeout=AKSHARE_TIMEOUT)
-        except FuturesTimeoutError:
-            logger.warning(f"akshare API调用超时: {func.__name__}")
-            return None
+    """带超时的akshare API调用（网络调用全局串行，见 akshare_lock）"""
+    with AKSHARE_LOCK:
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(func, *args, **kwargs)
+            try:
+                return future.result(timeout=AKSHARE_TIMEOUT)
+            except FuturesTimeoutError:
+                logger.warning(f"akshare API调用超时: {func.__name__}")
+                return None
 
 
 router = APIRouter()

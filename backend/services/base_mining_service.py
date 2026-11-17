@@ -24,6 +24,7 @@ from scipy.stats import spearmanr
 
 logger = logging.getLogger(__name__)
 
+from backend.core.settings import settings  # noqa: E402
 from backend.services.data_service import data_service  # noqa: E402
 from backend.utils.safe_math import safe_divide, safe_ir  # noqa: E402
 
@@ -237,7 +238,11 @@ class BaseMiningService(ABC):
             logger.info(f"[{self._service_name}] 无基础因子，跳过预计算")
             return
 
-        max_workers = min(n_factors, os.cpu_count() or 4)
+        # 线程上限可由 settings.MINING_PRECOMPUTE_MAX_WORKERS 覆盖（0=按 CPU 核数）
+        cap = settings.MINING_PRECOMPUTE_MAX_WORKERS
+        if cap <= 0:
+            cap = os.cpu_count() or 4
+        max_workers = max(1, min(n_factors, cap))
 
         def _compute_one(idx_and_code):
             i, factor_code = idx_and_code
@@ -533,7 +538,11 @@ class BaseMiningService(ABC):
 
         # 每只股票的因子计算独立，并行处理
         # 线程数基于股票数（而非因子数），因为每只股票的计算是独立的
-        factor_workers = min(n_stocks, os.cpu_count() or 4, 8)
+        # 上限可由 settings.MINING_STOCK_POOL_MAX_WORKERS 覆盖（0=min(CPU, 8)）
+        cap = settings.MINING_STOCK_POOL_MAX_WORKERS
+        if cap <= 0:
+            cap = min(os.cpu_count() or 4, 8)
+        factor_workers = max(1, min(n_stocks, cap))
 
         if n_stocks == 0:
             logger.info(f"[{self._service_name}] 无股票数据，跳过股票池预计算")

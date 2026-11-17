@@ -28,7 +28,7 @@ from collections import Counter, OrderedDict
 import pandas as pd
 import numpy as np
 import random
-from scipy.stats import spearmanr
+from scipy.stats import rankdata, spearmanr
 
 logger = logging.getLogger(__name__)
 
@@ -108,6 +108,35 @@ def _same_tree_structure(a, b) -> bool:
     的交换律重复，避免 HOF 名额被等价因子占满。
     """
     return zobrist_hash(a) == zobrist_hash(b)
+
+
+def _spearman_ic(x, y) -> float:
+    """秩相关（并列取平均秩），与 scipy.stats.spearmanr 数值等价。
+
+    ``spearmanr`` 单次调用约 0.4ms（参数校验 + 结果对象构造），CV 惩罚要在
+    每只股票 × 每个 fold 上调用，30 次就是 ~14ms，比 IC 本身还贵。
+    scipy 的 ``rankdata`` 对小数组也有 ~130µs 固定开销，因此这里用
+    ``np.unique`` 直接算平均秩（~20µs）。
+    """
+    if len(x) < 3:
+        return np.nan
+    fx = _rank_average(np.asarray(x, dtype=float))
+    fy = _rank_average(np.asarray(y, dtype=float))
+    fx -= fx.mean()
+    fy -= fy.mean()
+    den = np.sqrt((fx * fx).sum() * (fy * fy).sum())
+    if den < 1e-12:
+        return np.nan
+    return float((fx * fy).sum() / den)
+
+
+def _rank_average(values: np.ndarray) -> np.ndarray:
+    """平均秩（1 基），并列值取组内均值，等价于 rankdata 的默认方法。"""
+    _, inverse = np.unique(values, return_inverse=True)
+    counts = np.bincount(inverse)
+    ends = np.cumsum(counts)
+    group_rank = (ends - counts + 1 + ends) / 2.0
+    return group_rank[inverse]
 
 
 class _FactorValueEquivalence:
@@ -1366,6 +1395,125 @@ class GeneticFactorMiningService(BaseMiningService):
         """
         return -1.0 if self.ic_lcb_sigma > 0 else 0.0
 
+    def _build_ic_matrices(
+        self, factor_values_dict: Dict[str, pd.Series]
+    ) -> Optional[tuple]:
+        """把逐股票因子值对齐成 (日期, 股票) 矩阵，供 IC 与 CV 共用。
+
+        收益侧（ret_df / return_matrix）与日期对齐结果只跟股票集合有关，
+        与个体无关，因此按 ``panel_key`` 缓存；因子侧逐股 ``Index.equals``
+        校验后才能复用缓存的日期交集，否则退回逐股求交集（极少发生）。
+
+        Returns:
+            (all_dates, factor_matrix, return_matrix, stock_codes) 或 None
+        """
+        panel_key = tuple(sorted(factor_values_dict.keys()))
+        panel = self._panel_cache.get(panel_key)
+        if panel is None and panel_key not in self._panel_cache:
+            stock_codes = [
+                code for code in panel_key
+                if self.stock_pool_return_values.get(code) is not None
+            ]
+            if len(stock_codes) < 5:
+                self._panel_cache[panel_key] = False
+                return None
+            ret_df = pd.DataFrame(
+                {code: self.stock_pool_return_values[code] for code in stock_codes},
+                columns=stock_codes,
+            )
+            panel = {"ret_df": ret_df, "codes": stock_codes, "uniform": None}
+            self._panel_cache[panel_key] = panel
+        if panel is False:
+            return None
+
+        ret_df = panel["ret_df"]
+        stock_codes = panel["codes"]
+        first_index = factor_values_dict[stock_codes[0]].index
+
+        # 所有股票的因子序列索引一致时（同一交易日历），日期交集只需算一次
+        uniform = all(
+            factor_values_dict[code].index.equals(first_index)
+            for code in stock_codes
+        )
+        all_dates = None
+        if uniform:
+            cached = panel["uniform"]
+            if cached is not None and cached[0].equals(first_index):
+                all_dates = cached[1]
+            else:
+                all_dates = ret_df.index.intersection(first_index)
+                panel["uniform"] = (first_index, all_dates)
+        else:
+            all_dates = ret_df.index
+            for code in stock_codes:
+                all_dates = all_dates.intersection(factor_values_dict[code].index)
+
+        if len(all_dates) < 5:
+            return None
+
+        return_matrix = ret_df.reindex(all_dates).values
+        factor_cols = []
+        for code in stock_codes:
+            fv = factor_values_dict[code]
+            if fv.index.equals(all_dates):
+                factor_cols.append(fv.values)
+            else:
+                factor_cols.append(fv.reindex(all_dates).values)
+        factor_matrix = np.column_stack(factor_cols)
+        return all_dates, factor_matrix, return_matrix, stock_codes
+
+    def _cv_penalty(self, factor_values_dict: Dict[str, pd.Series]) -> float:
+        """交叉验证过拟合惩罚的 numpy 实现（语义与基类一致）。
+
+        基类版本逐股做 ``Index.intersection`` + ``reindex`` + ``spearmanr``，
+        单只股票约 1.4ms，cv_folds=3 时每次评估多耗 ~14ms（比 IC 本身还贵）。
+        这里复用 ``_build_ic_matrices`` 的矩阵，只保留必要的 spearmanr。
+        股票超过 10 只时的随机采样与基类保持同一 ``random.sample`` 调用，
+        避免改变进化过程的随机数消耗顺序。
+        """
+        if self.cv_folds < 2:
+            return 0.0
+
+        built = self._build_ic_matrices(factor_values_dict)
+        if built is None:
+            return 0.0
+        _, factor_matrix, return_matrix, _stock_codes = built
+        if factor_matrix.shape[1] < 5:
+            return 0.0
+
+        items = list(range(factor_matrix.shape[1]))
+        if len(items) > 10:
+            import random
+
+            items = random.sample(items, 10)
+
+        fold_ics: List[float] = []
+        for j in items:
+            f_arr = factor_matrix[:, j]
+            r_arr = return_matrix[:, j]
+            valid = ~(np.isnan(f_arr) | np.isnan(r_arr))
+            f_valid = f_arr[valid]
+            n = len(f_valid)
+            if n < self.cv_folds * 20:
+                continue
+            r_valid = r_arr[valid]
+            fold_size = n // self.cv_folds
+            for k in range(self.cv_folds):
+                start = k * fold_size
+                end = start + fold_size if k < self.cv_folds - 1 else n
+                if end - start < 10:
+                    continue
+                ic = _spearman_ic(f_valid[start:end], r_valid[start:end])
+                if not np.isnan(ic):
+                    fold_ics.append(abs(ic))
+
+        if len(fold_ics) < self.cv_folds:
+            return 0.0
+        max_ic = max(fold_ics)
+        if max_ic < 1e-10:
+            return 1.0
+        return max(0.0, min(1.0 - min(fold_ics) / max_ic, 1.0))
+
     def _fast_cross_sectional_ic(
         self, factor_values_dict: Dict[str, pd.Series]
     ) -> tuple:
@@ -1403,73 +1551,12 @@ class GeneticFactorMiningService(BaseMiningService):
             (best_ic, best_ir) — 与 _extract_best_ic_ir 返回格式一致
         """
         _t_ic_start = time.time()
-        logger.debug(f"  [诊断] _fast_cross_sectional_ic 开始, 输入 {len(factor_values_dict)} 只股票")
-        # ---- 日期交集 + 收益矩阵（按股票集合缓存收益侧）----
-        # 收益矩阵与日期候选集与个体无关，可跨个体复用；
-        # 因子侧日期仍参与交集，保持与旧实现完全一致的样本口径。
-        panel_key = tuple(sorted(factor_values_dict.keys()))
-        panel = self._panel_cache.get(panel_key)
-        if panel is None:
-            stock_codes = []
-            ret_map = {}
-            for stock_code in panel_key:
-                ret = self.stock_pool_return_values.get(stock_code)
-                if ret is None:
-                    continue
-                ret_map[stock_code] = ret
-                stock_codes.append(stock_code)
-
-            if len(stock_codes) < 5:
-                self._panel_cache[panel_key] = (None, [])
-                logger.debug(
-                    "  [诊断] 面板不可用: 有效股票数=%s (<5)", len(stock_codes)
-                )
-                return (self._no_ic_fitness(), 0.0)
-
-            ret_df = pd.DataFrame(ret_map, columns=stock_codes)
-            panel = (ret_df, stock_codes)
-            self._panel_cache[panel_key] = panel
-            logger.debug(
-                "面板缓存构建: %s 股 × %s 天", len(stock_codes), len(ret_df.index)
-            )
-
-        ret_df, stock_codes = panel
-        if ret_df is None:
+        built = self._build_ic_matrices(factor_values_dict)
+        if built is None:
+            logger.debug("  [诊断] 面板不可用（有效股票/日期不足），判为不可评估")
             return (self._no_ic_fitness(), 0.0)
+        all_dates, factor_matrix, return_matrix, _stock_codes = built
 
-        # 与旧实现一致：逐股 factor.index ∩ return.index 后再取交集
-        all_dates = ret_df.index
-        for stock_code in stock_codes:
-            all_dates = all_dates.intersection(factor_values_dict[stock_code].index)
-
-        if len(all_dates) < 5:
-            logger.debug(
-                "  [诊断] _fast_cross_sectional_ic 提前退出: all_dates=%s (<5)",
-                len(all_dates),
-            )
-            return (self._no_ic_fitness(), 0.0)
-
-        return_matrix = ret_df.reindex(all_dates).values
-
-        # ---- 构建因子矩阵：shape (n_dates, n_stocks) ----
-        factor_cols = []
-        for stock_code in stock_codes:
-            fv = factor_values_dict[stock_code]
-            if fv.index.equals(all_dates):
-                factor_cols.append(fv.values)
-            else:
-                factor_cols.append(fv.reindex(all_dates).values)
-
-        factor_matrix = np.column_stack(factor_cols)  # (n_dates, n_stocks)
-        logger.debug(
-            "  [诊断] numpy矩阵构建完成: shape=%s, n_dates=%s",
-            factor_matrix.shape,
-            len(all_dates),
-        )
-
-        # ---- 逐行（逐日期）计算 Spearman IC ----
-        # 对每行的因子值和收益率分别排名，然后计算 Pearson 相关
-        daily_ics: List[float] = []
         n_stocks = factor_matrix.shape[1]
         # 截面样本下限：大池保持 10 只；小池按 60% 比例放宽。
         # 原实现 min(10, n_stocks) 在 10 只股票池上等于"要求 10 只全部有效"，
@@ -1479,28 +1566,33 @@ class GeneticFactorMiningService(BaseMiningService):
             n_stocks, max(5, min(10, int(np.ceil(0.6 * n_stocks))))
         )
 
-        for i in range(len(all_dates)):
-            f_row = factor_matrix[i]
-            r_row = return_matrix[i]
-            valid = ~np.isnan(f_row) & ~np.isnan(r_row)
-            n_valid = valid.sum()
-            if n_valid < min_stocks:
-                continue
-            f_valid = f_row[valid]
-            r_valid = r_row[valid]
-            # 排名（argsort of argsort = rank）
-            f_rank = np.argsort(np.argsort(f_valid)).astype(float)
-            r_rank = np.argsort(np.argsort(r_valid)).astype(float)
-            # Pearson 相关（对排名序列 = Spearman 相关）
-            f_centered = f_rank - f_rank.mean()
-            r_centered = r_rank - r_rank.mean()
-            denom = np.sqrt((f_centered ** 2).sum() * (r_centered ** 2).sum())
-            if denom < 1e-10:
-                continue
-            ic = (f_centered * r_centered).sum() / denom
-            daily_ics.append(ic)
+        # ---- 向量化逐日横截面 IC：按行排名后逐行 Pearson ----
+        # 与逐日 Python 循环等价，但把 ~484 次 argsort 合并为一次二维 rankdata。
+        # 并列值取平均秩（与 scipy.spearmanr 一致）；旧循环的
+        # argsort-of-argsort 对并列值按排序稳定性任意定序，差异只是并列行的噪声。
+        valid = np.isfinite(factor_matrix) & np.isfinite(return_matrix)
+        n_valid = valid.sum(axis=1)
+        f_rank = rankdata(
+            np.where(valid, factor_matrix, np.nan), axis=1, nan_policy="omit"
+        )
+        r_rank = rankdata(
+            np.where(valid, return_matrix, np.nan), axis=1, nan_policy="omit"
+        )
+        count = np.maximum(n_valid, 1).astype(float)
+        f_mean = np.where(valid, f_rank, 0.0).sum(axis=1) / count
+        r_mean = np.where(valid, r_rank, 0.0).sum(axis=1) / count
+        f_centered = np.where(valid, f_rank - f_mean[:, None], 0.0)
+        r_centered = np.where(valid, r_rank - r_mean[:, None], 0.0)
+        denom = np.sqrt(
+            (f_centered ** 2).sum(axis=1) * (r_centered ** 2).sum(axis=1)
+        )
+        keep = (n_valid >= min_stocks) & (denom > 1e-10)
+        daily_ics = (f_centered * r_centered).sum(axis=1)[keep] / denom[keep]
 
-        logger.debug(f"  [诊断] Spearman IC循环完成: {len(daily_ics)}/{len(all_dates)} 有效日期")
+        logger.debug(
+            "  [诊断] 横截面 IC: %s/%s 有效日期, 耗时=%.3fs",
+            len(daily_ics), len(all_dates), time.time() - _t_ic_start,
+        )
 
         if len(daily_ics) < 2:
             _t_ic = time.time() - _t_ic_start
@@ -1535,7 +1627,7 @@ class GeneticFactorMiningService(BaseMiningService):
         best_ir = abs(best_ir) if best_ir is not None else 0.0
 
         _t_ic = time.time() - _t_ic_start
-        logger.info(
+        logger.debug(
             f"  [诊断] _fast_cross_sectional_ic 完成: ic={ic_mean:.4f}, "
             f"|ic|={mean_ic:.4f}, ir={best_ir:.4f}, 耗时={_t_ic:.3f}s"
         )

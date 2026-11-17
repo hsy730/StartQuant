@@ -1509,12 +1509,15 @@ class FactorService:
                 import concurrent.futures
 
                 def _check_akshare():
-                    ak.stock_zh_a_daily(
-                        symbol="sz000001",
-                        start_date="20230903",
-                        end_date="20231027",
-                        adjust="qfq",
-                    )
+                    from backend.utils.akshare_lock import AKSHARE_LOCK
+
+                    with AKSHARE_LOCK:
+                        ak.stock_zh_a_daily(
+                            symbol="sz000001",
+                            start_date="20230903",
+                            end_date="20231027",
+                            adjust="qfq",
+                        )
 
                 with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
                     future = executor.submit(_check_akshare)
@@ -1921,10 +1924,13 @@ class FactorService:
         start_date: str,
         end_date: str,
         rolling_window: Optional[int] = None,
-        max_workers: int = 10,
+        max_workers: Optional[int] = None,
     ) -> Dict[str, pd.DataFrame]:
-        """为多个股票计算因子（并行）"""
+        """为多个股票计算因子（并行，线程数默认取 settings.FACTOR_CALC_MAX_WORKERS）"""
         from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        if max_workers is None:
+            max_workers = settings.FACTOR_CALC_MAX_WORKERS
 
         results = {}
 

@@ -28,6 +28,7 @@ from scipy.stats.mstats import winsorize as scipy_winsorize
 
 import statsmodels.api as sm
 from backend.constants import FLOAT_ZERO_THRESHOLD
+from backend.core.settings import settings
 
 logger = logging.getLogger(__name__)
 
@@ -198,7 +199,7 @@ class FactorPreprocessingPipeline:
         industry_column: str = "industry",
         date_column: str = "date",
         parallel: bool = True,
-        max_workers: int = 4,
+        max_workers: Optional[int] = None,
     ) -> Tuple[pd.DataFrame, Dict[str, Dict]]:
         """
         批量处理DataFrame中的多个因子
@@ -212,13 +213,16 @@ class FactorPreprocessingPipeline:
             industry_column: 行业列名
             date_column: 日期列名
             parallel: 是否并行处理多个因子
-            max_workers: 并行工作线程数
+            max_workers: 并行工作线程数，None 时取 settings.PREPROCESSING_MAX_WORKERS
 
         Returns:
             (处理后的DataFrame, 每个因子的统计信息字典)
         """
         result_df = df.copy()
         all_stats = {}
+
+        if max_workers is None:
+            max_workers = settings.PREPROCESSING_MAX_WORKERS
 
         if self.config.cross_sectional and date_column in result_df.columns:
             logger.info(f"使用横截面模式处理{len(factor_columns)}个因子")
@@ -284,7 +288,7 @@ class FactorPreprocessingPipeline:
         market_cap_col: str = "market_cap",
         industry_col: str = "industry",
         parallel_stocks: bool = True,
-        max_workers: int = 8,
+        max_workers: Optional[int] = None,
     ) -> Tuple[Dict[str, pd.DataFrame], Dict[str, Dict]]:
         """
         处理多只股票的因子数据（字典格式）
@@ -297,11 +301,14 @@ class FactorPreprocessingPipeline:
             market_cap_col: 市值列名
             industry_col: 行业列名
             parallel_stocks: 是否并行处理不同股票
-            max_workers: 并行线程数
+            max_workers: 并行线程数，None 时取 settings.PREPROCESSING_STOCK_MAX_WORKERS
 
         Returns:
             (处理后的因子数据字典, 统计信息字典)
         """
+        if max_workers is None:
+            max_workers = settings.PREPROCESSING_STOCK_MAX_WORKERS
+
         # 横截面模式：将所有股票合并为一个DataFrame，按日期分组处理
         if self.config.cross_sectional and len(factor_data) > 1:
             return self._process_multi_stock_cross_sectional(

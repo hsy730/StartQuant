@@ -797,3 +797,45 @@
 - 实测 HOF 前 5 不同因子数：cv_folds=0 三种子 2/2/2 -> 4/5/5（可用数 5/5/5 不变）；cv_folds=3 两种子 1/2 -> 5/4（可用数 5/5 -> 5/4），唯一可用因子数 1~2 -> 4~5
 - 默认值同步到 GeneticMiningRequest、DualMiningService(_gp_params) 与 /mining/genetic、dual 路由显式透传；回归测试 94 passed（3 例 alphalens 缺失为既有环境问题）
 - A/B 评估股票数（负结果，不改默认值）：cv=3、去重开启、6 只留出股票、3 种子，训练池 7 只 vs 14 只的样本外可用数同为 15/15，OOS |IC| 均值 0.088 vs 0.067，耗时 15.3s vs 19.4s（另组 6 vs 10 同为 14/15）；股票数受池规模上限约束，10 只池无法测 max_eval_stocks 20
+
+## 2026-11-17 | 更新 | GeneticFactorMiningService
+- 新增 _build_ic_matrices 统一产出日期交集/因子矩阵/收益矩阵并按股票集合缓存；逐日 argsort 循环改为二维 rankdata + 逐行 Pearson，_fast_cross_sectional_ic 18.4ms -> 1.3ms
+- 覆盖 _cv_penalty 为 numpy 实现（矩阵列切 fold），_spearman_ic 用 np.unique 算平均秩；14.7ms -> 3.3ms/次，300 组随机含并列向量与 spearmanr 最大偏差 1.1e-16
+- 单树评估 cv=0 20.8ms -> 7.6ms、cv=3 33ms -> 10.6ms；整轮 benchmark cv=0 13.5s -> 4.8s、cv=3 18~21s -> 6.2~6.6s（约 3x），质量不变（可用数 5/5/5，不同因子数 5/5/4，OOS |IC| 0.05~0.11）
+- 语义修正：并列值改平均秩；CV 改为整池 all_dates 按列取 fold；_fast_cross_sectional_ic 完成日志 INFO->DEBUG，每次评估的 3 条 _cv_penalty INFO 不再输出
+- A/B 搜索预算（负结果，不改默认）：n_generations=20 与 population_size=80 的样本外可用数 14/15、15/15（默认 15/15），OOS |IC| 均值 0.084、0.083（默认 0.086），耗时 11.5s、9.6s（默认 6.3s）；瓶颈在因子库与算子集
+- 回归：4 个测试文件 94 passed（3 例 alphalens 缺失为既有环境问题）
+- A/B 适应度口径（负结果，已回滚）：icir 可用数 12/15、OOS |IC| 均值 0.076；mean_std 13/15、0.087；默认 lcb 15/15、0.086。ICIR 会选中波动小但无效的因子（种 2 top1 OOS t=1.21），保留 LCB 且不引入 ic_objective 开关
+
+## 2026-11-17 | 实验 | GeneticFactorMiningService 扩池可行性
+- 协议：2023-01-01~2024-12-31，30 个活跃基础因子，pop=50 / 10 代 / elite=5 / max_base_factors=0 / cv_folds=3；OOS 用独立 80 只留出股票逐日截面 Spearman，判据 |t|≥2 且有效天数≥200；每种子独立进程
+- 先批量拉取 243 只候选行情（240 只可用，391.6s）写入本地缓存，供宽池实验复用
+- A/B 扩池（正结果）：160 只池每树随机评估 20 只 vs 10 只池评估 10 只——样本外可用数 12/15 vs 5/15，HOF 前 5 的 OOS |IC| 均值 0.034 vs 0.022；宽池 setup 约 15.2s + 进化 15~19s，窄池约 1.0s + 6.3~6.6s
+- 窄留出集会高估：同样 10 只池的因子在 8 只留出股票上测得 15/15 可用、OOS |IC| 0.086，在 80 只留出上仅 5/15、0.022（约 2.5x）；质量判据至少需 50 只以上留出股票
+- 截面噪声实测：逐日 IC std 在 10/20/50/80 只股票为 0.38~0.45 / 0.29~0.37 / 0.21~0.28 / 0.185~0.28，|IC| 同步从 0.059 降到 0.022（SMA20/SMA60）、0.035 降到 0.004（ADX）；窄池"高 IC"主要是小样本噪声
+- 评估股票数在宽池内不是杠杆：60 只池评估 20 只与评估 60 只可用均 5/5、OOS |IC| 0.038~0.084，评估 60 只耗时 2.6x 无质量收益
+- 已知阻塞：get_multiple_stocks_data 冷缓存时 15 线程并发调 akshare（py_mini_racer 执行 JS 签名），160 只池 3 次里 2 次在 mini_racer.dll 硬崩溃（exit 0x80000003）；单线程预热缓存后 3/3 正常。生产扩池前需改为冷缓存串行取数或对 akshare 加锁
+
+## 2026-11-17 | 重构 | 并发线程数集中到 Settings
+- backend/core/settings.py 新增 9 项并发配置：DATA_FETCH_MAX_WORKERS(15)、INDUSTRY_FETCH_MAX_WORKERS(10)、FACTOR_CALC_MAX_WORKERS(10)、ANALYSIS_MAX_WORKERS(4)、VALIDATION_MAX_WORKERS(4)、PREPROCESSING_MAX_WORKERS(4)、PREPROCESSING_STOCK_MAX_WORKERS(8)、MINING_PRECOMPUTE_MAX_WORKERS(0=CPU)、MINING_STOCK_POOL_MAX_WORKERS(0=min(CPU,8))
+- 替换 8 处硬编码：data_service 两处（多股取数默认参数改为 Optional[int]=None 时读配置、行业取数）、factor_service.calculate_factors_for_stocks、analysis_service、factor_orchestrator_service、factor_preprocessing_pipeline 两个方法、base_mining_service 的因子预计算与股票池预计算
+- 新增 .env.example（.env 已被 .gitignore 忽略）作为调参模板，当时默认值等价于改动前行为；MINING_* 为 0 时保持原 CPU 推导逻辑（后续引入并发档位，默认改为低档位 low）
+- 单线程池（max_workers=1）仅用于超时包装，不纳入配置
+- 验证：环境变量覆盖生效（DATA_FETCH_MAX_WORKERS=3 读到 3）；相关模块导入正常；回归 test_base_mining_service / test_factor_preprocessing / test_mask_first_factor_mining / test_p2_refactoring 共 95 passed（3 例 alphalens 缺失为既有环境问题）
+
+## 2026-11-17 | 更新 | 并发档位 low/mid
+- Settings 新增 PERFORMANCE_PROFILE（默认 low），两个预设只填充 9 项线程上限：low 取数/因子计算 4、分析/验证/预处理 2、多股票预处理 4、挖掘 2；mid 各项 8、多股票预处理 16、MINING_* 为 0 按 CPU 推导
+- 优先级：显式写出的单项（.env / 环境变量 / 构造参数）> 档位预设；未知档位只告警并沿用字段默认值（字段默认值改为等于 low，避免退回到曾引发 mini_racer 崩溃的 15 线程）
+- .env.example 改为档位开关 + 注释形式的单项覆盖示例；实测 env 路径下 mid 档位生效且单项覆盖优先（DATA_FETCH_MAX_WORKERS=2 保留）
+- 档位枚举取值定为 low / mid（初版曾用 laptop / desktop）
+
+## 2026-11-17 | 修复 | akshare 并发取数崩溃
+- 根因：akshare 的 JS 签名引擎 py_mini_racer 非线程安全，get_multiple_stocks_data 用线程池并发调 ak.stock_zh_a_daily，多线程同时在 mini_racer.dll 内执行会硬崩进程（exit 0x80000003，Python 层无法捕获）
+- 修复：data_service 新增模块级 _AKSHARE_LOCK，所有 akshare 网络调用（日线、分钟线、行业列表/成分股、个股信息）统一在锁内串行；缓存命中路径不经过锁，批量取数仍并行解码，冷缓存退化为逐只拉取
+- 顺手合并 get_stock_data 里 4 个完全重复的 ak.stock_zh_a_daily 分支为「先算 symbol、再单次调用」，行为不变
+- 验证：伪造 ak 调用并发探针 max_concurrency=1；真实 akshare 60 只股票冷缓存 + 4 线程（low 档）全部返回、未崩溃；回归 test_data_immutability / test_base_mining_service / test_mask_first_factor_mining 共 79 passed
+
+## 2026-11-17 | 重构 | akshare 锁收敛到共享模块
+- 锁从 data_service 私有变量抽到 backend/utils/akshare_lock.py（AKSHARE_LOCK，RLock 以允许同线程嵌套），所有 akshare 入口共享同一实例
+- 新增接入点：backend/api/routers/data.py 的 _call_akshare_with_timeout（同时覆盖 mining 路由的股票池解析）、factor_service 的 akshare 健康检查、FactorAttributionService 的基准指数取数
+- 路由层与 data_service 的锁对象一致性已断言；路由 helper 4 线程并发探针 max_concurrency=1；回归 test_data_immutability / test_base_mining_service / test_mask_first_factor_mining / test_p2_refactoring 共 87 passed（3 例 alphalens 缺失为既有环境问题）
