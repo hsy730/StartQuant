@@ -780,3 +780,20 @@
 ## 2026-11-16 | 更新 | GeneticFactorMiningService
 - 修复截面 IC 口径：逐股 dropna 使 10 股池 484 天只剩 7 天（|IC| 虚高 0.25、样本外≈0）；改保留完整索引 + 按池规模放宽 min_stocks 后 200+ 天、|IC| 0.08~0.12
 - 修复交付表达式不一致：calculator 的 log/sqrt 非正→NaN、ts_corr_* 改 Spearman，树↔表达式 rho 由 0.84~0.97 升至多数 1.0；diversity_penalty_coeff 0.1→0.02（5 种子均值 +10%）
+
+## 2026-11-16 | 更新 | GeneticFactorMiningService
+- 最终校验改横截面口径：FactorAnalyzer 接受股票池面板，走 ic_calculator.calculate_cross_sectional_ic 后经 validate_factor(cross_sectional_ic=) 计入 IC/RankIC/IR；实测同一因子 score 25.16→64.17，弱因子仍 19.33
+- 多样性惩罚默认值补齐三处：服务构造、GeneticMiningRequest、前端表单/提交兜底均为 0.02（此前请求模型 0.1 会覆盖服务默认值）
+
+## 2026-11-16 | 更新 | GeneticFactorMiningService
+- 适应度改用 IC 下置信界：新增 ic_lcb_sigma=1.65（|mean IC| - 1.65*ic_std/sqrt(n_days)）与 min_ic_day_ratio=0.2（有效 IC 天数 <20% 判不可评估），解决稀疏 NaN 因子靠 14~32 天估出 |IC| 0.2+ 挤占 HOF 的问题
+- 实测 10 股固定池 / 30 真实因子 / 3~5 种子 / 8 只留出股票：HOF 前 5 因子样本外可用数 7/15 -> 15/15（cv_folds=0 与 3 一致），Top1 由 14~32 天 t<1.3 变为 424~483 天 t=3.4~4.6；单轮耗时 14.4s->14.9s
+- 惩罚/不可评估 fitness 由 0.0 统一改为 -1.0，避免"失败个体"排在合法负适应度个体之前；默认值同步到 GeneticMiningRequest 与 DualMiningService(_gp_params)，/mining/genetic 与 dual 路由均显式透传
+- 回归：test_factor_validation / test_base_mining_service / test_mask_first_factor_mining / test_p2_refactoring 共 94 passed（3 例 alphalens 缺失，改动前即如此）
+
+## 2026-11-17 | 更新 | GeneticFactorMiningService
+- HOF 插入谓词改为因子值等价判定：新增 hof_dedup_corr=0.98，首只评估股票上 |Spearman|≥阈值即视为同一因子并跳过插入（取绝对值，相反数信息等价；常数序列不判等价），<=0 时退回结构 Zobrist
+- 谓词优先复用评估缓存中的因子值数组，未命中才重算：直接重算会 +8s（13.9s->21.8s），复用后无可测开销
+- 实测 HOF 前 5 不同因子数：cv_folds=0 三种子 2/2/2 -> 4/5/5（可用数 5/5/5 不变）；cv_folds=3 两种子 1/2 -> 5/4（可用数 5/5 -> 5/4），唯一可用因子数 1~2 -> 4~5
+- 默认值同步到 GeneticMiningRequest、DualMiningService(_gp_params) 与 /mining/genetic、dual 路由显式透传；回归测试 94 passed（3 例 alphalens 缺失为既有环境问题）
+- A/B 评估股票数（负结果，不改默认值）：cv=3、去重开启、6 只留出股票、3 种子，训练池 7 只 vs 14 只的样本外可用数同为 15/15，OOS |IC| 均值 0.088 vs 0.067，耗时 15.3s vs 19.4s（另组 6 vs 10 同为 14/15）；股票数受池规模上限约束，10 只池无法测 max_eval_stocks 20

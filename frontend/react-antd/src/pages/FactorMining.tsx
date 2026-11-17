@@ -330,7 +330,7 @@ const ProcessInfoDisplay: React.FC<{ info: Record<string, any> }> = ({ info }) =
       ic_threshold: 0.03,
       // Phase 2-7: quality-boosting defaults
       parsimony_coeff: 0.001,
-      diversity_penalty_coeff: 0.1,
+      diversity_penalty_coeff: 0.02,
       cv_folds: 3,
       use_extended_primitives: true,
       max_tree_depth: 17,
@@ -492,7 +492,7 @@ const ProcessInfoDisplay: React.FC<{ info: Record<string, any> }> = ({ info }) =
       fitness_objective: values.fitness_objective,
       ic_threshold: values.ic_threshold,
       parsimony_coeff: values.parsimony_coeff ?? 0.001,
-      diversity_penalty_coeff: values.diversity_penalty_coeff ?? 0.1,
+      diversity_penalty_coeff: values.diversity_penalty_coeff ?? 0.02,
       cv_folds: values.cv_folds ?? 0,
       use_extended_primitives: values.use_extended_primitives ?? true,
       max_tree_depth: values.max_tree_depth ?? 17,
@@ -1995,12 +1995,12 @@ const ProcessInfoDisplay: React.FC<{ info: Record<string, any> }> = ({ info }) =
                     <Form.Item
                       label="多样性惩罚"
                       name="diversity_penalty_coeff"
-                      tooltip="多样性保护系数。基于Jaccard相似度惩罚与种群中已有公式雷同的个体，鼓励探索不同方向。0=关闭，0.05-0.2=推荐范围，0.5+=强压力(可能牺牲质量换多样性)"
+                      tooltip="多样性保护系数。基于Jaccard相似度惩罚与种群中已有公式雷同的个体，鼓励探索不同方向。0=关闭，0.01-0.05=推荐范围(默认0.02)，0.2+=强压力(可能牺牲质量换多样性)"
                     >
                       <InputNumber
                         min={0}
                         max={1}
-                        step={0.05}
+                        step={0.01}
                         style={{ width: "100%" }}
                       />
                     </Form.Item>

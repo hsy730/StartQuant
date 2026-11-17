@@ -3,7 +3,7 @@
 类型: 实体
 状态: 草稿
 创建: 2026-11-16
-更新: 2026-11-16
+更新: 2026-11-17
 来源: [backend/services/genetic_factor_mining_service.py]
 ---
 
@@ -23,7 +23,7 @@
 - 适应度评估含线程池与缓存，同一进程内连续多次运行结果不可复现；A/B 必须每次独立进程、用多个随机种子取均值。
 - 评估股票样本在整轮进化中固定（覆盖基类 `_refresh_stock_sample`，仅在重建股票池时重新抽样）：基类每代随机重抽会让精英沿用的旧 fitness 与新样本上的子代不可比，NSGA-II / 锦标赛退化为噪声比较。
 - NSGA-II 的 IC 目标不做 `max(…, 0)` 截断：负 IC 个体之间需保留相对排序，否则劣质个体并列、支配关系与拥挤度失去区分度。
-- 代际 300s 评估超时 `break` 后，未评估个体统一填惩罚 fitness（`(0.0, 999.0)` / `(0.0,)`），否则 `stats.compile` 取 `fitness.values[0]` 会抛 `IndexError`。
+- 代际 300s 评估超时 `break` 后，未评估个体统一填惩罚 fitness（`(-1.0, 999.0)` / `(-1.0,)`），否则 `stats.compile` 取 `fitness.values[0]` 会抛 `IndexError`。惩罚值取 -1.0 而非 0.0，因为启用 IC 下置信界后合法个体适应度可为负，"评估失败"必须严格劣于一切合法个体；同样地，无法计算 IC 的树（有效股票 <5、有效 IC <2 天、编译失败等）一律返回 -1.0。
 - SymPy 代数等价去重（规范形）默认关闭，由 `use_sympy_dedup` 开关控制：`sp.simplify()` 对大 GP 树可能卡住 16+ 分钟，且命中率低；关闭后去重只依赖 zobrist（结构 + 交换律同构）。`_sympy_canonical_key_with_timeout` 统一吞掉异常返回 `None`，sympy 缺失时自动降级。
 - 因子值缓存跨代保留：评估股票样本整轮固定后，同一棵树的因子值在所有代相同，无需按代清空（原 `_cache_clear` 已删除）。
 - 逐股 / 逐个体耗时日志为 DEBUG 级：热路径每次评估约 40 条 INFO，20 代运行可产生 1.7 万+ 行，INFO 只保留每代汇总与超时告警。
@@ -42,5 +42,16 @@
 - 截面样本下限随之改为 `min(n, max(5, min(10, ceil(0.6*n))))`：大池仍要求 10 只，10 只小池放宽到 6 只，避免"小池 + NaN"时逐日有效样本恒不达标。
 - 交付表达式与搜索树的一致性（已修复）：`factor_service` 的 `log`/`sqrt` 原为 `np.log`/`np.sqrt`，非正值产生 ±inf 而 GP 路径 `safe_log_np`/`safe_sqrt_np` 产生 NaN，±inf 在横截面排序中成为极值；`ts_corr_*` 原为 Pearson 而 GP 基元与 `factor_primitives.ts_corr` 均为 Spearman。修复前同一棵树与最终表达式在单只股票上的因子值 rho 仅 0.84~0.97，嵌套后偏差放大；修复后多数为 1.0，样本外 IC 与训练集同量级（例：−0.088 vs −0.088）。
 - `diversity_penalty_coeff` 默认值由 0.1 降为 0.02：该惩罚在 HOF 最多 10 个成员上按相似度累加，0.1 时"与 1 个成员相似即扣掉全部 IC"。修复 IC 口径后真实 |IC| 为 0.08~0.12，5 个种子 A/B 显示最优适应度均值 0.1035 → 0.1085、每代均值 0.0267 → 0.0293。
-- 最终结果阶段的 `validate_factor` 仍只传入首只股票的 `factor_values`/`return_values`（时间序列 IC），与搜索的横截面 IC 口径不同，因此 `best_factors[].validation.score` 普遍偏低（常见 15 分，仅稳定性达标），不能用作搜索质量的判据。
+- 最终校验口径已对齐横截面：`FactorAnalyzer` 新增 `panel_data`（股票池原始数据），`_cross_sectional_ic` 逐股算因子值后走 `ic_calculator.calculate_cross_sectional_ic` 得到 `mean_ic / ic_std / n_dates`，经 `validate_factor(cross_sectional_ic=...)` 进入 IC / RankIC / IR 三项（优先于 alphalens 与单股票时序回退）。`_finalize_task` 在股票池 ≥2 只时重新取池数据传入，取数失败或单股票运行自动回退旧路径。实测（10 股、2023–2024、真实行情）：`ts_std_20(div(close, ts_mean_20(close)))` 单股票时序 IC 0.005（score 25.16）→ 截面 IC −0.065 / IR −0.16（score 64.17）；`neg(ts_corr_10(close, volume))` 截面 IC −0.006（不显著，score 仍 19.33）。截面 IC 在 10 只小池上 std 约 0.37–0.41，IR 天然偏低，属样本规模限制而非实现问题。
+- `diversity_penalty_coeff` 的默认值在**三处**需保持一致：服务构造参数（0.02）、`GeneticMiningRequest`（原 0.1 会覆盖服务默认值，导致 API 路径仍用旧系数）、前端表单单默认与提交兜底（`FactorMining.tsx` 两处）。只改服务端不生效。
 - 修改默认参数或搜索机制后，fitness 数值不可与修复前基线直接比较（修复前 0.25 是 7 天噪声）；评估一律用固定 10 只股票 + 多随机种子 + 样本外股票集。
+- **适应度改用 IC 下置信界 + 覆盖率闸门（实测有效，已设为默认）**：`ic_lcb_sigma=1.65`（约单侧 95%）时适应度 = `|mean IC| - sigma * ic_std / sqrt(n_days)`；`min_ic_day_ratio=0.2`（且不少于 20 天）时有效 IC 天数不足直接判 -1.0。原因是保留完整索引后仍有一类噪声因子：含 `log/sqrt` 导致 NaN 极多，逐日有效样本靠 6 只股票凑线，只有 14~32 个交易日能算 IC，`|IC|` 被少数天抬到 0.2+ 并挤进 HOF。实测（10 只固定股票 / 30 个真实因子 / pop=50 / 10 代 / 3~5 种子 / 参数只经构造参数注入）：**HOF 前 5 个因子的样本外可用数（8 只留出股票、|t|≥2 且有效天数≥200）由 7/15 提升到 15/15**，`cv_folds=0` 与 `cv_folds=3` 两种口径结果一致；对照组 Top1 常是 14~32 天、t<1.3 的因子，启用后 Top1 稳定为覆盖 424~483 天、t=3.4~4.6 的因子（如 `ts_delay_5(ts_mean_20(ATR/close))`、`log(neg(MACD))`）。单轮耗时 14.4s → 14.9s（cv=0）、22~23s 不变（cv=3），无性能回归。
+- 该改动的副产物：适应度可以与 HOF 的 `best_factors` 列表独立检验——样本外 IC 必须用 HOF **树本体**（`compile_tree` + 逐股基础因子 numpy 传参）计算，不能用 `tree_to_expression` 的表达式文本回算：代码型基础因子（多行 `def calculate_factor`）被内联后表达式非法，会让样本外测量全部返回空，造成"因子无效"的假象。
+- `ic_lcb_sigma` / `min_ic_day_ratio` / `hof_dedup_corr` 的默认值需在服务构造参数、`GeneticMiningRequest`、`DualMiningService`（`_gp_params` 透传）三处保持一致；`/mining/genetic` 与 dual 路由都显式传参，漏一处即回落到服务默认或直接 `TypeError`。
+- **HOF 因子值等价去重（`hof_dedup_corr=0.98`，已设为默认）**：HOF 插入谓词由纯结构 Zobrist 改为 `_FactorValueEquivalence`——在首只评估股票上取因子值，逐元素 Spearman `|ρ| ≥ 0.98` 即视为同一因子，插入被跳过（DEAP 语义为跳过而非替换，名额留给不同因子）。`|ρ|` 取绝对值：相反数不改变秩，信息等价。常数序列（`std < 1e-12`）不判等价，避免一个常数树吞掉整个 HOF；`hof_dedup_corr <= 0` 时退回 `_same_tree_structure`。
+- 该谓词优先复用评估缓存（`_cache_get(zobrist_hash)` 中首只 `_sampled_stock_codes` 股票的 ndarray），未命中才 `_compute_factor_expression` 重算：直接重算时 dedup 开销 +8s（13.9s → 21.8s），复用后无可测开销（同机 15.5s 关 vs 13.5s 开）。
+- 去重实测（10 只固定股票 / 30 个真实因子 / pop=50 / 10 代 / 8 只留出股票样本外判据）：`cv_folds=0` 三个种子 HOF 前 5 的**不同因子数 2/2/2 → 4/5/5**，样本外可用数保持 5/5/5；`cv_folds=3` 两个种子 1/2 → 5/4，可用数 5/5 → 5/4。即关掉时"5 个可用"实际只有 1~2 个不同因子，开启后 5 个名额几乎全是不同因子。
+- 去重代价：HOF 会为"不同但更弱"的因子让出名额（`cv=3` 种子 2 的第 5 名 OOS t=1.15），因此可用的**唯一**因子数（不同因子数与该因子可用性的交集）从 1~2 提升到 4~5，但按"条目数"统计的可用数可能持平或 −1。评估 HOF 质量应同时看 `n_distinct`，不能只看 HOF 条目 IC。
+- 去重只改变 HOF 内的取舍与依赖 HOF 的多样性惩罚，不改变单个体 IC 计算；因多样性惩罚按 HOF 成员相似度累加，开启后最优适应度会因种子不同而上下浮动（`cv=3`：0.0066/0.0307 → 0.0307/0.0085），跨配置不能只比 fitness_max。
+- 评估股票数不是质量杠杆（A/B，负结果，未改默认值）：`cv_folds=3`、HOF 去重开启、6 只留出股票、3 个种子下，训练池 7 只 vs 14 只的样本外可用数均为 15/15，HOF 前 5 的 OOS |IC| 均值 0.088 vs 0.067，耗时 15.3s vs 19.4s；另一组 6 只 vs 10 只同为 14/15。即训练股票数从 ~6 只翻倍到 ~14 只既未提升样本外质量，也未减少 HOF 重复，只增加约 30% 耗时。默认 20 只是速度与稳定性的折中（代码注释引 AlphaForge 的 pool_size=10 结论），实测数据支持"更大池不提升质量"，但缩小池会提高逐日截面的 IC 噪声且无质量收益，故不改默认值；需要提速可显式调小 `max_eval_stocks`。
+- 评估股票数受股票池规模上限约束（`min(max_eval_stocks, len(pool))`）：用 10 只股票的池测 `max_eval_stocks=10 vs 20` 是无效 A/B（两臂实际都只评估 10 只），必须用 `n_eval_stocks` 字段确认实际生效值。

@@ -35,6 +35,107 @@ def _to_python_float(value, default=None):
         return default
 
 
+def _summarize_ic_stats(
+    ic_mean: float,
+    ic_std: Optional[float],
+    n_dates: int,
+    threshold: float,
+    method: str,
+) -> Dict:
+    """由横截面 IC 统计量生成 IC 验证结果（统一 t 检验口径）。
+
+    供 alphalens IC 序列与 ic_calculator 截面 IC 摘要共用，避免两处
+    重复实现相关性检验（规范5）。
+    """
+    ic = float(ic_mean)
+    n = int(n_dates)
+    std = float(ic_std) if ic_std is not None else 0.0
+
+    if n > 1 and std > 1e-10:
+        # 规则7.34：se 合法可极小，直接相除不做 safe_divide
+        se = std / np.sqrt(n)
+        t_stat = ic / se
+        p_value = float(2 * (1 - stats.t.cdf(abs(t_stat), df=n - 1)))
+    else:
+        # 规则7.15：IC_std≈0 且 mean≠0 → t=inf
+        if abs(ic) > 1e-10:
+            t_stat = float("inf")
+            p_value = 0.0
+        else:
+            t_stat = 0.0
+            p_value = 1.0
+
+    is_significant = p_value < 0.05
+    passed = abs(ic) >= threshold and is_significant
+
+    return {
+        "passed": passed,
+        "ic": ic,
+        "ic_std": _to_python_float(std),
+        "t_statistic": _to_python_float(t_stat),
+        "p_value": _to_python_float(p_value),
+        "is_significant": is_significant,
+        "threshold": threshold,
+        "method": method,
+        "n_dates": n,
+        "message": (
+            f"IC={ic:.4f}(std={std:.4f}) t={t_stat:.4f} p={p_value:.4f} "
+            f"{'通过' if passed else '未通过'} (阈值±{threshold}, 显著性p<0.05)"
+        ),
+    }
+
+
+def _summarize_ir_stats(
+    ic_mean: float,
+    ic_std: float,
+    n_dates: int,
+    ir_threshold: float,
+    method: str,
+) -> Dict:
+    """由横截面 IC 序列统计量生成 IR 验证结果（规则7.10/7.11）。"""
+    mean = float(ic_mean)
+    std = float(ic_std)
+    n = int(n_dates)
+
+    if std < 1e-10:
+        ir = None  # 不可计算（规则7.10）
+    else:
+        ir = safe_ir(mean, std, default=None)
+        if ir is not None:
+            # IR双向截断到[-5, 5]（业界合理范围）
+            ir = max(min(ir, 5.0), -5.0)
+
+    if n > 1 and std > 1e-10:
+        se = std / np.sqrt(n)
+        t_stat = mean / se
+        p_value = float(2 * (1 - stats.t.cdf(abs(t_stat), df=n - 1)))
+    else:
+        if abs(mean) > 1e-10:
+            t_stat = float("inf")
+            p_value = 0.0
+        else:
+            t_stat = 0.0
+            p_value = 1.0
+
+    passed = ir is not None and ir >= ir_threshold
+
+    return {
+        "passed": passed,
+        "ir": float(ir) if ir is not None else None,
+        "ic_mean": mean,
+        "ic_std": std,
+        "t_statistic": _to_python_float(t_stat),
+        "p_value": _to_python_float(p_value),
+        "threshold": ir_threshold,
+        "method": method,
+        "n_dates": n,
+        "message": (
+            f"IR={'不可计算' if ir is None else f'{ir:.4f}'} "
+            f"{'通过' if passed else '未通过'} (阈值{ir_threshold})"
+        ),
+    }
+
+
 class FactorValidationService:
     """因子验证服务"""
 
@@ -59,6 +160,7 @@ class FactorValidationService:
         existing_factors: Optional[Dict[str, pd.Series]] = None,
         cross_sectional_panel: Optional[pd.DataFrame] = None,
         factor_data: Optional[pd.DataFrame] = None,
+        cross_sectional_ic: Optional[Dict] = None,
     ) -> Dict:
         """
         全面验证因子质量
@@ -71,6 +173,11 @@ class FactorValidationService:
                 多股票场景下提供以计算正确的横截面换手率
             factor_data: alphalens格式的因子数据（MultiIndex: date×asset），
                 传入时IC和换手率计算委托alphalens（推荐）
+            cross_sectional_ic: 由 ic_calculator.calculate_cross_sectional_ic
+                计算好的横截面 IC 摘要（含 mean_ic / ic_std / n_dates）。
+                挖掘场景下挖掘目标即横截面 IC，最终校验必须沿用同一口径，
+                否则会退化成单只股票的时间序列 IC（噪声，score 普遍偏低）。
+                传入时优先于 factor_data 与单股票回退路径。
 
         Returns:
             验证结果
@@ -87,23 +194,29 @@ class FactorValidationService:
             "score": 0.0,
         }
 
-        # IC验证：优先使用alphalens（多股票场景），回退到自实现（单股票场景）
+        # IC验证：优先使用横截面 IC 摘要（挖掘场景），其次 alphalens，最后单股票回退
         _t = time.time()
         results["ic_validation"] = self._validate_ic(
-            factor_values, return_values, factor_data=factor_data
+            factor_values,
+            return_values,
+            factor_data=factor_data,
+            cross_sectional_ic=cross_sectional_ic,
         )
         logger.debug(f"[验证计时] IC: {time.time()-_t:.3f}s")
 
         _t = time.time()
         results["rank_ic_validation"] = self._validate_rank_ic(
-            factor_values, return_values
+            factor_values, return_values, cross_sectional_ic=cross_sectional_ic
         )
         logger.debug(f"[验证计时] RankIC: {time.time()-_t:.3f}s")
 
-        # IR验证：优先使用alphalens IC序列
+        # IR验证：优先使用横截面 IC 序列统计量
         _t = time.time()
         results["ir_validation"] = self._validate_ir(
-            factor_values, return_values, factor_data=factor_data
+            factor_values,
+            return_values,
+            factor_data=factor_data,
+            cross_sectional_ic=cross_sectional_ic,
         )
         logger.debug(f"[验证计时] IR: {time.time()-_t:.3f}s")
 
@@ -171,21 +284,36 @@ class FactorValidationService:
         factor_values: pd.Series,
         return_values: pd.Series,
         factor_data: Optional[pd.DataFrame] = None,
+        cross_sectional_ic: Optional[Dict] = None,
     ) -> Dict:
         """
         验证IC
 
-        多股票场景下委托alphalens计算横截面Spearman IC（规则7.1/7.12），
-        单股票场景回退到scipy.stats.spearmanr。
+        优先级：ic_calculator 横截面 IC 摘要 > alphalens > scipy 单股票回退
+        （规则7.1/7.12：IC 必须横截面 Spearman）。
 
         Args:
             factor_values: 因子值
             return_values: 收益率
             factor_data: alphalens格式的因子数据（可选）
+            cross_sectional_ic: ic_calculator 计算的横截面 IC 摘要（可选）
 
         Returns:
             IC验证结果
         """
+        # 横截面 IC 摘要（挖掘场景的挖掘目标即此口径）
+        if cross_sectional_ic:
+            ic_mean = cross_sectional_ic.get("mean_ic")
+            n_dates = int(cross_sectional_ic.get("n_dates") or 0)
+            if ic_mean is not None and n_dates >= 2:
+                return _summarize_ic_stats(
+                    ic_mean,
+                    cross_sectional_ic.get("ic_std"),
+                    n_dates,
+                    self.ic_threshold,
+                    "横截面Spearman IC（ic_calculator）",
+                )
+
         # 优先使用alphalens横截面IC（多股票场景）
         if factor_data is not None and isinstance(factor_data.index, pd.MultiIndex):
             num_assets = factor_data.index.get_level_values("asset").nunique()
@@ -213,45 +341,14 @@ class FactorValidationService:
                             "message": "alphalens IC序列为空",
                         }
 
-                    ic = float(ic_series.mean())
-                    n = len(ic_series)
-                    ic_std = float(ic_series.std()) if n > 1 else 0.0
-
-                    # 基于IC序列的t检验（比单期Fisher z更可靠）
-                    if n > 1 and ic_std > 1e-10:
-                        # 直接除法：se = ic_std/sqrt(n)，ic_std >= 1e-10（上方检查）且 n >= 2，
-                        # 因此 se > 0，无需 safe_divide（规则7.34：safe_divide 的 min_threshold
-                        # 可能吞掉 se < 1e-10 时的有效极大 t 统计量）
-                        se = float(ic_std) / np.sqrt(n)
-                        t_stat = float(ic) / se
-                        p_value = float(2 * (1 - stats.t.cdf(abs(t_stat), df=n - 1)))
-                    else:
-                        # 规则7.15：ic_std≈0 且 ic_mean≠0 → t_stat=inf
-                        if abs(ic) > 1e-10:
-                            t_stat = float("inf")
-                            p_value = 0.0
-                        else:
-                            t_stat = 0.0
-                            p_value = 1.0
-
-                    is_significant = p_value < 0.05
-                    passed = abs(ic) >= self.ic_threshold and is_significant
-
-                    return {
-                        "passed": passed,
-                        "ic": ic,
-                        "ic_std": _to_python_float(ic_std),
-                        "t_statistic": _to_python_float(t_stat),
-                        "p_value": _to_python_float(p_value),
-                        "is_significant": is_significant,
-                        "threshold": self.ic_threshold,
-                        "method": "alphalens横截面Spearman IC",
-                        "n_dates": n,
-                        "message": (
-                            f"IC={ic:.4f}(std={ic_std:.4f}) t={t_stat:.4f} p={p_value:.4f} "
-                            f"{'通过' if passed else '未通过'} (阈值±{self.ic_threshold}, 显著性p<0.05)"
-                        ),
-                    }
+                    # 统一 t 检验口径（规范5：与 ic_calculator 路径共用）
+                    return _summarize_ic_stats(
+                        float(ic_series.mean()),
+                        float(ic_series.std()) if len(ic_series) > 1 else 0.0,
+                        len(ic_series),
+                        self.ic_threshold,
+                        "alphalens横截面Spearman IC",
+                    )
                 except Exception as e:
                     logger.warning(f"alphalens IC计算失败，回退到自实现: {e}")
 
@@ -299,7 +396,10 @@ class FactorValidationService:
         }
 
     def _validate_rank_ic(
-        self, factor_values: pd.Series, return_values: pd.Series
+        self,
+        factor_values: pd.Series,
+        return_values: pd.Series,
+        cross_sectional_ic: Optional[Dict] = None,
     ) -> Dict:
         """
         验证Rank IC — 委托给 _validate_ic（规范5：代码复用）
@@ -307,7 +407,9 @@ class FactorValidationService:
         Rank IC 即 Spearman IC，与 _validate_ic 的单股票回退路径
         使用相同的 spearmanr 计算，无需重复实现。
         """
-        result = self._validate_ic(factor_values, return_values)
+        result = self._validate_ic(
+            factor_values, return_values, cross_sectional_ic=cross_sectional_ic
+        )
         # 将结果键名映射为 rank_ic 格式
         # 注意：result.get("ic") 在键存在但值为 None 时返回 None（规则7.41）
         # 下游 abs(rank_ic) 需要安全处理 None
@@ -327,21 +429,36 @@ class FactorValidationService:
         factor_values: pd.Series,
         return_values: pd.Series,
         factor_data: Optional[pd.DataFrame] = None,
+        cross_sectional_ic: Optional[Dict] = None,
     ) -> Dict:
         """
         验证IR
 
-        多股票场景下使用alphalens横截面IC序列计算IR（规则7.1/7.12），
-        单股票场景回退到滚动Spearman IC。
+        优先级：ic_calculator 横截面 IC 摘要 > alphalens > 滚动 Spearman 回退
+        （规则7.1/7.12）。
 
         Args:
             factor_values: 因子值
             return_values: 收益率
             factor_data: alphalens格式的因子数据（可选）
+            cross_sectional_ic: ic_calculator 计算的横截面 IC 摘要（可选）
 
         Returns:
             IR验证结果
         """
+        # 横截面 IC 摘要（挖掘场景的挖掘目标即此口径）
+        if cross_sectional_ic:
+            ic_mean = cross_sectional_ic.get("mean_ic")
+            n_dates = int(cross_sectional_ic.get("n_dates") or 0)
+            if ic_mean is not None and n_dates >= 2:
+                return _summarize_ir_stats(
+                    ic_mean,
+                    cross_sectional_ic.get("ic_std") or 0.0,
+                    n_dates,
+                    self.ir_threshold,
+                    "横截面IC序列IR（ic_calculator）",
+                )
+
         # 优先使用alphalens IC序列计算IR（多股票场景）
         if factor_data is not None and isinstance(factor_data.index, pd.MultiIndex):
             num_assets = factor_data.index.get_level_values("asset").nunique()
@@ -362,53 +479,14 @@ class FactorValidationService:
                         ic_series = ic_df.iloc[:, 0].dropna()
 
                     if len(ic_series) >= 2:
-                        ic_mean = float(ic_series.mean())
-                        ic_std = float(ic_series.std())
-
-                        if ic_std < 1e-10:
-                            ir = None  # 不可计算（规则7.10）
-                        else:
-                            ir = safe_ir(ic_mean, ic_std, default=None)
-                            if ir is not None:
-                                # IR双向截断到[-5, 5]（业界合理范围）
-                                ir = max(min(ir, 5.0), -5.0)
-
-                        # t检验
-                        n = len(ic_series)
-                        if n > 1 and ic_std > 1e-10:
-                            # 直接除法：se = ic_std/sqrt(n)，ic_std >= 1e-10 且 n >= 2，
-                            # 因此 se > 0（规则7.34）
-                            se = float(ic_std) / np.sqrt(n)
-                            t_stat = float(ic_mean) / se
-                            p_value = float(
-                                2 * (1 - stats.t.cdf(abs(t_stat), df=n - 1))
-                            )
-                        else:
-                            # 规则7.15：ic_std≈0 且 ic_mean≠0 → t_stat=inf
-                            if abs(ic_mean) > 1e-10:
-                                t_stat = float("inf")
-                                p_value = 0.0
-                            else:
-                                t_stat = 0.0
-                                p_value = 1.0
-
-                        passed = ir is not None and ir >= self.ir_threshold
-
-                        return {
-                            "passed": passed,
-                            "ir": float(ir) if ir is not None else None,
-                            "ic_mean": ic_mean,
-                            "ic_std": ic_std,
-                            "t_statistic": _to_python_float(t_stat),
-                            "p_value": _to_python_float(p_value),
-                            "threshold": self.ir_threshold,
-                            "method": "alphalens横截面IC序列IR",
-                            "n_dates": n,
-                            "message": (
-                                f"IR={'不可计算' if ir is None else f'{ir:.4f}'} "
-                                f"{'通过' if passed else '未通过'} (阈值{self.ir_threshold})"
-                            ),
-                        }
+                        # 统一 IR/t 检验口径（规范5：与 ic_calculator 路径共用）
+                        return _summarize_ir_stats(
+                            float(ic_series.mean()),
+                            float(ic_series.std()),
+                            len(ic_series),
+                            self.ir_threshold,
+                            "alphalens横截面IC序列IR",
+                        )
                 except Exception as e:
                     logger.warning(f"alphalens IR计算失败，回退到自实现: {e}")
 

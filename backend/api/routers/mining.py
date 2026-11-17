@@ -57,7 +57,16 @@ class GeneticMiningRequest(BaseModel):
     fitness_objective: str = "ic_mean"
     ic_threshold: float = 0.03
     parsimony_coeff: float = 0.001
-    diversity_penalty_coeff: float = 0.1
+    # 与 GeneticFactorMiningService 默认值保持一致（0.1 相对真实 |IC| 过大，
+    # 实测 5 种子上 0.02 的最优适应度与每代均值均优于 0.1）。
+    diversity_penalty_coeff: float = 0.02
+    # IC 稳健性：适应度改用下置信界 mean_ic - sigma*ic_std/sqrt(n_days)
+    # 1.65 ≈ 单侧 95%，并剔除有效 IC 天数不足 20% 的稀疏因子。
+    # 与 GeneticFactorMiningService 默认值保持一致（实测样本外可用因子 7/15 → 15/15）。
+    ic_lcb_sigma: float = 1.65
+    min_ic_day_ratio: float = 0.2
+    # HOF 因子值去重：|Spearman| ≥ 该阈值视为同一因子（阻挡单调变换占满名额），<=0 关闭
+    hof_dedup_corr: float = 0.98
     cv_folds: int = 3
     use_extended_primitives: bool = True
     max_tree_depth: int = 17
@@ -549,6 +558,7 @@ async def _run_mining(task_id: str, request: GeneticMiningRequest):
                     _finalize_task,
                     task_id, result, request, data,
                     base_factor_codes, factor_service.calculator, logger,
+                    stock_codes=stock_codes,
                 )
                 # 覆盖 _finalize_task 设置的 completed 状态为 cancelled
                 # （_finalize_task 不知道任务被取消，总是设 completed）
@@ -565,6 +575,7 @@ async def _run_mining(task_id: str, request: GeneticMiningRequest):
                     _finalize_task,
                     task_id, result, request, data,
                     base_factor_codes, factor_service.calculator, logger,
+                    stock_codes=stock_codes,
                 )
 
         except ImportError as e:
@@ -617,6 +628,9 @@ async def _run_genetic_only(
         fitness_objective=request.fitness_objective,
         parsimony_coeff=request.parsimony_coeff,
         diversity_penalty_coeff=request.diversity_penalty_coeff,
+        ic_lcb_sigma=request.ic_lcb_sigma,
+        min_ic_day_ratio=request.min_ic_day_ratio,
+        hof_dedup_corr=request.hof_dedup_corr,
         cv_folds=request.cv_folds,
         use_extended_primitives=request.use_extended_primitives,
         max_tree_depth=request.max_tree_depth,
@@ -721,6 +735,9 @@ async def _run_unified_mining(
         fitness_objective=request.fitness_objective,
         parsimony_coeff=request.parsimony_coeff,
         diversity_penalty_coeff=request.diversity_penalty_coeff,
+        ic_lcb_sigma=request.ic_lcb_sigma,
+        min_ic_day_ratio=request.min_ic_day_ratio,
+        hof_dedup_corr=request.hof_dedup_corr,
         cv_folds=request.cv_folds,
         use_extended_primitives=request.use_extended_primitives,
         max_tree_depth=request.max_tree_depth,
@@ -1098,6 +1115,7 @@ def _finalize_task(
     base_factor_codes,
     factor_calculator,
     logger,
+    stock_codes: Optional[List[str]] = None,
 ):
     """Convert mining result to frontend format and store in task.
 
@@ -1127,7 +1145,19 @@ def _finalize_task(
 
     # ---- 通过 FactorAnalyzer 统一验证和存储 ----
     # 所有算法的因子都走同一套验证标准，确保跨算法可比
-    analyzer = FactorAnalyzer(factor_calculator, data, return_values)
+    # 股票池 ≥2 只时一并提供面板数据：最终校验用横截面 IC（与挖掘目标同口径），
+    # 否则会退化成首只股票的时间序列 IC（噪声，score 普遍偏低）。
+    panel_data = None
+    if stock_codes and len(stock_codes) >= 2:
+        from backend.services.data_service import data_service
+
+        try:
+            panel_data = data_service.get_multiple_stocks_data(
+                stock_codes, request.start_date, request.end_date
+            )
+        except Exception as e:
+            logger.warning(f"获取股票池数据失败，最终校验回退到单股票 IC: {e}")
+    analyzer = FactorAnalyzer(factor_calculator, data, return_values, panel_data=panel_data)
     result_data = analyzer.analyze(mining_result, source=request.algorithm)
 
     # 将 discovered_factors 重命名为 factors（前端兼容）

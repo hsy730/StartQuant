@@ -46,16 +46,21 @@ class FactorAnalyzer:
         factor_calculator,
         data: pd.DataFrame,
         return_values: pd.Series,
+        panel_data: Optional[Dict[str, pd.DataFrame]] = None,
     ):
         """
         Args:
             factor_calculator: 因子计算器（FactorCalculator 实例）
             data: 原始数据 DataFrame
             return_values: 收益率 Series
+            panel_data: 股票池原始数据 {stock_code: DataFrame}。提供 ≥2 只
+                股票时，最终校验使用横截面 IC（与挖掘阶段的适应度同口径）；
+                否则退化为首只股票的时间序列 IC。
         """
         self.factor_calculator = factor_calculator
         self.data = data
         self.return_values = return_values
+        self.panel_data = panel_data or {}
 
     def analyze(
         self,
@@ -264,6 +269,7 @@ class FactorAnalyzer:
                     factor_values=fv,
                     return_values=self.return_values,
                     existing_factors=None,
+                    cross_sectional_ic=self._cross_sectional_ic(expression),
                 )
                 ic_val = validation.get("ic_validation", {})
                 ir_val = validation.get("ir_validation", {})
@@ -298,6 +304,53 @@ class FactorAnalyzer:
                 return self._empty_result()
 
         return self._empty_result()
+
+    def _cross_sectional_ic(self, expression: str) -> Optional[Dict]:
+        """按股票池计算横截面 Spearman IC（规则7.1/7.13）。
+
+        最终校验若只用首只股票的时间序列 IC，就与挖掘阶段的横截面目标
+        不同源（个股时序 IC 接近噪声，评分卡在 ~15 分，无法区分好坏因子）。
+        股票池 ≥2 只时统一走 ic_calculator 截面 IC，使写入因子库的
+        ic / ir / score 与挖掘适应度同口径。
+        """
+        if len(self.panel_data) < 2:
+            return None
+
+        from backend.utils.ic_calculator import calculate_cross_sectional_ic
+
+        panel: Dict[str, pd.DataFrame] = {}
+        for code, df in self.panel_data.items():
+            if df is None or len(df) == 0:
+                continue
+            # 规则3：不改动 data_service 缓存中的原始 DataFrame
+            stock_df = df.copy()
+            if "return" not in stock_df.columns:
+                if "close" not in stock_df.columns:
+                    continue
+                # shift(-1)：t 日因子预测 t→t+1 收益（规则B，合法获取结果变量）
+                stock_df["return"] = stock_df["close"].pct_change().shift(-1)
+            try:
+                fv = self.factor_calculator.calculate(stock_df, expression)
+            except Exception as e:
+                logger.debug(f"截面校验: 股票 {code} 因子计算失败: {e}")
+                continue
+            if fv is None or len(fv.dropna()) < 10:
+                continue
+            stock_df["factor"] = fv.reindex(stock_df.index)
+            panel[code] = stock_df[["factor", "return"]]
+
+        if len(panel) < 2:
+            return None
+
+        return calculate_cross_sectional_ic(
+            panel,
+            factor_name="factor",
+            return_column="return",
+            # 截面最少股票数：与挖掘阶段一致（小池放宽，至少 2 只）
+            min_stocks=max(2, min(5, len(panel) // 2)),
+            min_dates=2,
+            method="spearman",
+        )
 
     @staticmethod
     def _empty_result() -> dict:

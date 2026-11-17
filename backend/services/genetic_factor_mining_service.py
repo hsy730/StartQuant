@@ -28,6 +28,7 @@ from collections import Counter, OrderedDict
 import pandas as pd
 import numpy as np
 import random
+from scipy.stats import spearmanr
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +110,84 @@ def _same_tree_structure(a, b) -> bool:
     return zobrist_hash(a) == zobrist_hash(b)
 
 
+class _FactorValueEquivalence:
+    """HallOfFame 等价谓词：因子值同序（|Spearman| ≥ 阈值）视为同一因子。
+
+    结构哈希只能识别语法同构，识别不了单调变换：``sqrt(sqrt(x))``、
+    ``log(x)``、``ts_mean_20(x)``、``ts_delay_5(x)`` 结构各不相同，但因子值
+    完全同序（单调变换不改变秩），在因子库 / 组合优化里提供的是同一份信息。
+    实测稳健适应度收敛后，HOF 前 5 个里常出现 3~4 个是同一因子的变换
+    （样本外 IC、t、有效天数完全相同），"挖出 10 个因子"实际只有 2~3 个。
+
+    计算口径：在首只评估股票上用 ``_compute_factor_expression`` 重算因子值，
+    逐元素取 Spearman。只用于 HOF 插入判定，不参与适应度。
+    """
+
+    def __init__(self, service, threshold: float = 0.98, max_cache: int = 512):
+        self._service = service
+        self._threshold = threshold
+        self._max_cache = max_cache
+        self._cache = {}
+
+    def _values(self, individual):
+        key = zobrist_hash(individual)
+        if key in self._cache:
+            return self._cache[key]
+
+        arr = None
+        # 优先复用评估阶段已缓存的逐股票因子值：HOF 更新时种群刚评估完，
+        # 缓存命中可避免重复 compile + eval（实测可省 5~8s/轮）。
+        try:
+            cached = self._service._cache_get(key)
+            if cached:
+                preferred = None
+                sampled = getattr(self._service, "_sampled_stock_codes", None)
+                if sampled:
+                    preferred = sampled[0]
+                if preferred is not None and preferred in cached:
+                    arr = np.asarray(cached[preferred], dtype=float)
+                else:
+                    for stock, values in cached.items():
+                        if stock == "_index":
+                            continue
+                        arr = np.asarray(values, dtype=float)
+                        break
+        except Exception:
+            arr = None
+
+        if arr is None:
+            try:
+                series = self._service._compute_factor_expression(individual)
+                arr = series.to_numpy(dtype=float) if series is not None else None
+            except Exception:
+                arr = None
+        if len(self._cache) >= self._max_cache:
+            self._cache.clear()
+        self._cache[key] = arr
+        return arr
+
+    def __call__(self, a, b) -> bool:
+        if zobrist_hash(a) == zobrist_hash(b):
+            return True
+        va = self._values(a)
+        vb = self._values(b)
+        if va is None or vb is None or va.shape != vb.shape:
+            return False
+        mask = np.isfinite(va) & np.isfinite(vb)
+        if mask.sum() < 20:
+            return False
+        x = va[mask]
+        y = vb[mask]
+        # 常数序列不含信息，但也不能当作"等价锚点"吞掉整个 HOF
+        if np.std(x) < 1e-12 or np.std(y) < 1e-12:
+            return False
+        rho = spearmanr(x, y)[0]
+        if rho is None or np.isnan(rho):
+            return False
+        # 因子与其相反数信息等价（方向可翻转），取绝对值
+        return bool(abs(float(rho)) >= self._threshold)
+
+
 class GeneticFactorMiningService(BaseMiningService):
     """遗传算法因子挖掘服务（基于 DEAP gp.PrimitiveTree）
 
@@ -151,6 +230,22 @@ class GeneticFactorMiningService(BaseMiningService):
         max_cache_size: int = DEFAULT_MAX_CACHE_SIZE,
         # ---- Phase 6: Cross-validation ----
         cv_folds: int = 0,
+        # ---- 评估稳健性：IC 下置信界系数 ----
+        # 进化循环用 |mean IC| 排序，但稀疏因子（大量 NaN，仅 14~30 个有效
+        # 交易日）的 |IC| 由极少样本估计，噪声会把它抬到 0.2+ 并挤掉稳健因子。
+        # >0 时改用 mean_ic - sigma * ic_std / sqrt(n_days)：
+        # sigma=1.65 约等于单侧 95% 下置信界，样本天数少或 IC 波动大的因子
+        # 会被自动降权，样本天数多的稳健因子相对上升。
+        ic_lcb_sigma: float = 1.65,
+        # 有效 IC 天数覆盖率下限：len(daily_ics) 低于该比例（且不少于 20 天）
+        # 视为不可评估。实测稀疏因子只靠 9~14 天估出 |IC|=0.2+，样本外完全
+        # 失效；>=0.2 时这类因子直接记为最差，不进入 HOF。
+        min_ic_day_ratio: float = 0.2,
+        # ---- HOF 因子值去重 ----
+        # >0 时 HOF 插入判定改为"因子值 |Spearman| ≥ 阈值即视为同一因子"，
+        # 用于阻止 sqrt/log/ts_mean/ts_delay 等单调变换占满名额。
+        # <=0 时退回纯结构哈希（_same_tree_structure）。
+        hof_dedup_corr: float = 0.98,
         # ---- Phase 7: Extended primitives ----
         use_extended_primitives: bool = True,
         max_tree_depth: int = 17,
@@ -179,6 +274,9 @@ class GeneticFactorMiningService(BaseMiningService):
         self.n_generations = n_generations
         self.cx_prob = cx_prob
         self.mut_prob = mut_prob
+        self.ic_lcb_sigma = ic_lcb_sigma
+        self.min_ic_day_ratio = min_ic_day_ratio
+        self.hof_dedup_corr = hof_dedup_corr
 
         # Phase 1
         self.elite_size = min(elite_size, population_size)
@@ -673,7 +771,7 @@ class GeneticFactorMiningService(BaseMiningService):
         Cross-Validation penalty (Phase 6), Fitness Objective Routing (Phase 1).
         """
         if len(individual) == 0:
-            return (0.0,)
+            return (self._no_ic_fitness(),)
 
         try:
             # 使用 stock_pool_base_factor_values 而非 stock_pool_data 判断股票数量，
@@ -689,7 +787,7 @@ class GeneticFactorMiningService(BaseMiningService):
                 raw_fitness = self._evaluate_single_stock_ic(individual)[0]
         except Exception as e:
             logger.debug(f"适应度评估失败: {e}")
-            return (0.0,)
+            return (self._no_ic_fitness(),)
 
         # --- Parsimony Pressure (Phase 2, P1: operator-weighted) ---
         # 替换原 len(individual)：算子加权复杂度更精准地反映计算成本
@@ -792,10 +890,13 @@ class GeneticFactorMiningService(BaseMiningService):
         """返回惩罚适应度值（评估异常/超时时使用）。
 
         NSGA-II 双目标：(ic_fitness, complexity)
-        - ic_fitness 越大越好 → 惩罚值设为 0（最差）
+        - ic_fitness 越大越好 → 惩罚值设为 -1.0（比任何合法个体都差）
         - complexity 越小越好 → 惩罚值设为 999（最差）
+
+        注意：允许 ic_lcb_sigma>0 后合法个体的 ic_fitness 可以为负，
+        惩罚值不能再取 0.0，否则"评估失败"会排在合法负适应度个体之前。
         """
-        return (0.0, 999.0)
+        return (-1.0, 999.0)
 
     def _eval_tree_on_stock(
         self, tree, stock_code: str, stock_base_factors: dict
@@ -1076,7 +1177,7 @@ class GeneticFactorMiningService(BaseMiningService):
                 logger.debug("GP树编译完成 节点数=%s 耗时=%.3fs", len(tree), _t_compile)
             except Exception as e:
                 logger.warning(f"编译表达式失败: {e}")
-                return (0.0,)
+                return (self._no_ic_fitness(),)
 
             # 串行逐股评估：实测 20 股 × 250 行时，4 线程因 GIL 竞争 + 每个体
             # 新建线程池，反而比串行慢约 1.9x（1.69ms → 3.21ms）。
@@ -1153,7 +1254,7 @@ class GeneticFactorMiningService(BaseMiningService):
         logger.debug(f"  [诊断] 退出缓存/计算分支，factor_values_dict={len(factor_values_dict)}项")
 
         if len(factor_values_dict) < 2:
-            return (0.0,)
+            return (self._no_ic_fitness(),)
 
         logger.debug(f"  [诊断] 准备调用 _fast_cross_sectional_ic...")
 
@@ -1255,7 +1356,15 @@ class GeneticFactorMiningService(BaseMiningService):
 
         except Exception as e:
             logger.warning(f"Cross-sectional IC evaluation failed: {e}")
-            return (0.0,)
+            return (self._no_ic_fitness(),)
+
+    def _no_ic_fitness(self) -> float:
+        """无法计算 IC 时的适应度（有效股票/日期不足）。
+
+        启用 ic_lcb_sigma 后合法个体的适应度可为负，"无法评估"必须比
+        任何合法个体都差，否则稀疏到算不出 IC 的树会排在中游。
+        """
+        return -1.0 if self.ic_lcb_sigma > 0 else 0.0
 
     def _fast_cross_sectional_ic(
         self, factor_values_dict: Dict[str, pd.Series]
@@ -1315,7 +1424,7 @@ class GeneticFactorMiningService(BaseMiningService):
                 logger.debug(
                     "  [诊断] 面板不可用: 有效股票数=%s (<5)", len(stock_codes)
                 )
-                return (0.0, 0.0)
+                return (self._no_ic_fitness(), 0.0)
 
             ret_df = pd.DataFrame(ret_map, columns=stock_codes)
             panel = (ret_df, stock_codes)
@@ -1326,7 +1435,7 @@ class GeneticFactorMiningService(BaseMiningService):
 
         ret_df, stock_codes = panel
         if ret_df is None:
-            return (0.0, 0.0)
+            return (self._no_ic_fitness(), 0.0)
 
         # 与旧实现一致：逐股 factor.index ∩ return.index 后再取交集
         all_dates = ret_df.index
@@ -1338,7 +1447,7 @@ class GeneticFactorMiningService(BaseMiningService):
                 "  [诊断] _fast_cross_sectional_ic 提前退出: all_dates=%s (<5)",
                 len(all_dates),
             )
-            return (0.0, 0.0)
+            return (self._no_ic_fitness(), 0.0)
 
         return_matrix = ret_df.reindex(all_dates).values
 
@@ -1396,7 +1505,17 @@ class GeneticFactorMiningService(BaseMiningService):
         if len(daily_ics) < 2:
             _t_ic = time.time() - _t_ic_start
             logger.debug(f"  [诊断] _fast_cross_sectional_ic 提前退出: 有效IC<2, 耗时={_t_ic:.3f}s")
-            return (0.0, 0.0)
+            return (self._no_ic_fitness(), 0.0)
+
+        # 覆盖率闸门：有效 IC 天数过少时 |IC| 完全由噪声决定，直接判为最差
+        if self.min_ic_day_ratio > 0:
+            required = max(20, int(round(self.min_ic_day_ratio * len(all_dates))))
+            if len(daily_ics) < required:
+                logger.debug(
+                    "  [诊断] IC 覆盖率不足: %s/%s 天 (<%s)，判为不可评估",
+                    len(daily_ics), len(all_dates), required,
+                )
+                return (-1.0, 0.0)
 
         ic_arr = np.array(daily_ics)
         # 有符号均值才是真实 IC；|IC| 不是无偏估计量（纯噪声下 mean(|IC|) ≈ sqrt(2/(π(N-1)))）
@@ -1404,6 +1523,12 @@ class GeneticFactorMiningService(BaseMiningService):
         ic_std = float(np.std(ic_arr))
         # 适应度方向无关（GP 可用 neg 翻转因子方向），但不改变 IC 的定义
         mean_ic = abs(ic_mean)
+
+        # 估计不确定性惩罚：稀疏因子（有效交易日极少）的 |IC| 是噪声，
+        # 用下置信界排序可避免其挤掉样本充足、IC 稳定的因子。
+        if self.ic_lcb_sigma > 0 and len(ic_arr) > 1:
+            se = ic_std / np.sqrt(len(ic_arr))
+            mean_ic = mean_ic - self.ic_lcb_sigma * float(se)
 
         # IR 分子分母必须来自同一序列（规则7.10：std≈0时返回None）
         best_ir = safe_ir(ic_mean, ic_std, default=None)
@@ -1427,7 +1552,7 @@ class GeneticFactorMiningService(BaseMiningService):
         """
         fv = self._compute_factor_expression(tree)
         if fv is None or len(fv.dropna()) < 10:
-            return (0.0,)
+            return (self._no_ic_fitness(),)
 
         if self.return_values is not None:
             validation = factor_validation_service.validate_factor(
@@ -1464,6 +1589,17 @@ class GeneticFactorMiningService(BaseMiningService):
     # ------------------------------------------------------------------
     # Expression computation (compiled tree → Series)
     # ------------------------------------------------------------------
+
+    def _make_hof_similar(self):
+        """构造 HallOfFame 去重谓词。
+
+        hof_dedup_corr > 0：按因子值 |Spearman| ≥ 阈值判定等价，
+            可识别 sqrt/log/ts_mean/ts_delay 等单调变换重复。
+        hof_dedup_corr <= 0：退回纯结构哈希（兼容旧行为）。
+        """
+        if self.hof_dedup_corr > 0:
+            return _FactorValueEquivalence(self, self.hof_dedup_corr)
+        return _same_tree_structure
 
     def _compute_factor_expression(self, tree) -> Optional[pd.Series]:
         """Evaluate a PrimitiveTree using the global base factor cache.
@@ -1660,7 +1796,7 @@ class GeneticFactorMiningService(BaseMiningService):
                     ind.height,
                     len(ind),
                 )
-                fit = self._penalty_fitness() if self.use_nsga2 else (0.0,)
+                fit = self._penalty_fitness() if self.use_nsga2 else (-1.0,)
                 _should_skip = True
 
             if not _should_skip:
@@ -1676,12 +1812,12 @@ class GeneticFactorMiningService(BaseMiningService):
                             f"表达式={str(ind)[:80]}"
                         )
                         _eval_future.cancel()
-                        fit = self._penalty_fitness() if self.use_nsga2 else (0.0,)
+                        fit = self._penalty_fitness() if self.use_nsga2 else (-1.0,)
                     finally:
                         _eval_executor.shutdown(wait=False)
                 except Exception as e:
                     logger.warning(f"初始评估 [{i+1}/{len(population)}] 异常: {e}")
-                    fit = self._penalty_fitness() if self.use_nsga2 else (0.0,)
+                    fit = self._penalty_fitness() if self.use_nsga2 else (-1.0,)
 
             _ind_elapsed = time.time() - _ind_t0
             ind.fitness.values = fit
@@ -1717,7 +1853,7 @@ class GeneticFactorMiningService(BaseMiningService):
 
         # Hall-of-Fame (stored as instance attr so evaluation can access it)
         hof_size = max(self.elite_size * 2, 10)
-        halloffame = tools.HallOfFame(hof_size, similar=_same_tree_structure)
+        halloffame = tools.HallOfFame(hof_size, similar=self._make_hof_similar())
         halloffame.update(population)
         self._halloffame = halloffame  # expose for diversity penalty
 
@@ -2182,7 +2318,7 @@ class GeneticFactorMiningService(BaseMiningService):
                             len(invalid),
                             _ts_op_count,
                         )
-                        fit = self._penalty_fitness() if self.use_nsga2 else (0.0,)
+                        fit = self._penalty_fitness() if self.use_nsga2 else (-1.0,)
                     else:
                         try:
                             # 单个个体评估超时保护（30秒）
@@ -2197,14 +2333,14 @@ class GeneticFactorMiningService(BaseMiningService):
                                     f"表达式={str(ind)[:80]}"
                                 )
                                 _eval_future.cancel()
-                                fit = self._penalty_fitness() if self.use_nsga2 else (0.0,)
+                                fit = self._penalty_fitness() if self.use_nsga2 else (-1.0,)
                             finally:
                                 _eval_executor.shutdown(wait=False)
                         except Exception as e:
                             logger.warning(
                                 f"  Gen {gen+1} 个体 [{idx+1}/{len(invalid)}] 评估异常: {e}"
                             )
-                            fit = self._penalty_fitness() if self.use_nsga2 else (0.0,)
+                            fit = self._penalty_fitness() if self.use_nsga2 else (-1.0,)
 
                     _ind_elapsed = time.time() - _ind_t0
                     logger.debug(
@@ -2224,7 +2360,7 @@ class GeneticFactorMiningService(BaseMiningService):
                 # fitness 为空元组，随后 stats.compile 取 values[0] 会抛
                 # IndexError。缺失部分统一填惩罚值，保证种群 fitness 完整。
                 _fallback_fit = (
-                    self._penalty_fitness() if self.use_nsga2 else (0.0,)
+                    self._penalty_fitness() if self.use_nsga2 else (-1.0,)
                 )
                 for idx, ind in enumerate(invalid):
                     ind.fitness.values = (
@@ -2346,7 +2482,7 @@ class GeneticFactorMiningService(BaseMiningService):
         # Update Z-Score normalization stats from initial population
         self._update_zscore_stats()
 
-        halloffame = tools.HallOfFame(5, similar=_same_tree_structure)
+        halloffame = tools.HallOfFame(5, similar=self._make_hof_similar())
         halloffame.update(population)
         self._halloffame = halloffame
 
@@ -2390,7 +2526,7 @@ def create_genetic_mining_service(
     * ``elite_size`` – number of elite individuals preserved (default 5)
     * ``fitness_objective`` – ic_mean / ir_ratio / sharpe / combined (default ic_mean)
     * ``parsimony_coeff`` – weight of the complexity penalty (default 0.001)
-    * ``diversity_penalty_coeff`` – penalty for similarity to HoF (default 0.1)
+    * ``diversity_penalty_coeff`` – penalty for similarity to HoF (default 0.02)
     * ``max_cache_size`` – max entries in factor value cache (default 512)
     * ``cv_folds`` – cross-validation folds for over-fitting control (0=off, default 0)
     * ``use_extended_primitives`` – enable ~25 operators incl. time-series (default True)
