@@ -275,6 +275,15 @@ class GeneticFactorMiningService(BaseMiningService):
         # 用于阻止 sqrt/log/ts_mean/ts_delay 等单调变换占满名额。
         # <=0 时退回纯结构哈希（_same_tree_structure）。
         hof_dedup_corr: float = 0.98,
+        # ---- HOF 扩量 + 时间样本外过滤 ----
+        # 时间切分实测（30 种子）：HOF 前 5 中只有 43~46% 能在未来两年存活。
+        # 把 HOF 扩到 15，进化结束后用末段日期（默认最后 25%，不进适应度）
+        # 做样本外验证，只交付通过 |t|≥oos_min_t 的因子。
+        hof_size: int = 15,
+        oos_validation: bool = True,
+        oos_validation_ratio: float = 0.25,
+        oos_min_t: float = 2.0,
+        oos_min_keep: int = 3,
         # ---- Phase 7: Extended primitives ----
         use_extended_primitives: bool = True,
         max_tree_depth: int = 17,
@@ -306,6 +315,15 @@ class GeneticFactorMiningService(BaseMiningService):
         self.ic_lcb_sigma = ic_lcb_sigma
         self.min_ic_day_ratio = min_ic_day_ratio
         self.hof_dedup_corr = hof_dedup_corr
+
+        # HOF 扩量 + 时间样本外过滤
+        self.hof_size = hof_size
+        self.oos_validation = oos_validation
+        self.oos_validation_ratio = oos_validation_ratio
+        self.oos_min_t = oos_min_t
+        self.oos_min_keep = oos_min_keep
+        self._oos_cutoff = None
+        self._oos_dates = None
 
         # Phase 1
         self.elite_size = min(elite_size, population_size)
@@ -1480,6 +1498,12 @@ class GeneticFactorMiningService(BaseMiningService):
         _, factor_matrix, return_matrix, _stock_codes = built
         if factor_matrix.shape[1] < 5:
             return 0.0
+        # 与 IC 一致：验证段日期不参与 CV 惩罚
+        if self._oos_cutoff is not None:
+            all_dates = built[0]
+            _train_mask = np.asarray(all_dates <= self._oos_cutoff)
+            factor_matrix = factor_matrix[_train_mask]
+            return_matrix = return_matrix[_train_mask]
 
         items = list(range(factor_matrix.shape[1]))
         if len(items) > 10:
@@ -1513,6 +1537,107 @@ class GeneticFactorMiningService(BaseMiningService):
         if max_ic < 1e-10:
             return 1.0
         return max(0.0, min(1.0 - min(fold_ics) / max_ic, 1.0))
+
+    @staticmethod
+    def _daily_ic_array(factor_matrix, return_matrix) -> np.ndarray:
+        """向量化逐日横截面 Spearman IC（返回每天一个 IC）。
+
+        与逐日 Python 循环等价，但把 ~484 次 argsort 合并为一次二维 rankdata。
+        并列值取平均秩（与 scipy.spearmanr 一致）；旧循环的
+        argsort-of-argsort 对并列值按排序稳定性任意定序，差异只是并列行的噪声。
+        """
+        n_stocks = factor_matrix.shape[1]
+        # 截面样本下限：大池保持 10 只；小池按 60% 比例放宽。
+        # 原实现 min(10, n_stocks) 在 10 只股票池上等于"要求 10 只全部有效"，
+        # 含 sqrt/log 的因子在很多股票上为 NaN，实测 484 天里只剩 7 天能算 IC，
+        # 适应度变成 7 天噪声（|IC| 虚高到 0.25），HOF 全是对这 7 天的过拟合。
+        min_stocks = min(n_stocks, max(5, min(10, int(np.ceil(0.6 * n_stocks)))))
+
+        valid = np.isfinite(factor_matrix) & np.isfinite(return_matrix)
+        n_valid = valid.sum(axis=1)
+        f_rank = rankdata(
+            np.where(valid, factor_matrix, np.nan), axis=1, nan_policy="omit"
+        )
+        r_rank = rankdata(
+            np.where(valid, return_matrix, np.nan), axis=1, nan_policy="omit"
+        )
+        count = np.maximum(n_valid, 1).astype(float)
+        f_mean = np.where(valid, f_rank, 0.0).sum(axis=1) / count
+        r_mean = np.where(valid, r_rank, 0.0).sum(axis=1) / count
+        f_centered = np.where(valid, f_rank - f_mean[:, None], 0.0)
+        r_centered = np.where(valid, r_rank - r_mean[:, None], 0.0)
+        denom = np.sqrt(
+            (f_centered ** 2).sum(axis=1) * (r_centered ** 2).sum(axis=1)
+        )
+        keep = (n_valid >= min_stocks) & (denom > 1e-10)
+        return (f_centered * r_centered).sum(axis=1)[keep] / denom[keep]
+
+    def _oos_metrics(self, factor_values_dict: Dict[str, pd.Series]) -> Optional[dict]:
+        """时间样本外指标：末段日期上的逐日横截面 IC 均值与 t 值。
+
+        该段日期已从适应度中排除，因此这里的 IC 不受训练过拟合影响。
+        """
+        if self._oos_cutoff is None:
+            return None
+        built = self._build_ic_matrices(factor_values_dict)
+        if built is None:
+            return None
+        all_dates, factor_matrix, return_matrix, _ = built
+        mask = np.asarray(all_dates > self._oos_cutoff)
+        n_total = int(mask.sum())
+        if n_total < 20:
+            return {"mean_ic": None, "t": None, "n_days": n_total, "passed": False}
+        daily = self._daily_ic_array(factor_matrix[mask], return_matrix[mask])
+        n = len(daily)
+        # 覆盖率不足一半（因子在验证段大量失效）同样判不通过
+        if n < max(20, int(0.5 * n_total)):
+            return {"mean_ic": None, "t": None, "n_days": n, "passed": False}
+        mean_ic = float(np.mean(daily))
+        std_ic = float(np.std(daily))
+        t = 0.0
+        if std_ic > 1e-12:
+            t = mean_ic / (std_ic / np.sqrt(n))
+        return {
+            "mean_ic": round(mean_ic, 6),
+            "t": round(float(t), 3),
+            "n_days": n,
+            "passed": bool(abs(t) >= self.oos_min_t),
+        }
+
+    def _factor_values_for_tree(self, tree) -> Dict[str, pd.Series]:
+        """取 HOF 树在评估股票上的逐股因子值（优先复用评估缓存）。"""
+        cached = self._cache_get(zobrist_hash(tree))
+        if cached and "_complete" in cached:
+            complete = cached["_complete"]
+            index_map = cached.get("_complete_index", {})
+            result = {}
+            for code, val in complete.items():
+                if isinstance(val, np.ndarray):
+                    idx = index_map.get(code)
+                    result[code] = pd.Series(val, index=idx) if idx is not None else pd.Series(val)
+                elif isinstance(val, pd.Series):
+                    result[code] = val
+            return result
+
+        try:
+            compiled_func = compile_tree(tree, self.pset)
+        except Exception as e:
+            logger.debug("样本外验证编译失败: %s", e)
+            return {}
+        result = {}
+        for code in self._sampled_stock_codes:
+            base_factors = self.stock_pool_base_factor_values.get(code)
+            if base_factors is None:
+                continue
+            try:
+                fv = self._eval_compiled_on_stock(
+                    compiled_func, zobrist_hash(tree), code, base_factors
+                )
+            except Exception:
+                continue
+            if fv is not None and len(fv.dropna()) >= 10:
+                result[code] = fv
+        return result
 
     def _fast_cross_sectional_ic(
         self, factor_values_dict: Dict[str, pd.Series]
@@ -1557,37 +1682,16 @@ class GeneticFactorMiningService(BaseMiningService):
             return (self._no_ic_fitness(), 0.0)
         all_dates, factor_matrix, return_matrix, _stock_codes = built
 
-        n_stocks = factor_matrix.shape[1]
-        # 截面样本下限：大池保持 10 只；小池按 60% 比例放宽。
-        # 原实现 min(10, n_stocks) 在 10 只股票池上等于"要求 10 只全部有效"，
-        # 含 sqrt/log 的因子在很多股票上为 NaN，实测 484 天里只剩 7 天能算 IC，
-        # 适应度变成 7 天噪声（|IC| 虚高到 0.25），HOF 全是对这 7 天的过拟合。
-        min_stocks = min(
-            n_stocks, max(5, min(10, int(np.ceil(0.6 * n_stocks))))
-        )
+        # 时间样本外验证开启时，末段日期不参与适应度（否则样本外检验被泄漏）
+        if self._oos_cutoff is not None:
+            _train_mask = np.asarray(all_dates <= self._oos_cutoff)
+            all_dates = all_dates[_train_mask]
+            factor_matrix = factor_matrix[_train_mask]
+            return_matrix = return_matrix[_train_mask]
+            if len(all_dates) < 5:
+                return (self._no_ic_fitness(), 0.0)
 
-        # ---- 向量化逐日横截面 IC：按行排名后逐行 Pearson ----
-        # 与逐日 Python 循环等价，但把 ~484 次 argsort 合并为一次二维 rankdata。
-        # 并列值取平均秩（与 scipy.spearmanr 一致）；旧循环的
-        # argsort-of-argsort 对并列值按排序稳定性任意定序，差异只是并列行的噪声。
-        valid = np.isfinite(factor_matrix) & np.isfinite(return_matrix)
-        n_valid = valid.sum(axis=1)
-        f_rank = rankdata(
-            np.where(valid, factor_matrix, np.nan), axis=1, nan_policy="omit"
-        )
-        r_rank = rankdata(
-            np.where(valid, return_matrix, np.nan), axis=1, nan_policy="omit"
-        )
-        count = np.maximum(n_valid, 1).astype(float)
-        f_mean = np.where(valid, f_rank, 0.0).sum(axis=1) / count
-        r_mean = np.where(valid, r_rank, 0.0).sum(axis=1) / count
-        f_centered = np.where(valid, f_rank - f_mean[:, None], 0.0)
-        r_centered = np.where(valid, r_rank - r_mean[:, None], 0.0)
-        denom = np.sqrt(
-            (f_centered ** 2).sum(axis=1) * (r_centered ** 2).sum(axis=1)
-        )
-        keep = (n_valid >= min_stocks) & (denom > 1e-10)
-        daily_ics = (f_centered * r_centered).sum(axis=1)[keep] / denom[keep]
+        daily_ics = self._daily_ic_array(factor_matrix, return_matrix)
 
         logger.debug(
             "  [诊断] 横截面 IC: %s/%s 有效日期, 耗时=%.3fs",
@@ -1807,6 +1911,47 @@ class GeneticFactorMiningService(BaseMiningService):
     # Mining entry point
     # ------------------------------------------------------------------
 
+    def _init_oos_split(self) -> None:
+        """按股票池交易日历计算训练/验证切分点。
+
+        末段 ``oos_validation_ratio`` 的日期不参与适应度与 CV，只用于
+        进化结束后的样本外过滤。样本不足（验证段 <40 天或训练段 <100 天）
+        时放弃切分，退化为原来的全样本适应度。
+        """
+        self._oos_cutoff = None
+        self._oos_dates = None
+        if not self.oos_validation or self.oos_validation_ratio <= 0:
+            return
+
+        ref_code = None
+        for code in self._sampled_stock_codes:
+            if code in self.stock_pool_return_values:
+                ref_code = code
+                break
+        if ref_code is None:
+            for code in sorted(self.stock_pool_return_values):
+                ref_code = code
+                break
+        if ref_code is None:
+            return
+
+        dates = self.stock_pool_return_values[ref_code].index
+        n = len(dates)
+        ratio = min(max(self.oos_validation_ratio, 0.05), 0.5)
+        n_val = int(n * ratio)
+        if n_val < 40 or n - n_val < 100:
+            logger.info(
+                f"[样本外验证] 样本天数不足（总 {n} 天，验证段 {n_val} 天），跳过时间切分"
+            )
+            return
+
+        self._oos_cutoff = dates[n - n_val - 1]
+        self._oos_dates = dates[n - n_val:]
+        logger.info(
+            f"[样本外验证] 训练 {n - n_val} 天（至 {self._oos_cutoff.date()}），"
+            f"验证 {n_val} 天（{self._oos_dates[0].date()}~{self._oos_dates[-1].date()}）"
+        )
+
     def mine_factors(self) -> Dict:
         """Execute genetic-programming-based factor mining.
 
@@ -1837,6 +1982,9 @@ class GeneticFactorMiningService(BaseMiningService):
             f"cv_folds={self.cv_folds}, extended_primitives={self.use_extended_primitives}, "
             f"max_depth={self.max_tree_depth}"
         )
+
+        # 时间样本外切分：末段日期不参与适应度，仅用于最终过滤
+        self._init_oos_split()
 
         population = self.toolbox.population(n=self.population_size)
 
@@ -1944,7 +2092,7 @@ class GeneticFactorMiningService(BaseMiningService):
         self._update_zscore_stats()
 
         # Hall-of-Fame (stored as instance attr so evaluation can access it)
-        hof_size = max(self.elite_size * 2, 10)
+        hof_size = max(self.hof_size, self.elite_size * 2, 10)
         halloffame = tools.HallOfFame(hof_size, similar=self._make_hof_similar())
         halloffame.update(population)
         self._halloffame = halloffame  # expose for diversity penalty
@@ -2073,6 +2221,14 @@ class GeneticFactorMiningService(BaseMiningService):
             }
 
             try:
+                oos = self._oos_metrics(self._factor_values_for_tree(tree))
+            except Exception as e:
+                oos = None
+                logger.debug(f"样本外验证失败: {e}")
+            if oos is not None:
+                factor_info["oos_validation"] = oos
+
+            try:
                 fv = self._compute_factor_expression(tree)
                 # 防御性检查：release_memory() 会将 return_values 设为 None，
                 # 且空 return_values 无法进行验证
@@ -2128,6 +2284,32 @@ class GeneticFactorMiningService(BaseMiningService):
             )
         logger.info(f"候选因子验证完成: {n_hof} 个，总耗时 {_validate_elapsed:.1f}s")
 
+        # ---- 时间样本外过滤：只交付通过验证的候选 ----
+        # 实测 HOF 前 5 仅 43~46% 能在未来两年存活，因此默认只输出通过段。
+        # 全部不通过时保留 oos_min_keep 个（按 fitness 排序）并标记 unvalidated，
+        # 避免前端拿到空列表。
+        oos_dropped = 0
+        oos_fallback = False
+        if self.oos_validation and self._oos_cutoff is not None:
+            passed = [
+                f for f in best_factors
+                if f.get("oos_validation", {}).get("passed")
+            ]
+            oos_dropped = len(best_factors) - len(passed)
+            if passed:
+                best_factors = passed
+            else:
+                oos_fallback = True
+                best_factors.sort(
+                    key=lambda f: f.get("fitness") or 0, reverse=True
+                )
+                best_factors = best_factors[: max(self.oos_min_keep, 1)]
+            logger.info(
+                f"[样本外验证] 通过 {len(passed) if passed else 0}/{n_hof} 个候选"
+                + (f"，无通过项，回退输出 {len(best_factors)} 个未验证候选" if oos_fallback else
+                   f"，剔除 {oos_dropped} 个")
+            )
+
         # Sort by validation score, fallback to fitness
         def _sort_key(f):
             v = f.get("validation", {})
@@ -2149,6 +2331,13 @@ class GeneticFactorMiningService(BaseMiningService):
             "logbook": logbook,
             "final_population_size": len(population),
             "terminal_usage": terminal_usage,
+            "oos_validation": {
+                "enabled": bool(self.oos_validation and self._oos_cutoff is not None),
+                "cutoff": str(self._oos_cutoff.date()) if self._oos_cutoff is not None else None,
+                "n_candidates": n_hof,
+                "n_dropped": oos_dropped,
+                "fallback": oos_fallback,
+            },
         }
 
         # Release memory held by DEAP population and Hall-of-Fame objects

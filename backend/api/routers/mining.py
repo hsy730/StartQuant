@@ -68,6 +68,12 @@ class GeneticMiningRequest(BaseModel):
     # HOF 因子值去重：|Spearman| ≥ 该阈值视为同一因子（阻挡单调变换占满名额），<=0 关闭
     hof_dedup_corr: float = 0.98
     cv_folds: int = 3
+    # HOF 扩量 + 时间样本外过滤：末段日期不参与适应度，最终只交付通过段
+    hof_size: int = 15
+    oos_validation: bool = True
+    oos_validation_ratio: float = 0.25
+    oos_min_t: float = 2.0
+    oos_min_keep: int = 3
     use_extended_primitives: bool = True
     max_tree_depth: int = 17
     use_nsga2: bool = True
@@ -632,6 +638,11 @@ async def _run_genetic_only(
         min_ic_day_ratio=request.min_ic_day_ratio,
         hof_dedup_corr=request.hof_dedup_corr,
         cv_folds=request.cv_folds,
+        hof_size=request.hof_size,
+        oos_validation=request.oos_validation,
+        oos_validation_ratio=request.oos_validation_ratio,
+        oos_min_t=request.oos_min_t,
+        oos_min_keep=request.oos_min_keep,
         use_extended_primitives=request.use_extended_primitives,
         max_tree_depth=request.max_tree_depth,
         use_nsga2=request.use_nsga2,
@@ -739,6 +750,11 @@ async def _run_unified_mining(
         min_ic_day_ratio=request.min_ic_day_ratio,
         hof_dedup_corr=request.hof_dedup_corr,
         cv_folds=request.cv_folds,
+        hof_size=request.hof_size,
+        oos_validation=request.oos_validation,
+        oos_validation_ratio=request.oos_validation_ratio,
+        oos_min_t=request.oos_min_t,
+        oos_min_keep=request.oos_min_keep,
         use_extended_primitives=request.use_extended_primitives,
         max_tree_depth=request.max_tree_depth,
         use_nsga2=request.use_nsga2,
